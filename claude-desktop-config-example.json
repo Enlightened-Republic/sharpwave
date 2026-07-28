@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "sharpwave": {
+      "command": "npx",
+      "args": ["-y", "sharpwave"],
+      "env": {
+        "SHARPWAVE_AGENT_ID": "claude",
+        "SHARPWAVE_DATA_DIR": "~/.sharpwave",
+        "SHARPWAVE_EMBEDDING_MODEL": "ollama/qwen3-embedding:0.6b",
+        "OPENROUTER_API_KEY": "sk-or-your-key-here"
+      }
+    }
+  }
+}
