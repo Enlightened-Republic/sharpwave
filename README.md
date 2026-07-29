@@ -92,6 +92,18 @@ All optional. Sharpwave runs with zero configuration.
 | `SHARPWAVE_EMBEDDING_MODEL` | — | e.g. `ollama/qwen3-embedding:0.6b` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Local embedding endpoint |
 | `OPENROUTER_API_KEY` | — | Enables remote embeddings and generative consolidation |
+| `SHARPWAVE_NO_UPDATE_CHECK` | — | Set to disable the update check entirely |
+
+### Update notifications
+
+Once a day, Sharpwave asks the npm registry for its own latest version number and
+prints a single line to stderr if you are behind. It sends no identifiers and
+uploads nothing, runs after the server is already serving, and stays silent on
+failure — offline, blocked, or slow all resolve to no output.
+
+To turn it off, set `SHARPWAVE_NO_UPDATE_CHECK=1`. It is also off automatically
+when `CI` or `NO_UPDATE_NOTIFIER` is set. With any of those, no request is made
+at all.
 
 ### Enabling vector search
 

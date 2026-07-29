@@ -14,9 +14,12 @@ import { getNeuromodulatorState, forgetNodeById } from "./consolidation.js";
 import { hybridRetrieve } from "./retrieval.js";
 import { drainEmbeddingQueue, queueEmbedding } from "./embeddings.js";
 import { clearStaleWorkingMemory } from "./activation.js";
+import { checkForUpdate } from "./update-check.js";
 import { DEFAULT_CONFIG } from "./types.js";
 import type { BrainConfig, NodeType, EdgeType } from "./types.js";
 import { randomUUID } from "node:crypto";
+
+const VERSION = "0.2.0";
 
 const AGENT_ID = process.env["SHARPWAVE_AGENT_ID"] ?? "default";
 const config: BrainConfig = { ...DEFAULT_CONFIG };
@@ -448,7 +451,7 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<To
 // ─── MCP server setup ─────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "sharpwave", version: "0.1.1" },
+  { name: "sharpwave", version: VERSION },
   { capabilities: { tools: {} } },
 );
 
@@ -472,7 +475,11 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 
 process.stderr.write(
-  `[sharpwave] started — agentId="${AGENT_ID}" session="${SESSION_ID}"` +
+  `[sharpwave] started — v${VERSION} agentId="${AGENT_ID}" session="${SESSION_ID}"` +
     (purged > 0 ? ` (cleared ${purged} stale working-memory row${purged === 1 ? "" : "s"})` : "") +
     "\n",
 );
+
+// Detached on purpose: the server is already serving, and a slow or unreachable
+// registry must never delay or fail startup.
+void checkForUpdate(AGENT_ID, VERSION);
