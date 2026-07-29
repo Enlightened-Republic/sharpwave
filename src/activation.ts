@@ -308,3 +308,19 @@ export function clearWorkingMemory(agentId: string, sessionId: string): void {
   const db = getDb(agentId);
   db.prepare("DELETE FROM working_memory WHERE session_id = ?").run(sessionId);
 }
+
+/**
+ * Drop every working-memory row for an agent.
+ *
+ * Working memory is per-conversation scratch state — it is meaningless once the
+ * process that owned the session is gone. The stdio server is one process per
+ * session, so anything already on disk at startup belongs to a dead session.
+ *
+ * This also repairs databases written by 0.1.0, which labelled every session
+ * with the same literal id and therefore accumulated rows that were replayed
+ * into every subsequent query forever.
+ */
+export function clearStaleWorkingMemory(agentId: string): number {
+  const db = getDb(agentId);
+  return db.prepare("DELETE FROM working_memory").run().changes;
+}

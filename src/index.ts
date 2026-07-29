@@ -13,11 +13,19 @@ import { getDb, getMeta } from "./db.js";
 import { getNeuromodulatorState, forgetNodeById } from "./consolidation.js";
 import { hybridRetrieve } from "./retrieval.js";
 import { drainEmbeddingQueue, queueEmbedding } from "./embeddings.js";
+import { clearStaleWorkingMemory } from "./activation.js";
 import { DEFAULT_CONFIG } from "./types.js";
 import type { BrainConfig, NodeType, EdgeType } from "./types.js";
+import { randomUUID } from "node:crypto";
 
 const AGENT_ID = process.env["SHARPWAVE_AGENT_ID"] ?? "default";
 const config: BrainConfig = { ...DEFAULT_CONFIG };
+
+// One stdio server process == one conversation, so the session id is minted per
+// process. 0.1.0 hardcoded a single literal here, which meant working memory was
+// never scoped to a conversation: the last N retrieved nodes were replayed into
+// every later query, across restarts, regardless of relevance.
+const SESSION_ID = `mcp:${randomUUID()}`;
 
 // Start embedding drain in background every 30s
 setInterval(() => {
@@ -181,7 +189,7 @@ async function handleBrainQuery(args: Record<string, unknown>) {
   const limit = Number(args["limit"] ?? 10);
   const typeFilter = args["type"] ? String(args["type"]) : undefined;
 
-  let results = await hybridRetrieve(AGENT_ID, query, "mcp:query", config);
+  let results = await hybridRetrieve(AGENT_ID, query, SESSION_ID, config);
   if (typeFilter) results = results.filter((n) => n.type === typeFilter);
   if (results.length === 0) return ok("No matching nodes found.");
 
@@ -440,7 +448,7 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<To
 // ─── MCP server setup ─────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "sharpwave", version: "0.1.0" },
+  { name: "sharpwave", version: "0.1.1" },
   { capabilities: { tools: {} } },
 );
 
@@ -451,7 +459,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   return await dispatch(name, (args as Record<string, unknown>) ?? {});
 });
 
+// Anything in working_memory at startup was written by a session that no longer
+// exists. Dropping it also repairs databases left poisoned by 0.1.0.
+let purged = 0;
+try {
+  purged = clearStaleWorkingMemory(AGENT_ID);
+} catch {
+  // Never let scratch-state cleanup stop the server from coming up.
+}
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
-process.stderr.write(`[sharpwave] started — agentId="${AGENT_ID}"\n`);
+process.stderr.write(
+  `[sharpwave] started — agentId="${AGENT_ID}" session="${SESSION_ID}"` +
+    (purged > 0 ? ` (cleared ${purged} stale working-memory row${purged === 1 ? "" : "s"})` : "") +
+    "\n",
+);
