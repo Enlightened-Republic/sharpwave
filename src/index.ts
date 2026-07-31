@@ -19,7 +19,12 @@ import { DEFAULT_CONFIG } from "./types.js";
 import type { BrainConfig, NodeType, EdgeType } from "./types.js";
 import { randomUUID } from "node:crypto";
 
-const VERSION = "0.2.0";
+// Injected from package.json at build time by esbuild.mjs — never hardcode it.
+// A stale constant misreports the server over MCP and makes checkForUpdate
+// compare against the wrong version, nagging users to install what they have.
+// The fallback only applies when running the TypeScript directly (tsx/ts-node).
+declare const __SHARPWAVE_VERSION__: string;
+const VERSION = typeof __SHARPWAVE_VERSION__ === "string" ? __SHARPWAVE_VERSION__ : "0.0.0-dev";
 
 const AGENT_ID = process.env["SHARPWAVE_AGENT_ID"] ?? "default";
 const config: BrainConfig = { ...DEFAULT_CONFIG };

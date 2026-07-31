@@ -250,7 +250,23 @@ export function workingMemoryBoost(
   ).all(sessionId) as { node_id: string; activation: number }[];
 
   for (const wm of wmNodes) {
-    const current = activationMap.get(wm.node_id) ?? 0;
+    // Boost ONLY nodes this query already surfaced. The previous `?? 0` inserted
+    // absent nodes at 0 + bonus, so anything retrieved earlier in the session
+    // re-entered the candidate set regardless of relevance to the current query.
+    //
+    // Reproduced end-to-end against published 0.2.0 with embeddings unavailable:
+    //   unrelated query, cold working memory  -> "No matching nodes found."  (correct)
+    //   on-topic query                        -> hits, and primes working memory
+    //   SAME unrelated query, warm            -> returns the on-topic node    (wrong)
+    //   unrelated query, brand new process    -> "No matching nodes found."  (correct)
+    //
+    // 0.1.1 fixed the cross-PROCESS form of this (per-process session id +
+    // stale-row sweep at startup). This is the within-session form: an MCP
+    // server is a long-lived process, so in real use every query polluted the
+    // next one. Working memory should re-rank what is already relevant, never
+    // introduce candidates on its own.
+    const current = activationMap.get(wm.node_id);
+    if (current === undefined) continue;
     activationMap.set(wm.node_id, current + bonus);
   }
 }
