@@ -151,6 +151,32 @@ Worth knowing before you install:
 - **Single-writer.** SQLite with WAL. One server process per database; pointing two at the same file is not supported.
 - **Consolidation is time-based.** Memory quality improves as passes accumulate. A brand-new database is a plain store until it has history to work with.
 
+
+## Companion tools
+
+The companion tools ecosystem extends Sharpwave with utility scripts for memory management, consolidation, and meta-reasoning. All tools are in the 	ools/ directory and work with any Sharpwave-compatible brain.
+
+### Available tools
+
+| Tool | Purpose |
+|------|---------|
+| ractal-reason.mjs | 4-level fractal carry closure (L0 fix → L1 pattern → L2 flaw → L3 meta-rule) |
+| memory-tiers.mjs | 5-tier compression lifecycle (full → summary → essence → ghost → metadata) for MEMORY.md sections |
+| engram-sleep.mjs | Consolidation digest — extracts carry closures + lessons + milestones from daily logs |
+| context-size.mjs | Byte-budget dashboard — tracks file sizes across memory/ |
+| silent-failure-audit.mjs | Lint for silent catch blocks (LRN-20260819-001 trio) |
+| rain-link-bridge.mjs | Bridge fractal-reason carry closures to brain_write + brain_link calls |
+| pply-fork-patch.mjs | Patch-function architecture demo (find/replace atomic edits) |
+
+### New patterns (2026-08-19)
+
+- **Fractal reasoning**: Every carry closure produces a 4-level breakdown (L0 fix → L1 pattern → L2 flaw → L3 meta-rule) with explicit edge types (CAUSED_BY, LEADS_TO, CONTRADICTS, RESOLVED_BY) that link to a marley-self-corrections-sentinel node.
+- **Memory tiers**: MEMORY.md sections auto-degrade through 5 tiers based on age + access count. Full → summary → essence → ghost → metadata.
+- **Silent-failure trio**: surface_error must throw (not fall through to continue_normal), credential files checked before store-expiry, runtime asset copier must include .md/.txt/.yaml/.yml.
+
+See LRN-20260819-001 for the universal pattern documentation.
+
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
