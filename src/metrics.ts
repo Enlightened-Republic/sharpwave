@@ -48,7 +48,7 @@ export interface MetricsSnapshot {
 /**
  * Collect comprehensive metrics snapshot for an agent.
  */
-export function collectMetrics(agentId: string, config: BrainConfig): MetricsSnapshot {
+export async function collectMetrics(agentId: string, config: BrainConfig): Promise<MetricsSnapshot> {
   const db = getDb(agentId);
   const now = Date.now();
 

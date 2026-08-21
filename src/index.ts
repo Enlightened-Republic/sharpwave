@@ -290,11 +290,11 @@ function handleBrainSupersede(args: Record<string, unknown>) {
   return ok(`Superseded: ${old.id.slice(0, 8)} → new node ${newId.slice(0, 8)}`);
 }
 
-function handleBrainStats(args: Record<string, unknown>) {
+async function handleBrainStats(args: Record<string, unknown>) {
   const format = String(args["format"] ?? "text").toLowerCase();
 
   try {
-    const metrics = collectMetrics(AGENT_ID, config);
+    const metrics = await collectMetrics(AGENT_ID, config);
     
     if (format === "prometheus") {
       return ok(formatPrometheusMetrics(metrics));
