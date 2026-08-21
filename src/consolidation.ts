@@ -513,6 +513,10 @@ async function extractNodesFromEpisode(
       source: "sws",
       episode_ids: [episode.id],
       encodingContext: neuro,
+      // SWS has its own Jaccard pre-check (line above). Disable the
+      // trigram-gate so we don't double-skip and miss novel-but-related
+      // extractions.
+      deduplicate: false,
     });
     nodeIds.push(id);
     queueEmbedding(agentId, id);

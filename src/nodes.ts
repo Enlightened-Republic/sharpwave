@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getDb, bumpWriteCounter } from "./db.js";
 import { executeWithWalRetrySync } from "./wal-retry.js";
 import { bumpCounter, logObservabilityEvent } from "./observability.js";
+import { findNearDuplicates } from "./entity-resolution.js";
 import type { BrainNode, BrainConfig, NodeType, NeuromodState } from "./types.js";
 
 const HALF_LIFE_DAYS: Record<string, number> = {
@@ -274,6 +275,13 @@ export function writeNode(
     episode_ids?: string[];
     encodingContext?: NeuromodState;
     extractionConfidence?: number;
+    /** When true, run the trigram-Jaccard near-duplicate check before
+     *  inserting. If a duplicate is found above threshold, return the
+     *  canonical node's id instead of creating a new row. Defaults to true. */
+    deduplicate?: boolean;
+    /** Jaccard threshold for `deduplicate`. Default 0.85 (matches the Python
+     *  reference's near-duplicate gate). */
+    dedupeThreshold?: number;
   } = {},
 ): string {
   const db = getDb(agentId);
@@ -286,6 +294,47 @@ export function writeNode(
   // |emotional_weight| on [0,1] → up to 1.5× initial stability.
   const stability = halfLife * importance * (1 + Math.abs(emotionalWeight) * 0.5);
   const salience = computeSalience(importance, emotionalWeight, 1.0, 0, 0);
+
+  // Pre-write near-duplicate gate (item #4 / feature parity with Python
+  // `_find_near_duplicates`). Skipped when caller passes `deduplicate: false`
+  // so the embedding pipeline (which deliberately wants fresh rows even if
+  // their text matches a stored node) can opt out.
+  const dedupe = opts.deduplicate ?? true;
+  if (deduplicate && content) {
+    const threshold = opts.dedupeThreshold ?? 0.85;
+    try {
+      const dups = findNearDuplicates(agentId, content, null, threshold, type);
+      if (dups.length > 0) {
+        const canonical = dups[0].id;
+        // Bump importance on the canonical row instead of inserting a duplicate.
+        executeWithWalRetrySync(
+          db,
+          (d) => {
+            d.prepare(`
+              UPDATE nodes
+              SET importance = MAX(importance, ?),
+                  access_count = access_count + 1,
+                  updated_at = ?
+              WHERE id = ?
+            `).run(importance, Date.now(), canonical);
+          },
+          { op: `nodes.dedupeMerge:${canonical.slice(0, 8)}` },
+        );
+        bumpWriteCounter(db);
+        bumpCounter("memories_merged");
+        logObservabilityEvent("merge", {
+          agentId,
+          canonical,
+          mergedId: id,
+          similarity: Math.round(dups[0].similarity * 1000) / 1000,
+          reason: dups[0].reason,
+        });
+        return canonical;
+      }
+    } catch {
+      // Never block a write on the dedupe path — fall through to insert.
+    }
+  }
 
   executeWithWalRetrySync(
     db,
