@@ -1,6 +1,7 @@
 import { getDb } from "./db.js";
 import { edgeExists, writeEdge } from "./edges.js";
 import { updatePsHash } from "./nodes.js";
+import { bumpCounter, logObservabilityEvent } from "./observability.js";
 import type { BrainNode, BrainConfig } from "./types.js";
 
 type Logger = { debug?: (msg: string) => void; info: (msg: string) => void; warn: (msg: string) => void; error?: (msg: string) => void };
@@ -10,6 +11,56 @@ const embeddingQueue = new Map<string, string[]>();
 // Guards concurrent drains per agent — JavaScript is single-threaded but async yields allow re-entry
 const drainingAgents = new Set<string>();
 const MAX_EMBED_QUEUE = 200;
+
+// ── Embedding LRU cache (item #5) ────────────────────────────────────────────────────────
+// Process-lifetime LRU cache keyed by raw text. Wraps `fetchEmbedding` so
+// repeated strings (same query, identical content across writes, etc.) don't
+// re-hit the embedding provider. Matches the Python reference's
+// `_get_embedding_with_cache` semantics:
+//
+//   - default max size 1024 (overridable via SHARPWAVE_EMBEDDING_CACHE_MAXSIZE)
+//   - hits bump `embeddings_cached` + emit `embedding_cache_hit` event
+//   - misses bump `embeddings_computed` + emit `embedding_cache_miss` event
+//   - thread-safety: JS is single-threaded but `fetchEmbedding` is async, so
+//     a re-entrant caller could double-fetch. A `cacheBusy` flag prevents the
+//     race by short-circuiting to a direct compute while a populate is in
+//     flight for a given key.
+const EMBEDDING_CACHE_DEFAULT_MAX = 1024;
+const embeddingCache: Map<string, Float32Array> = new Map();
+const embeddingCacheMax: number = (() => {
+  const raw = process.env["SHARPWAVE_EMBEDDING_CACHE_MAXSIZE"];
+  const n = raw ? parseInt(raw, 10) : EMBEDDING_CACHE_DEFAULT_MAX;
+  return Number.isFinite(n) && n > 0 ? n : EMBEDDING_CACHE_DEFAULT_MAX;
+})();
+let embeddingCacheHits = 0;
+let embeddingCacheMisses = 0;
+// Tracks the in-flight text being populated; concurrent fetches for the same
+// text skip the cache read and compute fresh (cheap safety net against
+// duplicate provider calls during a cache miss burst).
+let cacheBusyKey: string | null = null;
+
+export interface EmbeddingCacheStats {
+  size: number;
+  maxsize: number;
+  hits: number;
+  misses: number;
+}
+
+export function embeddingCacheStats(): EmbeddingCacheStats {
+  return {
+    size: embeddingCache.size,
+    maxsize: embeddingCacheMax,
+    hits: embeddingCacheHits,
+    misses: embeddingCacheMisses,
+  };
+}
+
+export function clearEmbeddingCache(): void {
+  embeddingCache.clear();
+  embeddingCacheHits = 0;
+  embeddingCacheMisses = 0;
+  cacheBusyKey = null;
+}
 
 export function queueEmbedding(agentId: string, nodeId: string): void {
   const q = embeddingQueue.get(agentId) ?? [];
@@ -128,7 +179,7 @@ export async function drainEmbeddingQueue(
           if (!node) continue;
 
           const text = `${node.label}: ${node.content}`.slice(0, 1000);
-          const vec = await fetchEmbedding(text, config, log);
+          const vec = await fetchEmbeddingCached(text, config, log);
           if (!vec) {
             failures++;
             continue;
@@ -301,6 +352,61 @@ export async function fetchEmbedding(
       }),
     );
     return null;
+  }
+}
+
+/**
+ * Cached wrapper around `fetchEmbedding`. Returns the cached vector when the
+ * text was seen recently; otherwise computes, stores, and bumps the miss
+ * counters. Thread-safety: JS is single-threaded but the underlying fetch is
+ * async, so a re-entrant caller could in principle race the populate. The
+ * `cacheBusyKey` flag short-circuits the in-flight text to a direct compute
+ * (rare path; only matters when two drains try to embed the same string at
+ * the same moment).
+ */
+export async function fetchEmbeddingCached(
+  text: string,
+  config: BrainConfig,
+  log?: Logger,
+): Promise<Float32Array | null> {
+  if (!text) return null;
+
+  // Fast hit path. Move-to-end gives true LRU semantics.
+  const cached = embeddingCache.get(text);
+  if (cached !== undefined) {
+    embeddingCache.delete(text);
+    embeddingCache.set(text, cached); // move-to-end
+    embeddingCacheHits++;
+    bumpCounter("embeddings_cached");
+    logObservabilityEvent("embedding_cache_hit", { text_preview: text.slice(0, 60) });
+    return cached;
+  }
+
+  // Re-entrancy guard: if the same text is already being computed, skip
+  // the cache and call the provider directly. The concurrent populate will
+  // store its result, but the racing caller doesn't wait.
+  const inFlight = cacheBusyKey === text;
+
+  embeddingCacheMisses++;
+  bumpCounter("embeddings_computed");
+  logObservabilityEvent("embedding_cache_miss", { text_preview: text.slice(0, 60) });
+
+  cacheBusyKey = text;
+  try {
+    const vec = await fetchEmbedding(text, config, log);
+    if (vec !== null && !inFlight) {
+      // Store under LRU eviction. delete + set gives move-to-end.
+      embeddingCache.delete(text);
+      embeddingCache.set(text, vec);
+      while (embeddingCache.size > embeddingCacheMax) {
+        const firstKey = embeddingCache.keys().next().value;
+        if (firstKey === undefined) break;
+        embeddingCache.delete(firstKey);
+      }
+    }
+    return vec;
+  } finally {
+    if (cacheBusyKey === text) cacheBusyKey = null;
   }
 }
 
