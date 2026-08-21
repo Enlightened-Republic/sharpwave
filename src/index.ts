@@ -19,6 +19,33 @@ import { DEFAULT_CONFIG } from "./types.js";
 import type { BrainConfig, NodeType, EdgeType } from "./types.js";
 import { randomUUID } from "node:crypto";
 
+// NEW: Input validation
+import {
+  validateBrainQuery,
+  validateBrainWrite,
+  validateBrainLink,
+  validateBrainSupersede,
+  validateBrainHistory,
+  validateBrainExpand,
+  validateBrainReview,
+  validateBrainForget,
+  validateBrainEdges,
+  formatValidationErrors,
+} from "./validation.js";
+
+// NEW: Database backup
+import { createBackup, getLatestBackup, listBackups } from "./db-backup.js";
+
+// NEW: Metrics and observability
+import {
+  collectMetrics,
+  formatPrometheusMetrics,
+  formatMetricsAsText,
+} from "./metrics.js";
+
+// NEW: Resilience utilities
+import { withFallback } from "./resilience.js";
+
 // Injected from package.json at build time by esbuild.mjs — never hardcode it.
 // A stale constant misreports the server over MCP and makes checkForUpdate
 // compare against the wrong version, nagging users to install what they have.
@@ -40,7 +67,7 @@ setInterval(() => {
   void drainEmbeddingQueue(AGENT_ID, config);
 }, 30_000);
 
-// ─── Tool helpers ─────────────────────────────────────────────────────────────
+// ─── Tool helpers ────────────────────────────────────────────────────────
 
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
@@ -50,7 +77,7 @@ function err(text: string) {
   return { content: [{ type: "text" as const, text: `Error: ${text}` }], isError: true };
 }
 
-// ─── Tool definitions ─────────────────────────────────────────────────────────
+// ─── Tool definitions ───────────────────────────────────────────────────────
 
 const TOOLS = [
   {
@@ -91,7 +118,7 @@ const TOOLS = [
       properties: {
         from_id:   { type: "string", description: "Source node ID" },
         to_id:     { type: "string", description: "Target node ID" },
-        edge_type: { type: "string", description: "Edge type: caused_by|associates|supports|instance_of|goal_of|before|after|inhibits|summarizes|attaches_to|contradicts|supersedes|coreference_of|drives" },
+        edge_type: { type: "string", description: "Edge type: caused_by|associates|supports|instance_of|goal_of|before|after|inhibits|summarizes|attaches_to|contradicts|supersedes|coreference_of" },
         weight:    { type: "number", description: "Edge weight 0.0–1.0 (default 1.0)" },
       },
       required: ["from_id", "to_id", "edge_type"],
@@ -114,10 +141,12 @@ const TOOLS = [
   {
     name: "brain_stats",
     description:
-      "Return brain statistics: node/edge/episode counts, neuromodulator state, consolidation status, embedding coverage.",
+      "Return brain statistics: node/edge/episode counts, neuromodulator state, consolidation status, embedding coverage. Supports format=prometheus for Prometheus metrics.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        format: { type: "string", description: "Output format: text (default) or prometheus" },
+      },
     },
   },
   {
@@ -190,12 +219,14 @@ const TOOLS = [
   },
 ] as const;
 
-// ─── Tool handlers ────────────────────────────────────────────────────────────
+// ─── Tool handlers ────────────────────────────────────────────────────────
 
 async function handleBrainQuery(args: Record<string, unknown>) {
-  const query = String(args["query"] ?? "");
-  const limit = Number(args["limit"] ?? 10);
-  const typeFilter = args["type"] ? String(args["type"]) : undefined;
+  const validation = validateBrainQuery(args);
+  if (!validation.ok) {
+    return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
+  }
+  const { query, type: typeFilter, limit } = validation.data!;
 
   let results = await hybridRetrieve(AGENT_ID, query, SESSION_ID, config);
   if (typeFilter) results = results.filter((n) => n.type === typeFilter);
@@ -208,11 +239,11 @@ async function handleBrainQuery(args: Record<string, unknown>) {
 }
 
 function handleBrainWrite(args: Record<string, unknown>) {
-  const type = String(args["type"] ?? "semantic");
-  const label = String(args["label"] ?? "");
-  const content = String(args["content"] ?? "");
-  const importance = args["importance"] != null ? Number(args["importance"]) : undefined;
-  const emotional_weight = args["emotional_weight"] != null ? Number(args["emotional_weight"]) : undefined;
+  const validation = validateBrainWrite(args);
+  if (!validation.ok) {
+    return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
+  }
+  const { type, label, content, importance, emotional_weight } = validation.data!;
 
   const nodeId = writeNode(AGENT_ID, type as NodeType, label, content, {
     importance,
@@ -224,10 +255,11 @@ function handleBrainWrite(args: Record<string, unknown>) {
 }
 
 function handleBrainLink(args: Record<string, unknown>) {
-  const from_id = String(args["from_id"] ?? "");
-  const to_id = String(args["to_id"] ?? "");
-  const edge_type = String(args["edge_type"] ?? "associates");
-  const weight = args["weight"] != null ? Number(args["weight"]) : undefined;
+  const validation = validateBrainLink(args);
+  if (!validation.ok) {
+    return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
+  }
+  const { from_id, to_id, edge_type, weight } = validation.data!;
 
   if (!getNode(AGENT_ID, from_id)) return err(`node ${from_id} not found`);
   if (!getNode(AGENT_ID, to_id))   return err(`node ${to_id} not found`);
@@ -237,9 +269,11 @@ function handleBrainLink(args: Record<string, unknown>) {
 }
 
 function handleBrainSupersede(args: Record<string, unknown>) {
-  const old_node_id = String(args["old_node_id"] ?? "");
-  const new_content = String(args["new_content"] ?? "");
-  const new_label = args["new_label"] ? String(args["new_label"]) : undefined;
+  const validation = validateBrainSupersede(args);
+  if (!validation.ok) {
+    return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
+  }
+  const { old_node_id, new_content, new_label } = validation.data!;
 
   const old = getNode(AGENT_ID, old_node_id);
   if (!old) return err(`node ${old_node_id} not found`);
@@ -256,44 +290,28 @@ function handleBrainSupersede(args: Record<string, unknown>) {
   return ok(`Superseded: ${old.id.slice(0, 8)} → new node ${newId.slice(0, 8)}`);
 }
 
-function handleBrainStats() {
-  const db = getDb(AGENT_ID);
+function handleBrainStats(args: Record<string, unknown>) {
+  const format = String(args["format"] ?? "text").toLowerCase();
 
-  const totalNodes = (db.prepare("SELECT COUNT(*) as n FROM nodes").get() as { n: number }).n;
-  const totalEpisodes = (db.prepare("SELECT COUNT(*) as n FROM episodes").get() as { n: number }).n;
-  const totalEdges = (db.prepare("SELECT COUNT(*) as n FROM edges WHERE valid_until IS NULL").get() as { n: number }).n;
-  const avgSalience = (db.prepare("SELECT AVG(salience) as a FROM nodes").get() as { a: number | null }).a ?? 0;
-  const lowR = (db.prepare("SELECT COUNT(*) as n FROM nodes WHERE retrievability < 0.05").get() as { n: number }).n;
-  const byType = db.prepare("SELECT type, COUNT(*) as n FROM nodes GROUP BY type ORDER BY n DESC").all() as Array<{ type: string; n: number }>;
-  const withEmbeddings = (db.prepare("SELECT COUNT(*) as n FROM nodes WHERE embedding IS NOT NULL").get() as { n: number }).n;
-  const lastConsolidationMs = parseInt(getMeta(AGENT_ID, "last_consolidation") ?? "0", 10);
-  const lastConsolidation = lastConsolidationMs > 0 ? new Date(lastConsolidationMs).toISOString() : "never";
-
-  const neuro = getNeuromodulatorState(AGENT_ID);
-
-  const lines = [
-    `Agent: ${AGENT_ID}`,
-    `Total nodes: ${totalNodes} | Active edges: ${totalEdges} | Episodes: ${totalEpisodes}`,
-    `Avg salience: ${avgSalience.toFixed(3)} | Faded (R<0.05): ${lowR}`,
-    `By type: ${byType.map((r) => `${r.type}=${r.n}`).join(", ")}`,
-    `Embeddings: ${withEmbeddings}/${totalNodes} (${totalNodes > 0 ? Math.round(withEmbeddings / totalNodes * 100) : 0}%)`,
-    `Last consolidation: ${lastConsolidation}`,
-    ``,
-    `Neuromodulators:`,
-    `  dopamine       ${neuro.dopamine.toFixed(2)}`,
-    `  serotonin      ${neuro.serotonin.toFixed(2)}`,
-    `  acetylcholine  ${neuro.acetylcholine.toFixed(2)}`,
-    `  norepinephrine ${neuro.norepinephrine.toFixed(2)}`,
-    `  state: ${neuro.interpretation}`,
-  ];
-  return ok(lines.join("\n"));
+  try {
+    const metrics = collectMetrics(AGENT_ID, config);
+    
+    if (format === "prometheus") {
+      return ok(formatPrometheusMetrics(metrics));
+    } else {
+      return ok(formatMetricsAsText(metrics));
+    }
+  } catch (err) {
+    return err(`Failed to collect metrics: ${String(err)}`);
+  }
 }
 
 async function handleBrainHistory(args: Record<string, unknown>) {
-  const query = String(args["query"] ?? "");
-  const limit = Number(args["limit"] ?? 10);
-  const since = args["since"] ? Number(args["since"]) : undefined;
-  const until = args["until"] ? Number(args["until"]) : undefined;
+  const validation = validateBrainHistory(args);
+  if (!validation.ok) {
+    return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
+  }
+  const { query, since, until, limit } = validation.data!;
 
   let results = searchEpisodes(AGENT_ID, query, limit * 2);
   if (since != null) results = results.filter((e) => e.created_at >= since);
@@ -309,7 +327,12 @@ async function handleBrainHistory(args: Record<string, unknown>) {
 }
 
 function handleBrainExpand(args: Record<string, unknown>) {
-  const node_id = String(args["node_id"] ?? "");
+  const validation = validateBrainExpand(args);
+  if (!validation.ok) {
+    return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
+  }
+  const { node_id } = validation.data!;
+
   const node = getNode(AGENT_ID, node_id);
   if (!node) return err(`node ${node_id} not found`);
 
@@ -353,10 +376,11 @@ function handleBrainExpand(args: Record<string, unknown>) {
 }
 
 function handleBrainReview(args: Record<string, unknown>) {
-  const node_id = String(args["node_id"] ?? "");
-  const quality = Number(args["quality"] ?? 3);
-
-  if (quality < 0 || quality > 5) return err("quality must be 0–5");
+  const validation = validateBrainReview(args);
+  if (!validation.ok) {
+    return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
+  }
+  const { node_id, quality } = validation.data!;
 
   const before = getNode(AGENT_ID, node_id);
   if (!before) return err(`node ${node_id} not found`);
@@ -382,8 +406,11 @@ function handleBrainReview(args: Record<string, unknown>) {
 }
 
 function handleBrainForget(args: Record<string, unknown>) {
-  const node_id = String(args["node_id"] ?? "");
-  const force = Boolean(args["force"]);
+  const validation = validateBrainForget(args);
+  if (!validation.ok) {
+    return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
+  }
+  const { node_id, force } = validation.data!;
 
   const noop = { info: () => {}, warn: () => {}, error: () => {} };
   const result = forgetNodeById(AGENT_ID, node_id, noop, { force });
@@ -401,7 +428,12 @@ function handleBrainForget(args: Record<string, unknown>) {
 }
 
 function handleBrainEdges(args: Record<string, unknown>) {
-  const node_id = String(args["node_id"] ?? "");
+  const validation = validateBrainEdges(args);
+  if (!validation.ok) {
+    return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
+  }
+  const { node_id } = validation.data!;
+
   const node = getNode(AGENT_ID, node_id);
   if (!node) return err(`node ${node_id} not found`);
 
@@ -432,7 +464,7 @@ function handleBrainEdges(args: Record<string, unknown>) {
   }, null, 2));
 }
 
-// ─── Dispatcher ───────────────────────────────────────────────────────────────
+// ─── Dispatcher ─────────────────────────────────────────────────────────
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
@@ -442,7 +474,7 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<To
     case "brain_write":    return handleBrainWrite(args);
     case "brain_link":     return handleBrainLink(args);
     case "brain_supersede": return handleBrainSupersede(args);
-    case "brain_stats":    return handleBrainStats();
+    case "brain_stats":    return handleBrainStats(args);
     case "brain_history":  return await handleBrainHistory(args);
     case "brain_expand":   return handleBrainExpand(args);
     case "brain_review":   return handleBrainReview(args);
@@ -453,7 +485,7 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<To
   }
 }
 
-// ─── MCP server setup ─────────────────────────────────────────────────────────
+// ─── MCP server setup ───────────────────────────────────────────────────────
 
 const server = new Server(
   { name: "sharpwave", version: VERSION },
