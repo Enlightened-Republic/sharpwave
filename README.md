@@ -67,12 +67,13 @@ That's the whole setup. Memory lands in `~/.sharpwave/` as a SQLite database. No
 | `brain_write` | Store a new memory node. Automatically queues for embedding and PRISM/NEXUS auto-linking. |
 | `brain_link` | Create a typed edge between two existing nodes. |
 | `brain_supersede` | Replace an outdated node with updated content. Closes old edges, writes a supersedes edge, preserving the memory graph's temporal integrity. |
-| `brain_stats` | Return brain statistics: node/edge/episode counts, neuromodulator state, consolidation status, embedding coverage. |
+| `brain_stats` | Return brain statistics: node/edge/episode counts, neuromodulator state, consolidation status, embedding coverage, observability counters. |
 | `brain_history` | Search episode history (raw conversation turns) by keyword. |
 | `brain_expand` | Get full detail for a specific node: content, FSRS metrics, encoding context, and source episodes. |
 | `brain_review` | Apply an FSRS-6 spaced-repetition review to a node. Updates stability, retrievability, and SIGMA calibration. |
 | `brain_forget` | Physically delete a node from the brain. Refuses to delete nodes with active edges unless `force=true`. |
 | `brain_edges` | Get all active incoming and outgoing edges for a node. |
+| `brain_health` | Liveness + observability diagnostics: counters, embedding cache, FTS state, last consolidation timestamp. Zero side effects. |
 
 ## Memory types
 
@@ -93,6 +94,9 @@ All optional. Sharpwave runs with zero configuration.
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Local embedding endpoint |
 | `OPENROUTER_API_KEY` | — | Enables remote embeddings and generative consolidation |
 | `SHARPWAVE_NO_UPDATE_CHECK` | — | Set to disable the update check entirely |
+| `SHARPWAVE_OBSERVABILITY` | — | Set to `1` to enable JSONL event log at `${SHARPWAVE_DATA_DIR}/brain_events.jsonl`. Default OFF — zero overhead when unset. |
+| `SHARPWAVE_EMBEDDING_CACHE_MAXSIZE` | `1024` | Max entries in the embedding LRU cache. |
+| `SHARPWAVE_FTS_OPTIMIZE_EVERY` | `100` | Number of writes between automatic FTS5 `optimize` runs. Set to `0` to disable. |
 
 ### Update notifications
 
@@ -151,6 +155,35 @@ Worth knowing before you install:
 - **Single-writer.** SQLite with WAL. One server process per database; pointing two at the same file is not supported.
 - **Consolidation is time-based.** Memory quality improves as passes accumulate. A brand-new database is a plain store until it has history to work with.
 
+
+## Recent updates (v0.3.0)
+
+Ports the ClawBrain v0.4.0 audit fixes into the TypeScript codebase.
+All changes are additive — the existing API is preserved.
+
+- **WAL retry** — every critical write path (nodes, edges, episodes,
+  meta, self-model, forget) now retries on `SQLITE_BUSY` /
+  `SQLITE_LOCKED` with exponential backoff (100ms → 200ms → 400ms +
+  0–50ms jitter, 3 attempts). Async + sync variants.
+- **Embedding LRU cache** — `Map`-based, default 1024 entries,
+  `SHARPWAVE_EMBEDDING_CACHE_MAXSIZE` override. Re-entrancy guard
+  via a busy-key flag. Exposes `embeddingCacheStats()`.
+- **MinHash entity resolution** — `findNearDuplicates` with embedding
+  cosine fast path + character-trigram Jaccard fallback;
+  `deduplicateExisting` union-find grouping for offline maintenance;
+  `mergeCoreferentNodes` wires `coreference_of` edges.
+- **FTS5 maintenance** — `maintenance()` runs rebuild + optimize;
+  `bumpWriteCounter()` auto-triggers optimize every 100 writes
+  (`SHARPWAVE_FTS_OPTIMIZE_EVERY` override). Graceful no-op when FTS
+  tables are absent.
+- **Observability** — diagnostic counters (always on) + optional
+  JSONL event log when `SHARPWAVE_OBSERVABILITY=1` (default off).
+  Counters surface via the new `brain_health` tool and an extended
+  `brain_stats` section.
+- **Input validation** — new `src/validation.ts`. All tool handlers
+  that take user-provided IDs/strings now reject empty inputs and clamp
+  numeric ranges; enum-style fields validate against allowlists with
+  safe defaults.
 
 ## Companion tools
 

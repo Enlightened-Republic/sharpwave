@@ -1,6 +1,6 @@
 {
   "name": "sharpwave",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Long-term memory for AI agents. An MCP server that remembers across sessions, forgets what stops mattering, and consolidates the rest — modeled on how the hippocampus actually works.",
   "type": "module",
   "main": "dist/index.js",
