@@ -62,6 +62,16 @@ export async function hybridRetrieve(
   }
 
   updateWorkingMemory(agentId, sessionId, topNodes, config.workingMemorySlots);
+
+  if (topNodes.length > 0) {
+    bumpCounter("memories_recalled", topNodes.length);
+    logObservabilityEvent("recall", {
+      agentId,
+      queryLength: query.length,
+      resultCount: topNodes.length,
+    });
+  }
+
   return topNodes;
 }
 
