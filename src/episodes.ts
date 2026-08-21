@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "./db.js";
+import { getDb, bumpWriteCounter } from "./db.js";
+import { executeWithWalRetrySync } from "./wal-retry.js";
 import type { Episode } from "./types.js";
 
 export function appendEpisode(
@@ -15,10 +16,17 @@ export function appendEpisode(
   const now = Date.now();
   const imp = importance ?? scoreImportance(role, content);
 
-  db.prepare(`
-    INSERT INTO episodes (id, session_id, role, content, importance, tokens, ripple_count, created_at, meta)
-    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
-  `).run(id, sessionId, role, content, imp, estimateTokens(content), now, meta ? JSON.stringify(meta) : null);
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      d.prepare(`
+        INSERT INTO episodes (id, session_id, role, content, importance, tokens, ripple_count, created_at, meta)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+      `).run(id, sessionId, role, content, imp, estimateTokens(content), now, meta ? JSON.stringify(meta) : null);
+    },
+    { op: `episodes.write:${role}` },
+  );
+  bumpWriteCounter(db);
 
   return id;
 }

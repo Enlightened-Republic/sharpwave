@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "./db.js";
+import { getDb, bumpWriteCounter } from "./db.js";
+import { executeWithWalRetrySync } from "./wal-retry.js";
 import type { BrainEdge, EdgeType } from "./types.js";
 
 /**
@@ -37,43 +38,69 @@ export function writeEdge(
   const id = randomUUID();
   const now = Date.now();
 
-  db.prepare(`
-    INSERT INTO edges (id, from_id, to_id, type, weight, valid_from, valid_until, learned_at, created_at, meta)
-    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-  `).run(
-    id, fromId, toId, type,
-    opts.weight ?? 1.0,
-    opts.validFrom ?? now,
-    now, now,
-    opts.meta ? JSON.stringify(opts.meta) : null,
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      d.prepare(`
+        INSERT INTO edges (id, from_id, to_id, type, weight, valid_from, valid_until, learned_at, created_at, meta)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+      `).run(
+        id, fromId, toId, type,
+        opts.weight ?? 1.0,
+        opts.validFrom ?? now,
+        now, now,
+        opts.meta ? JSON.stringify(opts.meta) : null,
+      );
+    },
+    { op: `edges.write:${type}` },
   );
+  bumpWriteCounter(db);
 
   return id;
 }
 
 export function closeEdge(agentId: string, edgeId: string): void {
   const db = getDb(agentId);
-  db.prepare("UPDATE edges SET valid_until = ? WHERE id = ?").run(Date.now(), edgeId);
+  executeWithWalRetrySync(
+    db,
+    (d) => { d.prepare("UPDATE edges SET valid_until = ? WHERE id = ?").run(Date.now(), edgeId); },
+    { op: `edges.close:${edgeId.slice(0, 8)}` },
+  );
+  bumpWriteCounter(db);
 }
 
 export function closeEdgesFromNode(agentId: string, nodeId: string, type?: EdgeType): void {
   const db = getDb(agentId);
-  if (type) {
-    db.prepare(
-      "UPDATE edges SET valid_until = ? WHERE from_id = ? AND type = ? AND valid_until IS NULL"
-    ).run(Date.now(), nodeId, type);
-  } else {
-    db.prepare(
-      "UPDATE edges SET valid_until = ? WHERE from_id = ? AND valid_until IS NULL"
-    ).run(Date.now(), nodeId);
-  }
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      if (type) {
+        d.prepare(
+          "UPDATE edges SET valid_until = ? WHERE from_id = ? AND type = ? AND valid_until IS NULL"
+        ).run(Date.now(), nodeId, type);
+      } else {
+        d.prepare(
+          "UPDATE edges SET valid_until = ? WHERE from_id = ? AND valid_until IS NULL"
+        ).run(Date.now(), nodeId);
+      }
+    },
+    { op: `edges.closeFrom:${nodeId.slice(0, 8)}` },
+  );
+  bumpWriteCounter(db);
 }
 
 export function closeEdgesToNode(agentId: string, nodeId: string): void {
   const db = getDb(agentId);
-  db.prepare(
-    "UPDATE edges SET valid_until = ? WHERE to_id = ? AND valid_until IS NULL"
-  ).run(Date.now(), nodeId);
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      d.prepare(
+        "UPDATE edges SET valid_until = ? WHERE to_id = ? AND valid_until IS NULL"
+      ).run(Date.now(), nodeId);
+    },
+    { op: `edges.closeTo:${nodeId.slice(0, 8)}` },
+  );
+  bumpWriteCounter(db);
 }
 
 export function getActiveEdgesFrom(agentId: string, nodeId: string): BrainEdge[] {

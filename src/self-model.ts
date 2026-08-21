@@ -1,4 +1,5 @@
-import { getDb } from "./db.js";
+import { getDb, bumpWriteCounter } from "./db.js";
+import { executeWithWalRetrySync } from "./wal-retry.js";
 import type { SelfModel } from "./types.js";
 
 export function getSelfModel(agentId: string): SelfModel {
@@ -19,8 +20,15 @@ export function updateSelfModelField(
   }
   const db = getDb(agentId);
   // Field is validated against an allowlist — safe to interpolate into column name
-  db.prepare(`UPDATE self_model SET ${field} = ?, updated_at = ? WHERE id = 'singleton'`)
-    .run(value, Date.now());
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      d.prepare(`UPDATE self_model SET ${field} = ?, updated_at = ? WHERE id = 'singleton'`)
+        .run(value, Date.now());
+    },
+    { op: `self_model.update:${field}` },
+  );
+  bumpWriteCounter(db);
 }
 
 export function formatSelfModelForContext(model: SelfModel, budgetChars: number): string {

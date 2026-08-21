@@ -3,8 +3,129 @@ import * as sqliteVec from "sqlite-vec";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
+import { executeWithWalRetrySync } from "./wal-retry.js";
+import { bumpCounter, logObservabilityEvent } from "./observability.js";
 
 const dbs = new Map<string, Database.Database>();
+
+// Process-lifetime counters for FTS maintenance (item #4). The actual
+// `fts_optimizes` / `fts_rebuilds` counters are exposed via observability.ts;
+// the local write counter is what triggers an automatic OPTIMIZE every N writes.
+let _writeCount = 0;
+// Default threshold matches the Python reference (every 100 writes). Operators
+// can override via SHARPWAVE_FTS_OPTIMIZE_EVERY.
+const _ftsOptimizeEvery = (() => {
+  const raw = process.env["SHARPWAVE_FTS_OPTIMIZE_EVERY"];
+  const n = raw ? parseInt(raw, 10) : 100;
+  return Number.isFinite(n) && n > 0 ? n : 100;
+})();
+
+/**
+ * Run an FTS5 maintenance command against the brain's FTS virtual tables.
+ *
+ * Ports ClawBrain v0.4.0 audit item #4 (FTS5 maintenance). Modes:
+ *   - 'optimize': incremental merge of the FTS segment files. Safe and fast;
+ *     called automatically every N writes from `_bumpWriteCounter`.
+ *   - 'rebuild': full rebuild from the content table. Slow; called from
+ *     the public `maintenance()` entry point.
+ *
+ * No-op if the FTS tables are missing (sqlite-vec / fts5 unavailable on
+ * the platform) — same graceful-degradation contract as the Python
+ * reference.
+ */
+function ftsMaintenance(db: Database.Database, mode: "optimize" | "rebuild"): {
+  ran: boolean;
+  mode: string;
+  tableExists: boolean;
+  reason: string;
+  durationMs: number;
+} {
+  const result = {
+    ran: false,
+    mode,
+    tableExists: false,
+    reason: "unknown",
+    durationMs: 0,
+  };
+  if (mode !== "optimize" && mode !== "rebuild") {
+    result.reason = `unknown mode: ${mode}`;
+    return result;
+  }
+
+  const t0 = Date.now();
+  try {
+    // Check that the FTS virtual table exists before issuing the command —
+    // sqlite returns an error if you INSERT INTO '<table>' for a table
+    // that isn't present, and we want a clean "absent" reason instead.
+    const exists = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ? LIMIT 1",
+    ).get("nodes_fts") as { 1: number } | undefined;
+    if (!exists) {
+      result.reason = "nodes_fts absent";
+      result.durationMs = Date.now() - t0;
+      return result;
+    }
+
+    db.exec(`INSERT INTO nodes_fts(nodes_fts) VALUES('${mode}')`);
+    db.exec(`INSERT INTO episodes_fts(episodes_fts) VALUES('${mode}')`);
+
+    result.ran = true;
+    result.tableExists = true;
+    result.reason = "ok";
+    result.durationMs = Date.now() - t0;
+
+    if (mode === "rebuild") {
+      bumpCounter("fts_rebuilds");
+      logObservabilityEvent("fts_rebuild", { durationMs: result.durationMs });
+    } else {
+      bumpCounter("fts_optimizes");
+      logObservabilityEvent("fts_optimize", { durationMs: result.durationMs });
+    }
+  } catch (err) {
+    // Maintenance must NEVER break the main write path.
+    result.reason = `error: ${String(err)}`;
+    result.durationMs = Date.now() - t0;
+  }
+  return result;
+}
+
+/**
+ * Increment the write counter and auto-trigger FTS optimize when the
+ * threshold is crossed. Called from writeNode, forgetNodeById, etc. so
+ * the FTS index stays healthy over long write-heavy sessions without
+ * operator intervention.
+ */
+export function bumpWriteCounter(db: Database.Database): void {
+  _writeCount++;
+  if (_ftsOptimizeEvery > 0 && _writeCount % _ftsOptimizeEvery === 0) {
+    ftsMaintenance(db, "optimize");
+  }
+}
+
+/**
+ * Public maintenance entry point. Runs FTS5 rebuild + optimize. Safe to
+ * call repeatedly; no-ops when FTS5 is not configured. Surfaced via the
+ * `brain_health` tool in index.ts (item #5 observability).
+ */
+export function maintenance(agentId: string): {
+  rebuild: ReturnType<typeof ftsMaintenance>;
+  optimize: ReturnType<typeof ftsMaintenance>;
+  writeCount: number;
+  ftsOptimizeEvery: number;
+} {
+  const db = getDb(agentId);
+  const rebuild = ftsMaintenance(db, "rebuild");
+  const optimize = ftsMaintenance(db, "optimize");
+  return { rebuild, optimize, writeCount: _writeCount, ftsOptimizeEvery: _ftsOptimizeEvery };
+}
+
+export function getWriteCount(): number {
+  return _writeCount;
+}
+
+export function getFtsOptimizeEvery(): number {
+  return _ftsOptimizeEvery;
+}
 
 function resolveDbPath(agentId: string): string {
   const explicit = process.env["SHARPWAVE_DB_PATH"];
@@ -525,5 +646,10 @@ export function getMeta(agentId: string, key: string): string | null {
 
 export function setMeta(agentId: string, key: string, value: string): void {
   const db = getDb(agentId);
-  db.prepare("INSERT OR REPLACE INTO meta_kv (key, value) VALUES (?, ?)").run(key, value);
+  executeWithWalRetrySync(
+    db,
+    (d) => { d.prepare("INSERT OR REPLACE INTO meta_kv (key, value) VALUES (?, ?)").run(key, value); },
+    { op: `meta.set:${key}` },
+  );
+  bumpWriteCounter(db);
 }

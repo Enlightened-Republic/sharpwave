@@ -1,4 +1,4 @@
-import { getDb, getMeta, setMeta } from "./db.js";
+import { getDb, getMeta, setMeta, bumpWriteCounter } from "./db.js";
 import { decayEligibilityTraces, decayRetrievability, writeNode, ftsSearchNodes } from "./nodes.js";
 import { queueEmbedding, vectorSearchNodes, bufferToFloat32, cosineSimilarity } from "./embeddings.js";
 import { writeEdge, edgeExists } from "./edges.js";
@@ -6,6 +6,8 @@ import { getEpisodesSince, getEpisodeCount } from "./episodes.js";
 import { mergeCoreferentNodes } from "./entity-resolution.js";
 import { detectSkillCandidates } from "./skill-evolution.js";
 import { classifySentence, importanceForType, jaccardSim } from "./utils.js";
+import { executeWithWalRetrySync } from "./wal-retry.js";
+import { bumpCounter, logObservabilityEvent, setLastConsolidationAt } from "./observability.js";
 import type { BrainConfig, Episode, BrainNode, NeuromodState } from "./types.js";
 
 type Logger = { info: (msg: string) => void; warn: (msg: string) => void };
@@ -252,6 +254,8 @@ export async function runConsolidation(
 
   setMeta(agentId, "last_consolidation", String(Date.now()));
   setMeta(agentId, "last_consolidation_episode_count", String(getEpisodeCount(agentId)));
+  setLastConsolidationAt(new Date().toISOString());
+  logObservabilityEvent("consolidate", { agentId });
   log.info(`[sharpwave] consolidation complete (agent=${agentId})`);
 }
 
@@ -1315,13 +1319,22 @@ export function forgetNodeById(
   );
   const delNode = db.prepare("DELETE FROM nodes WHERE id = ?");
 
-  db.transaction(() => {
-    try { delVec.run(row.rowid); } catch { /* nodes_vec may not be loaded */ }
-    delWm.run(nodeId);
-    delAssoc.run(nodeId, nodeId);
-    delEdges.run(nodeId, nodeId);
-    delNode.run(nodeId);
-  })();
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      d.transaction(() => {
+        try { delVec.run(row.rowid); } catch { /* nodes_vec may not be loaded */ }
+        delWm.run(nodeId);
+        delAssoc.run(nodeId, nodeId);
+        delEdges.run(nodeId, nodeId);
+        delNode.run(nodeId);
+      })();
+    },
+    { op: `nodes.forget:${nodeId.slice(0, 8)}` },
+  );
+  bumpWriteCounter(db);
+  bumpCounter("memories_forgotten");
+  logObservabilityEvent("forget", { nodeId, type: row.type });
 
   try {
     db.pragma("wal_checkpoint(TRUNCATE)");

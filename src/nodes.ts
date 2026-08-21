@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "./db.js";
+import { getDb, bumpWriteCounter } from "./db.js";
+import { executeWithWalRetrySync } from "./wal-retry.js";
+import { bumpCounter, logObservabilityEvent } from "./observability.js";
 import type { BrainNode, BrainConfig, NodeType, NeuromodState } from "./types.js";
 
 const HALF_LIFE_DAYS: Record<string, number> = {
@@ -285,25 +287,38 @@ export function writeNode(
   const stability = halfLife * importance * (1 + Math.abs(emotionalWeight) * 0.5);
   const salience = computeSalience(importance, emotionalWeight, 1.0, 0, 0);
 
-  db.prepare(`
-    INSERT INTO nodes
-      (id, type, label, content, importance, salience, stability, retrievability, ef,
-       access_count, emotional_weight, episode_ids, source, embedding,
-       encoding_context, extraction_confidence, ripple_count, eligibility_trace,
-       created_at, accessed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1.0, 2.5,
-            0, ?, ?, ?, NULL,
-            ?, ?, 0, 0.0,
-            ?, ?, ?)
-  `).run(
-    id, type, label, content, importance, salience, stability,
-    emotionalWeight,
-    opts.episode_ids ? JSON.stringify(opts.episode_ids) : null,
-    opts.source ?? null,
-    opts.encodingContext ? JSON.stringify(opts.encodingContext) : null,
-    opts.extractionConfidence ?? 1.0,
-    now, now, now,
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      d.prepare(`
+        INSERT INTO nodes
+          (id, type, label, content, importance, salience, stability, retrievability, ef,
+           access_count, emotional_weight, episode_ids, source, embedding,
+           encoding_context, extraction_confidence, ripple_count, eligibility_trace,
+           created_at, accessed_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1.0, 2.5,
+                0, ?, ?, ?, NULL,
+                ?, ?, 0, 0.0,
+                ?, ?, ?)
+      `).run(
+        id, type, label, content, importance, salience, stability,
+        emotionalWeight,
+        opts.episode_ids ? JSON.stringify(opts.episode_ids) : null,
+        opts.source ?? null,
+        opts.encodingContext ? JSON.stringify(opts.encodingContext) : null,
+        opts.extractionConfidence ?? 1.0,
+        now, now, now,
+      );
+    },
+    { op: `nodes.write:${type}` },
   );
+  bumpWriteCounter(db);
+  bumpCounter("memories_stored");
+  logObservabilityEvent("remember", {
+    nodeId: id,
+    type,
+    importance: Math.round(importance * 1000) / 1000,
+  });
 
   return id;
 }
@@ -391,24 +406,30 @@ export function touchNode(agentId: string, nodeId: string, quality = 4): void {
     node.ripple_count + 1,
   );
 
-  db.prepare(`
-    UPDATE nodes
-    SET difficulty       = ?,
-        stability        = ?,
-        retrievability   = ?,
-        access_count     = access_count + 1,
-        review_count     = review_count + 1,
-        last_review      = ?,
-        eligibility_trace = 1.0,
-        ripple_count     = ripple_count + 1,
-        salience         = ?,
-        review_history   = ?,
-        stability_sigma  = ?,
-        accessed_at      = ?,
-        updated_at       = ?
-    WHERE id = ?
-  `).run(newDifficulty, newStability, newRetrievability, now, newSalience,
-         JSON.stringify(history), newSigma, now, now, nodeId);
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      d.prepare(`
+        UPDATE nodes
+        SET difficulty       = ?,
+            stability        = ?,
+            retrievability   = ?,
+            access_count     = access_count + 1,
+            review_count     = review_count + 1,
+            last_review      = ?,
+            eligibility_trace = 1.0,
+            ripple_count     = ripple_count + 1,
+            salience         = ?,
+            review_history   = ?,
+            stability_sigma  = ?,
+            accessed_at      = ?,
+            updated_at       = ?
+        WHERE id = ?
+      `).run(newDifficulty, newStability, newRetrievability, now, newSalience,
+             JSON.stringify(history), newSigma, now, now, nodeId);
+    },
+    { op: `nodes.touch:${nodeId.slice(0, 8)}` },
+  );
 }
 
 export function getNode(agentId: string, id: string): BrainNode | null {
