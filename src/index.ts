@@ -301,8 +301,8 @@ async function handleBrainStats(args: Record<string, unknown>) {
     } else {
       return ok(formatMetricsAsText(metrics));
     }
-  } catch (err) {
-    return err(`Failed to collect metrics: ${String(err)}`);
+  } catch (thrownErr) {
+    return err(`Failed to collect metrics: ${String(thrownErr)}`);
   }
 }
 

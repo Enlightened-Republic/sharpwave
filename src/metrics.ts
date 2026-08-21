@@ -87,7 +87,7 @@ export async function collectMetrics(agentId: string, config: BrainConfig): Prom
   const episodesExtracted = (db.prepare("SELECT COUNT(*) as n FROM episodes WHERE llm_extracted = 1").get() as { n: number }).n;
 
   // Consolidation status
-  const lastConsolidationMs = parseInt((db.prepare("SELECT value FROM meta WHERE key = 'last_consolidation'").get() as { value?: string } | undefined)?.value ?? "0", 10);
+  const lastConsolidationMs = parseInt((db.prepare("SELECT value FROM meta_kv WHERE key = 'last_consolidation'").get() as { value?: string } | undefined)?.value ?? "0", 10);
   const lastConsolidation = lastConsolidationMs > 0 ? new Date(lastConsolidationMs).toISOString() : null;
 
   // Database size
@@ -119,7 +119,7 @@ export async function collectMetrics(agentId: string, config: BrainConfig): Prom
       MAX(CASE WHEN key = 'neuro_acetylcholine' THEN value END) as acetylcholine,
       MAX(CASE WHEN key = 'neuro_norepinephrine' THEN value END) as norepinephrine,
       MAX(CASE WHEN key = 'neuro_state' THEN value END) as state
-    FROM meta
+    FROM meta_kv
   `).get() as any;
 
   const dopamine = parseFloat(neuroRow?.dopamine ?? "0.5");
@@ -137,7 +137,7 @@ export async function collectMetrics(agentId: string, config: BrainConfig): Prom
     embedding_coverage_percent: embeddingCoverage,
     avg_retrievability: avgRetrievability,
     avg_salience: avgSalience,
-    nodes_faded,
+    nodes_faded: nodesFaded,
     total_active_edges: totalEdges,
     edges_by_type: edgesByTypeMap,
     total_episodes: totalEpisodes,
