@@ -300,7 +300,7 @@ export function writeNode(
   // so the embedding pipeline (which deliberately wants fresh rows even if
   // their text matches a stored node) can opt out.
   const dedupe = opts.deduplicate ?? true;
-  if (deduplicate && content) {
+  if (dedupe && content) {
     const threshold = opts.dedupeThreshold ?? 0.85;
     try {
       const dups = findNearDuplicates(agentId, content, null, threshold, type);

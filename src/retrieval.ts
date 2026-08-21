@@ -3,6 +3,7 @@ import { ftsSearchNodes, getTopByType, touchNode } from "./nodes.js";
 import { fetchEmbedding, vectorSearchNodes, rrfFuse, drainEmbeddingQueue } from "./embeddings.js";
 import { spreadActivation, workingMemoryBoost, updateWorkingMemory } from "./activation.js";
 import { getNeuromodulatorState } from "./consolidation.js";
+import { bumpCounter, logObservabilityEvent } from "./observability.js";
 import type { BrainConfig, BrainNode, ActivatedNode } from "./types.js";
 
 export async function hybridRetrieve(
