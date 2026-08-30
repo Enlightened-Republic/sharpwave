@@ -11,6 +11,7 @@ import { getSelfModel } from "./self-model.js";
 import { searchEpisodes, getEpisodesByIds } from "./episodes.js";
 import { getDb, getMeta } from "./db.js";
 import { getNeuromodulatorState, forgetNodeById } from "./consolidation.js";
+import { resetBrain } from "./reset.js";
 import { hybridRetrieve } from "./retrieval.js";
 import { drainEmbeddingQueue, queueEmbedding } from "./embeddings.js";
 import { clearStaleWorkingMemory } from "./activation.js";
@@ -215,6 +216,21 @@ const TOOLS = [
         node_id: { type: "string", description: "Node ID to inspect" },
       },
       required: ["node_id"],
+    },
+  },
+  {
+    name: "brain_reset",
+    description:
+      "DESTRUCTIVE. Wipe this agent's entire brain — every node, edge, episode, vector, working-memory row, and the self-model — and re-seed an empty self-model. A timestamped .db backup is taken first. Embedding config (Ollama/OpenRouter) and the vec table's dimension are untouched. Requires confirm to exactly equal this agent's id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        confirm: {
+          type: "string",
+          description: "Must exactly equal this agent's SHARPWAVE_AGENT_ID for the reset to proceed.",
+        },
+      },
+      required: ["confirm"],
     },
   },
 ] as const;
@@ -427,6 +443,34 @@ function handleBrainForget(args: Record<string, unknown>) {
   return err(result.reason ?? "unknown");
 }
 
+function handleBrainReset(args: Record<string, unknown>) {
+  const confirm = typeof args.confirm === "string" ? args.confirm : "";
+  if (confirm !== AGENT_ID) {
+    return err(
+      `refused — brain_reset needs confirm: "${AGENT_ID}" (this agent's id). ` +
+        `This permanently wipes every memory; a backup is taken but nothing is auto-restored.`,
+    );
+  }
+
+  let backupPath: string;
+  try {
+    backupPath = createBackup(AGENT_ID, "brain_reset");
+  } catch (e) {
+    return err(`aborted before wiping anything — backup failed: ${String(e)}`);
+  }
+
+  const cleared = resetBrain(AGENT_ID);
+  return ok(
+    [
+      `Brain reset for "${AGENT_ID}".`,
+      `Backup: ${backupPath}`,
+      `Cleared: ${cleared.nodes} nodes, ${cleared.edges} edges, ${cleared.episodes} episodes, ` +
+        `${cleared.vectors} vectors, ${cleared.associations} associations, ${cleared.workingMemory} working-memory rows.`,
+      `Self-model reset to empty. Embedding config (Ollama/OpenRouter) unchanged — new memories embed as before.`,
+    ].join("\n"),
+  );
+}
+
 function handleBrainEdges(args: Record<string, unknown>) {
   const validation = validateBrainEdges(args);
   if (!validation.ok) {
@@ -480,6 +524,7 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<To
     case "brain_review":   return handleBrainReview(args);
     case "brain_forget":   return handleBrainForget(args);
     case "brain_edges":    return handleBrainEdges(args);
+    case "brain_reset":    return handleBrainReset(args);
     default:
       return err(`unknown tool: ${name}`);
   }

@@ -3,7 +3,7 @@
  * Provides safe checkpoint creation before destructive operations like consolidation.
  */
 
-import { existsSync, copyFileSync, unlinkSync, renameSync } from "node:fs";
+import { existsSync, copyFileSync, unlinkSync, renameSync, mkdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { getDb, getMeta, setMeta } from "./db.js";
 
@@ -24,7 +24,7 @@ const MAX_BACKUPS_PER_AGENT = 5;
  */
 export function getBackupDir(agentId: string): string {
   const db = getDb(agentId);
-  const dbPath = db.exec("PRAGMA database_list")[0]?.file as string | undefined;
+  const dbPath = db.name as string | undefined;
   if (!dbPath) {
     throw new Error(`Could not determine database path for agent ${agentId}`);
   }
@@ -47,7 +47,7 @@ export function createBackup(agentId: string, reason: string): string {
     console.warn(`[sharpwave] backup: wal_checkpoint failed: ${String(err)}`);
   }
 
-  const dbPath = db.exec("PRAGMA database_list")[0]?.file as string | undefined;
+  const dbPath = db.name as string | undefined;
   if (!dbPath) {
     throw new Error(`Could not determine database path for agent ${agentId}`);
   }
@@ -60,7 +60,7 @@ export function createBackup(agentId: string, reason: string): string {
   
   // Create backup directory if it doesn't exist
   if (!existsSync(backupDir)) {
-    require("node:fs").mkdirSync(backupDir, { recursive: true });
+    mkdirSync(backupDir, { recursive: true });
   }
 
   const timestamp = Date.now();
@@ -100,7 +100,7 @@ export function restoreBackup(agentId: string, backupPath: string): void {
   }
 
   const db = getDb(agentId);
-  const dbPath = db.exec("PRAGMA database_list")[0]?.file as string | undefined;
+  const dbPath = db.name as string | undefined;
   if (!dbPath) {
     throw new Error(`Could not determine database path for agent ${agentId}`);
   }
@@ -214,7 +214,6 @@ export function getLatestBackup(agentId: string): BackupInfo | null {
  * Get disk size of all backups for an agent.
  */
 export function getBackupStorageUsage(agentId: string): number {
-  const { statSync } = require("node:fs");
   let total = 0;
 
   for (const backup of loadBackupManifest(agentId)) {

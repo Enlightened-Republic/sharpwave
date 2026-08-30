@@ -95,6 +95,23 @@ const leaked = (t) => /postgres|jwt|thursday/i.test(t);
   // 0.2.1 regression — a warm session must not leak the prior answer.
   const after = text(await call(a, "brain_query", { query: UNRELATED }));
   check("unrelated query misses with WARM working memory", !leaked(after), leaked(after) ? `LEAKED: ${after.slice(0, 120)}` : "");
+
+  // brain_reset — refuses without the exact agent id, then wipes everything.
+  const refused = text(await call(a, "brain_reset", { confirm: "wrong" }));
+  check("brain_reset refuses a bad confirm", /refused/i.test(refused), refused.slice(0, 80));
+  const still = text(await call(a, "brain_query", { query: ONTOPIC }));
+  check("brain still intact after a refused reset", /postgres/i.test(still), still.slice(0, 80));
+
+  const wiped = text(await call(a, "brain_reset", { confirm: "smoke" }));
+  check("brain_reset succeeds with the right confirm", /Brain reset/i.test(wiped) && /Backup:/.test(wiped), wiped.slice(0, 120));
+  const stats = text(await call(a, "brain_stats", {}));
+  check("brain has 0 nodes after reset", /\b0\b/.test(stats) && !/postgres/i.test(text(await call(a, "brain_query", { query: ONTOPIC }))), stats.slice(0, 120));
+
+  // Writing works again after a reset (embedding path untouched).
+  await call(a, "brain_write", { type: "semantic", label: "post-reset write", content: "The cache layer is Redis 7 on ElastiCache." });
+  const postReset = text(await call(a, "brain_query", { query: "what cache do we use?" }));
+  check("brain_write + recall work after a reset", /redis/i.test(postReset), postReset.slice(0, 120));
+
   a.proc.kill();
   await new Promise((r) => setTimeout(r, 500));
 
