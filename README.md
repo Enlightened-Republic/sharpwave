@@ -1,15 +1,13 @@
 # Sharpwave
 
-**Long-term memory for OpenClaw agents.** An MCP server that remembers across
-sessions, forgets what stops mattering, and consolidates the rest.
-
-One server, every agent, a separate brain each. Sharpwave speaks standard MCP, so
-it also drops into any other MCP client — but it's built for how OpenClaw runs
-fleets of agents.
+**Long-term memory for AI agents.** An MCP server that remembers across sessions,
+forgets what stops mattering, and consolidates the rest.
 
 ```bash
 npx -y sharpwave
 ```
+
+Works with OpenClaw, Claude Code, Claude Desktop, Cursor, and any other MCP client.
 
 ---
 
@@ -37,70 +35,18 @@ The name comes from **sharp-wave ripples** — the hippocampal events that repla
 
 **Hybrid retrieval.** Full-text search fused with vector similarity via reciprocal rank fusion, then spread across the graph. Vector search is optional — full-text and graph retrieval work with no embedding provider at all.
 
-**Built for a fleet.** One Sharpwave process backs every agent in your OpenClaw
-setup. Each agent's memories live in their own database — isolated, never
-cross-contaminated — and a single config entry covers all of them.
+**Multi-agent by design.** One Sharpwave process can back any number of agents at
+once. Each agent's memories live in their own database — isolated, never
+cross-contaminated — under a single config entry.
 
 ## Install
 
-### OpenClaw
+Sharpwave is a standard stdio MCP server. Point any MCP client at `npx -y sharpwave`.
 
-Add it once, for every agent:
+### Any MCP client
 
-```bash
-openclaw mcp add sharpwave --command npx --arg -y --arg sharpwave
-openclaw mcp doctor sharpwave --probe
-```
-
-Or add it straight to `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "sharpwave": {
-        "command": "npx",
-        "args": ["-y", "sharpwave"],
-        "env": {
-          "SHARPWAVE_NO_UPDATE_CHECK": "1"
-        }
-      }
-    }
-  }
-}
-```
-
-With `SHARPWAVE_AGENT_ID` left **unset**, one Sharpwave process serves every
-agent. Each `brain_*` call carries the calling agent's own `agent` id and is
-routed to its own database at `~/.sharpwave/<agent>/brain.db`. Give each agent an
-`AGENTS.md` block that tells it to pass `agent: "<its-id>"` on every brain call:
-
-```markdown
-## Your Sharpwave brain
-
-You have a persistent memory. On every `brain_*` call, pass `agent: "marley"`.
-Recall relevant memories with `brain_query` before answering; store durable
-facts with `brain_write`.
-```
-
-Set `SHARPWAVE_AGENTS` to a comma-separated list to restrict which ids the server
-will accept.
-
-To pin one server to a single agent instead, set `SHARPWAVE_AGENT_ID=<id>` — the
-`agent` argument then becomes optional, and if passed it must match.
-
-### Other MCP clients
-
-Sharpwave is a standard stdio MCP server. It runs anywhere MCP does.
-
-**Claude Code**
-
-```bash
-claude mcp add sharpwave -- npx -y sharpwave
-```
-
-**Claude Desktop, Cursor, and others** — add to the client's MCP config
-(`claude_desktop_config.json`, Cursor's `mcp.json`, etc.):
+Add to the client's MCP config (`claude_desktop_config.json`, Cursor's `mcp.json`,
+or equivalent):
 
 ```json
 {
@@ -112,6 +58,28 @@ claude mcp add sharpwave -- npx -y sharpwave
   }
 }
 ```
+
+### Claude Code
+
+```bash
+claude mcp add sharpwave -- npx -y sharpwave
+```
+
+### OpenClaw
+
+```bash
+openclaw mcp add sharpwave --command npx --arg -y --arg sharpwave
+openclaw mcp doctor sharpwave --probe
+```
+
+### Multi-agent
+
+Leave `SHARPWAVE_AGENT_ID` unset and one Sharpwave process serves any number of
+agents: every `brain_*` call carries the calling agent's own `agent` id and is
+routed to its own database at `~/.sharpwave/<agent>/brain.db`. `SHARPWAVE_AGENTS`
+(comma-separated) restricts which ids are accepted. To pin one server to a single
+agent, set `SHARPWAVE_AGENT_ID=<id>` — the `agent` argument then becomes optional,
+and if passed it must match.
 
 Memory lands in `~/.sharpwave/` as a SQLite database. Nothing leaves your machine unless you configure a remote embedding provider.
 
@@ -178,15 +146,13 @@ ollama pull qwen3-embedding:0.6b
 
 ```json
 {
-  "mcp": {
-    "servers": {
-      "sharpwave": {
-        "command": "npx",
-        "args": ["-y", "sharpwave"],
-        "env": {
-          "SHARPWAVE_EMBEDDING_MODEL": "ollama/qwen3-embedding:0.6b",
-          "OLLAMA_BASE_URL": "http://localhost:11434"
-        }
+  "mcpServers": {
+    "sharpwave": {
+      "command": "npx",
+      "args": ["-y", "sharpwave"],
+      "env": {
+        "SHARPWAVE_EMBEDDING_MODEL": "ollama/qwen3-embedding:0.6b",
+        "OLLAMA_BASE_URL": "http://localhost:11434"
       }
     }
   }

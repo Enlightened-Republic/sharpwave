@@ -2,19 +2,26 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
+## [Unreleased]
+
+### Changed
+
+- **Docs are client-neutral again.** The README leads with what Sharpwave is,
+  then lists OpenClaw / Claude Code / Claude Desktop / Cursor even-handedly.
+  (0.4.0 briefly framed everything around OpenClaw; the OpenClaw-specific
+  wake-up/auto-injection layer is moving to a separate `openwave` plugin, so
+  the MCP server stays cross-platform.)
+
 ## [0.4.0] — 2026-08-30
 
 ### Changed
 
-- **Docs and packaging are now OpenClaw-first.** The README, package
-  description, keywords and example config lead with OpenClaw (one server for a
-  whole agent fleet, per-call `agent` id) instead of Claude Code / Cursor, which
-  move to a shorter "Other MCP clients" section. No code or API change — the
-  server is unchanged and still works in any MCP client. Also fixed the
-  `homepage` / `repository` / `bugs` URLs (`EnlightenedRepublic` →
+- Fixed the `homepage` / `repository` / `bugs` URLs (`EnlightenedRepublic` →
   `Enlightened-Republic`) and repaired control-character corruption in the
   README's companion-tools table. `claude-desktop-config-example.json` is
   replaced by `openclaw-config-example.json` + `mcp-config-example.json`.
+  Dropped `brain_health` from the documented tool list (it was never
+  registered); documented `brain_reset`.
 
 ### Added
 
