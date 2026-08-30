@@ -6,6 +6,16 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ### Added
 
+- **Multi-agent mode.** Leave `SHARPWAVE_AGENT_ID` unset and one server process
+  serves any number of agents: every `brain_*` tool then carries a required
+  `agent` argument (the calling agent's own id), and each id maps to its own
+  `<dataDir>/<agentId>/brain.db`. `SHARPWAVE_AGENTS` (comma list) is an optional
+  allowlist. Setting `SHARPWAVE_AGENT_ID` keeps the original single-agent
+  behavior unchanged — the `agent` arg becomes optional and, if passed, must
+  match. `brain_reset`'s `confirm` must equal the resolved agent id in both
+  modes. Working-memory cleanup and the embedding drain run per-agent in
+  multi-agent mode; the startup update check is skipped (no single db to stamp).
+
 - **`brain_reset` tool** — `src/reset.ts`. Transactionally wipes every node,
   edge, episode, vector, working-memory row and the self-model for an agent,
   then re-seeds an empty self-model. Takes a timestamped `.db` backup first

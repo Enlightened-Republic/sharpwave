@@ -23,16 +23,17 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(HERE, "..", "dist", "index.js");
 const DATA = mkdtempSync(join(tmpdir(), "sharpwave-smoke-"));
 
-function client() {
+function client(envOverride = { SHARPWAVE_AGENT_ID: "smoke" }) {
   const proc = spawn(process.execPath, [SERVER], {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
       SHARPWAVE_DATA_DIR: DATA,
-      SHARPWAVE_AGENT_ID: "smoke",
       OLLAMA_BASE_URL: "http://127.0.0.1:59999",
       OPENROUTER_API_KEY: "",
       SHARPWAVE_OPENROUTER_API_KEY: "",
+      SHARPWAVE_AGENT_ID: "",
+      ...envOverride,
     },
   });
   let buf = ""; const pending = new Map(); let id = 1;
@@ -122,6 +123,34 @@ const leaked = (t) => /postgres|jwt|thursday/i.test(t);
   const fresh = text(await call(b, "brain_query", { query: UNRELATED }));
   check("unrelated query misses in a fresh process", !leaked(fresh), leaked(fresh) ? `LEAKED: ${fresh.slice(0, 120)}` : "");
   b.proc.kill();
+
+  // ── Multi-agent mode: SHARPWAVE_AGENT_ID unset, `agent` arg routes per call ──
+  const m = client({ SHARPWAVE_AGENT_ID: "" });
+  const mi = await m.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } });
+  check("multi: initialize", !!mi.result, `agentId=${mi?.result?.serverInfo?.name}`);
+  m.notify("notifications/initialized", {});
+
+  const mtools = await m.rpc("tools/list", {});
+  const writeReq = (mtools?.result?.tools ?? []).find((t) => t.name === "brain_write");
+  check("multi: every tool gains a required `agent`", (writeReq?.inputSchema?.required ?? []).includes("agent"),
+    JSON.stringify(writeReq?.inputSchema?.required));
+
+  const noAgent = text(await call(m, "brain_write", { type: "semantic", label: "x", content: "y" }));
+  check("multi: brain_write without `agent` is refused", /pass "agent"|agent.*argument/i.test(noAgent), noAgent.slice(0, 100));
+
+  await call(m, "brain_write", { agent: "alpha", type: "semantic", label: "alpha db", content: "The production database for alpha is PostgreSQL." });
+  await call(m, "brain_write", { agent: "beta", type: "semantic", label: "beta db", content: "The production database for beta is MySQL." });
+  const alphaQ = text(await call(m, "brain_query", { agent: "alpha", query: "what production database do we use?" }));
+  check("multi: alpha recalls its own node", /postgres/i.test(alphaQ), alphaQ.slice(0, 120));
+  check("multi: alpha does NOT see beta's node", !/mysql/i.test(alphaQ), alphaQ.slice(0, 120));
+
+  const mBadConfirm = text(await call(m, "brain_reset", { agent: "alpha", confirm: "beta" }));
+  check("multi: brain_reset confirm must equal `agent`", /refused/i.test(mBadConfirm), mBadConfirm.slice(0, 100));
+  const mWiped = text(await call(m, "brain_reset", { agent: "alpha", confirm: "alpha" }));
+  check("multi: brain_reset wipes only the named agent", /Brain reset for "alpha"/.test(mWiped), mWiped.slice(0, 100));
+  const betaStill = text(await call(m, "brain_query", { agent: "beta", query: "what production database do we use?" }));
+  check("multi: beta's brain survived alpha's reset", /mysql/i.test(betaStill), betaStill.slice(0, 120));
+  m.proc.kill();
 
   try { rmSync(DATA, { recursive: true, force: true }); } catch {}
   console.log(failures ? `\n${failures} check(s) FAILED` : "\nall checks passed");

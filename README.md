@@ -89,7 +89,8 @@ All optional. Sharpwave runs with zero configuration.
 |---|---|---|
 | `SHARPWAVE_DATA_DIR` | `~/.sharpwave` | Where the database lives |
 | `SHARPWAVE_DB_PATH` | — | Full path to a specific database file, overriding `DATA_DIR` |
-| `SHARPWAVE_AGENT_ID` | `default` | Namespace for separate, isolated memories |
+| `SHARPWAVE_AGENT_ID` | `default` | Namespace for separate, isolated memories. **Leave unset for multi-agent mode** — one server for many agents, each `brain_*` call then requires an `agent` argument routing it to `<DATA_DIR>/<agent>/brain.db`. |
+| `SHARPWAVE_AGENTS` | — | Multi-agent mode only: comma-separated allowlist of accepted `agent` ids |
 | `SHARPWAVE_EMBEDDING_MODEL` | — | e.g. `ollama/qwen3-embedding:0.6b` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Local embedding endpoint |
 | `OPENROUTER_API_KEY` | — | Enables remote embeddings and generative consolidation |
