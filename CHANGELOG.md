@@ -2,6 +2,29 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
+## [Unreleased]
+
+### Added
+
+- **`brain_reset` tool** — `src/reset.ts`. Transactionally wipes every node,
+  edge, episode, vector, working-memory row and the self-model for an agent,
+  then re-seeds an empty self-model. Takes a timestamped `.db` backup first
+  (via `createBackup`). Requires `confirm` to exactly equal the agent's
+  `SHARPWAVE_AGENT_ID`. Uses `DELETE FROM` (never `DROP`), so the `nodes_vec`
+  dimension (`float[1024]`) and the embedding provider config
+  (Ollama → OpenRouter) are untouched — writes and recall work immediately
+  after a reset. FTS indexes are force-rebuilt, then `wal_checkpoint(TRUNCATE)`
+  + `VACUUM` reclaim disk.
+
+### Fixed
+
+- **`db-backup.ts` was fully non-functional.** Database path came from
+  `db.exec("PRAGMA database_list")[0]?.file` — better-sqlite3's `.exec()`
+  returns the `Database` object, not rows, so this was always `undefined` and
+  every backup threw *"Could not determine database path"*. Now uses `db.name`.
+  Also replaced `require("node:fs")` calls that fail under the esbuild ESM
+  bundle (*"Dynamic require of node:fs is not supported"*) with static imports.
+
 ## [Unreleased] — v0.3.0 audit port
 
 Ports the audit fixes from ClawBrain v0.4.0 (Python `clawbrain.py`) into the
