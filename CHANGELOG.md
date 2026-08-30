@@ -4,6 +4,18 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs and packaging are now OpenClaw-first.** The README, package
+  description, keywords and example config lead with OpenClaw (one server for a
+  whole agent fleet, per-call `agent` id) instead of Claude Code / Cursor, which
+  move to a shorter "Other MCP clients" section. No code or API change — the
+  server is unchanged and still works in any MCP client. Also fixed the
+  `homepage` / `repository` / `bugs` URLs (`EnlightenedRepublic` →
+  `Enlightened-Republic`) and repaired control-character corruption in the
+  README's companion-tools table. `claude-desktop-config-example.json` is
+  replaced by `openclaw-config-example.json` + `mcp-config-example.json`.
+
 ### Added
 
 - **Multi-agent mode.** Leave `SHARPWAVE_AGENT_ID` unset and one server process

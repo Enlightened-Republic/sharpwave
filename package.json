@@ -1,7 +1,7 @@
 {
   "name": "sharpwave",
   "version": "0.3.0",
-  "description": "Long-term memory for AI agents. An MCP server that remembers across sessions, forgets what stops mattering, and consolidates the rest — modeled on how the hippocampus actually works.",
+  "description": "Long-term memory for OpenClaw agents. An MCP server that remembers across sessions, forgets what stops mattering, and consolidates the rest — modeled on how the hippocampus actually works. Works with any MCP client.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -19,31 +19,33 @@
     "LICENSE"
   ],
   "keywords": [
+    "openclaw",
+    "openclaw-agent",
     "mcp",
     "model-context-protocol",
     "memory",
     "ai-memory",
     "agent-memory",
     "long-term-memory",
-    "claude",
-    "claude-code",
-    "cursor",
+    "multi-agent",
     "llm",
     "knowledge-graph",
     "spaced-repetition",
     "fsrs",
     "vector-search",
-    "sqlite"
+    "sqlite",
+    "claude-code",
+    "cursor"
   ],
   "author": "Enlightened Republic",
   "license": "MIT",
-  "homepage": "https://github.com/EnlightenedRepublic/sharpwave#readme",
+  "homepage": "https://github.com/Enlightened-Republic/sharpwave#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/EnlightenedRepublic/sharpwave.git"
+    "url": "git+https://github.com/Enlightened-Republic/sharpwave.git"
   },
   "bugs": {
-    "url": "https://github.com/EnlightenedRepublic/sharpwave/issues"
+    "url": "https://github.com/Enlightened-Republic/sharpwave/issues"
   },
   "engines": {
     "node": ">=22"

@@ -1,0 +1,16 @@
+{
+  "_comment": "Add to ~/.openclaw/openclaw.json. SHARPWAVE_AGENT_ID is intentionally omitted so one server backs every agent — each brain_* call passes its own agent id. Set SHARPWAVE_EMBEDDING_MODEL only if you want semantic search (see SETUP.md).",
+  "mcp": {
+    "servers": {
+      "sharpwave": {
+        "command": "npx",
+        "args": ["-y", "sharpwave"],
+        "env": {
+          "SHARPWAVE_NO_UPDATE_CHECK": "1",
+          "SHARPWAVE_EMBEDDING_MODEL": "ollama/qwen3-embedding:0.6b",
+          "OLLAMA_BASE_URL": "http://localhost:11434"
+        }
+      }
+    }
+  }
+}

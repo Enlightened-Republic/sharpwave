@@ -1,0 +1,12 @@
+{
+  "_comment": "Generic MCP client config (Claude Code, Claude Desktop, Cursor, etc.). Set SHARPWAVE_AGENT_ID to give this client its own isolated brain; omit it to share one server across agents via a per-call agent id.",
+  "mcpServers": {
+    "sharpwave": {
+      "command": "npx",
+      "args": ["-y", "sharpwave"],
+      "env": {
+        "SHARPWAVE_AGENT_ID": "default"
+      }
+    }
+  }
+}

@@ -1,12 +1,15 @@
 # Sharpwave
 
-**Long-term memory for AI agents.** An MCP server that remembers across sessions, forgets what stops mattering, and consolidates the rest.
+**Long-term memory for OpenClaw agents.** An MCP server that remembers across
+sessions, forgets what stops mattering, and consolidates the rest.
+
+One server, every agent, a separate brain each. Sharpwave speaks standard MCP, so
+it also drops into any other MCP client — but it's built for how OpenClaw runs
+fleets of agents.
 
 ```bash
 npx -y sharpwave
 ```
-
-Works with Claude Code, Claude Desktop, Cursor, and any other MCP client.
 
 ---
 
@@ -34,17 +37,70 @@ The name comes from **sharp-wave ripples** — the hippocampal events that repla
 
 **Hybrid retrieval.** Full-text search fused with vector similarity via reciprocal rank fusion, then spread across the graph. Vector search is optional — full-text and graph retrieval work with no embedding provider at all.
 
+**Built for a fleet.** One Sharpwave process backs every agent in your OpenClaw
+setup. Each agent's memories live in their own database — isolated, never
+cross-contaminated — and a single config entry covers all of them.
+
 ## Install
 
-### Claude Code
+### OpenClaw
+
+Add it once, for every agent:
+
+```bash
+openclaw mcp add sharpwave --command npx --arg -y --arg sharpwave
+openclaw mcp doctor sharpwave --probe
+```
+
+Or add it straight to `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "sharpwave": {
+        "command": "npx",
+        "args": ["-y", "sharpwave"],
+        "env": {
+          "SHARPWAVE_NO_UPDATE_CHECK": "1"
+        }
+      }
+    }
+  }
+}
+```
+
+With `SHARPWAVE_AGENT_ID` left **unset**, one Sharpwave process serves every
+agent. Each `brain_*` call carries the calling agent's own `agent` id and is
+routed to its own database at `~/.sharpwave/<agent>/brain.db`. Give each agent an
+`AGENTS.md` block that tells it to pass `agent: "<its-id>"` on every brain call:
+
+```markdown
+## Your Sharpwave brain
+
+You have a persistent memory. On every `brain_*` call, pass `agent: "marley"`.
+Recall relevant memories with `brain_query` before answering; store durable
+facts with `brain_write`.
+```
+
+Set `SHARPWAVE_AGENTS` to a comma-separated list to restrict which ids the server
+will accept.
+
+To pin one server to a single agent instead, set `SHARPWAVE_AGENT_ID=<id>` — the
+`agent` argument then becomes optional, and if passed it must match.
+
+### Other MCP clients
+
+Sharpwave is a standard stdio MCP server. It runs anywhere MCP does.
+
+**Claude Code**
 
 ```bash
 claude mcp add sharpwave -- npx -y sharpwave
 ```
 
-### Claude Desktop / Cursor
-
-Add to your MCP config (`claude_desktop_config.json`, or Cursor's `mcp.json`):
+**Claude Desktop, Cursor, and others** — add to the client's MCP config
+(`claude_desktop_config.json`, Cursor's `mcp.json`, etc.):
 
 ```json
 {
@@ -57,7 +113,7 @@ Add to your MCP config (`claude_desktop_config.json`, or Cursor's `mcp.json`):
 }
 ```
 
-That's the whole setup. Memory lands in `~/.sharpwave/` as a SQLite database. Nothing leaves your machine unless you configure a remote embedding provider.
+Memory lands in `~/.sharpwave/` as a SQLite database. Nothing leaves your machine unless you configure a remote embedding provider.
 
 ## Tools
 
@@ -73,7 +129,9 @@ That's the whole setup. Memory lands in `~/.sharpwave/` as a SQLite database. No
 | `brain_review` | Apply an FSRS-6 spaced-repetition review to a node. Updates stability, retrievability, and SIGMA calibration. |
 | `brain_forget` | Physically delete a node from the brain. Refuses to delete nodes with active edges unless `force=true`. |
 | `brain_edges` | Get all active incoming and outgoing edges for a node. |
-| `brain_health` | Liveness + observability diagnostics: counters, embedding cache, FTS state, last consolidation timestamp. Zero side effects. |
+| `brain_reset` | Wipe an agent's brain back to empty (a `.db` backup is taken first). `confirm` must equal the agent id. |
+
+In multi-agent mode every tool above also takes a required `agent` argument.
 
 ## Memory types
 
@@ -87,9 +145,9 @@ All optional. Sharpwave runs with zero configuration.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SHARPWAVE_DATA_DIR` | `~/.sharpwave` | Where the database lives |
+| `SHARPWAVE_DATA_DIR` | `~/.sharpwave` | Where the databases live |
 | `SHARPWAVE_DB_PATH` | — | Full path to a specific database file, overriding `DATA_DIR` |
-| `SHARPWAVE_AGENT_ID` | `default` | Namespace for separate, isolated memories. **Leave unset for multi-agent mode** — one server for many agents, each `brain_*` call then requires an `agent` argument routing it to `<DATA_DIR>/<agent>/brain.db`. |
+| `SHARPWAVE_AGENT_ID` | — | Pin the server to one agent. **Leave unset for multi-agent mode** — one server for the whole fleet, each `brain_*` call then requires an `agent` argument routing it to `<DATA_DIR>/<agent>/brain.db`. |
 | `SHARPWAVE_AGENTS` | — | Multi-agent mode only: comma-separated allowlist of accepted `agent` ids |
 | `SHARPWAVE_EMBEDDING_MODEL` | — | e.g. `ollama/qwen3-embedding:0.6b` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Local embedding endpoint |
@@ -120,19 +178,26 @@ ollama pull qwen3-embedding:0.6b
 
 ```json
 {
-  "mcpServers": {
-    "sharpwave": {
-      "command": "npx",
-      "args": ["-y", "sharpwave"],
-      "env": {
-        "SHARPWAVE_EMBEDDING_MODEL": "ollama/qwen3-embedding:0.6b"
+  "mcp": {
+    "servers": {
+      "sharpwave": {
+        "command": "npx",
+        "args": ["-y", "sharpwave"],
+        "env": {
+          "SHARPWAVE_EMBEDDING_MODEL": "ollama/qwen3-embedding:0.6b",
+          "OLLAMA_BASE_URL": "http://localhost:11434"
+        }
       }
     }
   }
 }
 ```
 
-Multiple isolated memories — one per project, say — are just separate `SHARPWAVE_AGENT_ID` values.
+For a cloud provider instead, set `OPENROUTER_API_KEY` and
+`SHARPWAVE_EMBEDDING_MODEL=openai/text-embedding-3-small`. Pick one and stay on
+it — switching embedding providers on an existing brain changes the vector
+dimension and needs a re-embed. See [SETUP.md](SETUP.md) for the full walkthrough
+and verification steps.
 
 ## Requirements
 
@@ -153,66 +218,26 @@ Worth knowing before you install:
 
 - **Generative consolidation needs an LLM.** REM-style schema synthesis and contradiction detection call OpenRouter. Without `OPENROUTER_API_KEY` the deterministic consolidation passes still run, but the generative ones are skipped.
 - **Semantic similarity needs embeddings.** Without a provider you get full-text plus graph retrieval — good, but not synonym-aware.
-- **Single-writer.** SQLite with WAL. One server process per database; pointing two at the same file is not supported.
+- **Single-writer per brain.** SQLite with WAL. One server process per database; pointing two at the same file is not supported.
 - **Consolidation is time-based.** Memory quality improves as passes accumulate. A brand-new database is a plain store until it has history to work with.
-
-
-## Recent updates (v0.3.0)
-
-Ports the ClawBrain v0.4.0 audit fixes into the TypeScript codebase.
-All changes are additive — the existing API is preserved.
-
-- **WAL retry** — every critical write path (nodes, edges, episodes,
-  meta, self-model, forget) now retries on `SQLITE_BUSY` /
-  `SQLITE_LOCKED` with exponential backoff (100ms → 200ms → 400ms +
-  0–50ms jitter, 3 attempts). Async + sync variants.
-- **Embedding LRU cache** — `Map`-based, default 1024 entries,
-  `SHARPWAVE_EMBEDDING_CACHE_MAXSIZE` override. Re-entrancy guard
-  via a busy-key flag. Exposes `embeddingCacheStats()`.
-- **MinHash entity resolution** — `findNearDuplicates` with embedding
-  cosine fast path + character-trigram Jaccard fallback;
-  `deduplicateExisting` union-find grouping for offline maintenance;
-  `mergeCoreferentNodes` wires `coreference_of` edges.
-- **FTS5 maintenance** — `maintenance()` runs rebuild + optimize;
-  `bumpWriteCounter()` auto-triggers optimize every 100 writes
-  (`SHARPWAVE_FTS_OPTIMIZE_EVERY` override). Graceful no-op when FTS
-  tables are absent.
-- **Observability** — diagnostic counters (always on) + optional
-  JSONL event log when `SHARPWAVE_OBSERVABILITY=1` (default off).
-  Counters surface via the new `brain_health` tool and an extended
-  `brain_stats` section.
-- **Input validation** — new `src/validation.ts`. All tool handlers
-  that take user-provided IDs/strings now reject empty inputs and clamp
-  numeric ranges; enum-style fields validate against allowlists with
-  safe defaults.
 
 ## Companion tools
 
-The companion tools ecosystem extends Sharpwave with utility scripts for memory management, consolidation, and meta-reasoning. All tools are in the 	ools/ directory and work with any Sharpwave-compatible brain.
+The `tools/` directory holds standalone Node scripts for memory maintenance and
+meta-reasoning. They operate on any Sharpwave brain database directly.
 
-### Available tools
-
-| Tool | Purpose |
-|------|---------|
-| ractal-reason.mjs | 4-level fractal carry closure (L0 fix → L1 pattern → L2 flaw → L3 meta-rule) |
-| memory-tiers.mjs | 5-tier compression lifecycle (full → summary → essence → ghost → metadata) for MEMORY.md sections |
-| engram-sleep.mjs | Consolidation digest — extracts carry closures + lessons + milestones from daily logs |
-| context-size.mjs | Byte-budget dashboard — tracks file sizes across memory/ |
-| silent-failure-audit.mjs | Lint for silent catch blocks (LRN-20260819-001 trio) |
-| rain-link-bridge.mjs | Bridge fractal-reason carry closures to brain_write + brain_link calls |
-| pply-fork-patch.mjs | Patch-function architecture demo (find/replace atomic edits) |
-
-### New patterns (2026-08-19)
-
-- **Fractal reasoning**: Every carry closure produces a 4-level breakdown (L0 fix → L1 pattern → L2 flaw → L3 meta-rule) with explicit edge types (CAUSED_BY, LEADS_TO, CONTRADICTS, RESOLVED_BY) that link to a marley-self-corrections-sentinel node.
-- **Memory tiers**: MEMORY.md sections auto-degrade through 5 tiers based on age + access count. Full → summary → essence → ghost → metadata.
-- **Silent-failure trio**: surface_error must throw (not fall through to continue_normal), credential files checked before store-expiry, runtime asset copier must include .md/.txt/.yaml/.yml.
-
-See LRN-20260819-001 for the universal pattern documentation.
-
+| Script | Purpose |
+|---|---|
+| `tools/fractal-reason.mjs` | 4-level reasoning closure (fix → pattern → flaw → meta-rule) over a correction |
+| `tools/brain-link-bridge.mjs` | Turn a reasoning closure into `brain_write` + `brain_link` calls |
+| `tools/memory-tiers.mjs` | 5-tier compression lifecycle (full → summary → essence → ghost → metadata) for long-lived notes |
+| `tools/engram-sleep.mjs` | Consolidation digest — pulls carry-closures, lessons and milestones out of daily logs |
+| `tools/context-size.mjs` | Byte-budget dashboard across a memory directory |
+| `tools/silent-failure-audit.mjs` | Lint for silent `catch` blocks |
+| `tools/apply-fork-patch.mjs` | Atomic find/replace patch helper |
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
-Built by [Enlightened Republic](https://github.com/EnlightenedRepublic).
+Built by [Enlightened Republic](https://github.com/Enlightened-Republic).

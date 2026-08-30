@@ -3,8 +3,8 @@ import { getMeta, setMeta } from "./db.js";
 /**
  * Update notifier.
  *
- * An MCP server is launched by a client (Claude Desktop, Cursor, …) and its
- * stderr is the only channel a user ever sees, so that is where the notice
+ * An MCP server is launched by a client (OpenClaw, Claude Code, Cursor, …) and
+ * its stderr is the only channel a user ever sees, so that is where the notice
  * goes. Constraints this is written to respect:
  *
  *   - never block startup: the check runs detached, after the transport is up
