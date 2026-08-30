@@ -2,7 +2,7 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
-## [Unreleased]
+## [0.4.0] — 2026-08-30
 
 ### Changed
 
@@ -47,7 +47,7 @@ All notable changes to the Sharpwave TypeScript MCP server.
   Also replaced `require("node:fs")` calls that fail under the esbuild ESM
   bundle (*"Dynamic require of node:fs is not supported"*) with static imports.
 
-## [Unreleased] — v0.3.0 audit port
+## [0.3.0] — v0.3.0 audit port
 
 Ports the audit fixes from ClawBrain v0.4.0 (Python `clawbrain.py`) into the
 TypeScript codebase. All changes are additive — existing API surface is
