@@ -4,6 +4,24 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`callOpenRouter` now strips a leading `openrouter/` from the model id.**
+  `DEFAULT_CONFIG.ingestionModel` ships as
+  `"openrouter/deepseek/deepseek-v4-flash"`, but the OpenRouter
+  chat-completions API wants the bare `deepseek/deepseek-v4-flash`. Through
+  0.4.0 the prefixed default 404'd and LLM fact extraction + generative-REM
+  consolidation silently fell back to keyword heuristics. `fetchEmbedding`
+  already did this strip for the embed endpoint; `callOpenRouter` now matches.
+- **Retired nodes (`valid_until` in the past) no longer surface** in
+  `getTopByType`, `getActiveGoals`, `getReviewQueue`, or dopamine propagation.
+  Ports clawbrain-v4's F-9 audit fix, which only reached
+  `getOperationalProcedures` during the MCP split.
+- **`fetchEmbedding` accepts an optional `AbortSignal` again.** The
+  proactive-relevance monitor races the semantic-priming embed against a 250ms
+  budget; when the budget won, the underlying HTTP request kept running. It is
+  now cancelled.
+
 ### Changed
 
 - **Docs are client-neutral again.** The README leads with what Sharpwave is,
