@@ -63,7 +63,11 @@ lane, never a replacement for the original purpose.
   `plugins.load.paths` is the v1 delivery; ClawHub is a later, separate decision).
 - Adding new cognitive features. This is a structural migration; the brain's
   behavior after it should match ClawBrain v4's, on top of sharpwave's engine.
-- Changing the on-disk schema or the `~/.sharpwave/<agentId>/brain.db` layout.
+- Relocating `~/.sharpwave/<agentId>/brain.db`, removing/retyping columns, or any
+  non-additive schema change. (One *additive* migration — v17: `nodes.inject_count`
+  / `nodes.inject_hits` for `valor` — is in scope; see the plan's Global
+  Constraints. It backfills 0 on existing brains and is invisible to the MCP
+  surface.)
 
 ## 4. Target architecture
 

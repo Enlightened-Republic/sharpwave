@@ -18,7 +18,7 @@
 - **The `sharpwave` npm package's observable behavior must not change.** `packages/mcp` publishes the same 11 tools with the same schemas; `npm run test:mcp` is the regression gate and must pass before the branch merges and before any publish.
 - **Node ESM only** (`"type": "module"` everywhere). Relative imports keep the `.js` extension in source (`./nodes.js`), matching both existing trees.
 - **DB base-dir env override:** `packages/core` `db.ts` honors `SHARPWAVE_DATA_DIR` (already implemented). Tests set it to a temp dir. Do not introduce a second env name.
-- **No brain schema changes.** No migrations. The on-disk format is frozen for this plan.
+- **Schema: additive-only, through the existing versioned migration path.** No table/column removals, no type changes, no db-file relocation. One additive migration IS in scope where a ported cognition module needs a column ClawBrain v4 had that SharpWave dropped: **schema v17 adds `nodes.inject_count` + `nodes.inject_hits` (`INTEGER NOT NULL DEFAULT 0`)** for `valor` — matches `clawbrain-v4/src/db.ts:494-495`, backfills 0 on every existing brain.db, read by no frozen MCP tool. (Controller ruling 2026-08-31; supersedes the original "no schema changes" line, which was written before the valor dependency was known.)
 - **Full gateway restart** is required after any `openwave` bundle change (Node ESM cache). Soft plugin reload is insufficient. This is an operational note for the migration, not a code task.
 - **Deploy/config gate:** editing `~/.openclaw/openclaw.json` or rolling `openwave` to live agents is OUT OF SCOPE for this plan — it is a separate gated session (spec §10, steps 3–6). This plan ends at "openwave built, tested, merged to main; nothing loaded live."
 
