@@ -6,7 +6,7 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "npm run build --workspace sharpwave-core && npm run build --workspace sharpwave && npm run build --workspace openwave",
-    "test": "npm run test --workspace sharpwave-core && npm run test --workspace openwave",
+    "test": "npm run build --workspace sharpwave-core && npm run test --workspace sharpwave-core && npm run test --workspace openwave",
     "test:mcp": "npm run build --workspace sharpwave-core && npm run build --workspace sharpwave && npm run test:mcp --workspace sharpwave",
     "test:all": "npm run test && npm run test:mcp",
     "typecheck": "tsc -b packages/core packages/mcp packages/openwave"
