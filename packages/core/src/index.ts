@@ -185,6 +185,12 @@ export { classifyEpisodeLane, isForegroundLane } from "./episode-lanes.js";
 export type { EpisodeLane } from "./episode-lanes.js";
 
 // ---------------------------------------------------------------------------
+// morning — wake-up brief (fires when the gap since last session > 4h)
+// ---------------------------------------------------------------------------
+export { getMorningBrief, formatMorningBlock } from "./morning.js";
+export type { MorningBrief } from "./morning.js";
+
+// ---------------------------------------------------------------------------
 // tools — the unified brain_* tool surface shared by mcp + openwave
 // ---------------------------------------------------------------------------
 export {
