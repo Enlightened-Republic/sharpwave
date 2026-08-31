@@ -229,6 +229,13 @@ export { runProactiveMonitor } from "./proactive-monitor.js";
 export { awakeReplayTick, recordCoactivations } from "./awake-replay.js";
 
 // ---------------------------------------------------------------------------
+// compaction — after_compaction handler: mines the compaction summary for
+// durable nodes (classified + FTS-deduped) and wires sequential `before` edges.
+// Ported from clawbrain-v4.
+// ---------------------------------------------------------------------------
+export { handleCompaction } from "./compaction.js";
+
+// ---------------------------------------------------------------------------
 // tools — the unified brain_* tool surface shared by mcp + openwave
 // ---------------------------------------------------------------------------
 export {
