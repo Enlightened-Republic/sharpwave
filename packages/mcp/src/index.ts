@@ -5,23 +5,25 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-import { writeNode, getNode, touchNode } from "./nodes.js";
-import { writeEdge, closeEdgesFromNode, closeEdgesToNode } from "./edges.js";
-import { getSelfModel } from "./self-model.js";
-import { searchEpisodes, getEpisodesByIds } from "./episodes.js";
-import { getDb, getMeta } from "./db.js";
-import { getNeuromodulatorState, forgetNodeById } from "./consolidation.js";
-import { resetBrain } from "./reset.js";
-import { hybridRetrieve } from "./retrieval.js";
-import { drainEmbeddingQueue, queueEmbedding } from "./embeddings.js";
-import { clearStaleWorkingMemory } from "./activation.js";
-import { checkForUpdate } from "./update-check.js";
-import { DEFAULT_CONFIG } from "./types.js";
-import type { BrainConfig, NodeType, EdgeType } from "./types.js";
 import { randomUUID } from "node:crypto";
 
-// NEW: Input validation
+// Engine surface — the entire brain engine lives in `sharpwave-core` now.
+// esbuild inlines its compiled dist/*.js into this single bundle (it is NOT in
+// the esbuild `external` list); only the native modules stay external.
 import {
+  writeNode, getNode, touchNode,
+  writeEdge, closeEdgesFromNode, closeEdgesToNode,
+  getSelfModel,
+  searchEpisodes, getEpisodesByIds,
+  getDb, getMeta,
+  getNeuromodulatorState, forgetNodeById,
+  resetBrain,
+  hybridRetrieve,
+  drainEmbeddingQueue, queueEmbedding,
+  clearStaleWorkingMemory,
+  checkForUpdate,
+  DEFAULT_CONFIG,
+  // input validation
   validateBrainQuery,
   validateBrainWrite,
   validateBrainLink,
@@ -32,20 +34,16 @@ import {
   validateBrainForget,
   validateBrainEdges,
   formatValidationErrors,
-} from "./validation.js";
-
-// NEW: Database backup
-import { createBackup, getLatestBackup, listBackups } from "./db-backup.js";
-
-// NEW: Metrics and observability
-import {
+  // database backup
+  createBackup, getLatestBackup, listBackups,
+  // metrics and observability
   collectMetrics,
   formatPrometheusMetrics,
   formatMetricsAsText,
-} from "./metrics.js";
-
-// NEW: Resilience utilities
-import { withFallback } from "./resilience.js";
+  // resilience utilities
+  withFallback,
+} from "sharpwave-core";
+import type { BrainConfig, NodeType, EdgeType } from "sharpwave-core";
 
 // Injected from package.json at build time by esbuild.mjs — never hardcode it.
 // A stale constant misreports the server over MCP and makes checkForUpdate
@@ -383,7 +381,7 @@ async function handleBrainHistory(args: Record<string, unknown>) {
   if (!validation.ok) {
     return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
   }
-  const { query, since, until, limit } = validation.data!;
+  const { query, since, until, limit = 10 } = validation.data!;
 
   let results = searchEpisodes(AGENT_ID, query, limit * 2);
   if (since != null) results = results.filter((e) => e.created_at >= since);
