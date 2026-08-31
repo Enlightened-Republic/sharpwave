@@ -11,6 +11,27 @@ Works with OpenClaw, Claude Code, Claude Desktop, Cursor, and any other MCP clie
 
 ---
 
+## Repository layout
+
+This repository is an npm-workspaces monorepo of three packages:
+
+- **`packages/core`** — `sharpwave-core`, the shared memory engine (retrieval,
+  consolidation, extraction, the FSRS forgetting curve, the graph). Private —
+  never published to npm.
+- **`packages/mcp`** — `sharpwave`, the stdio MCP server published to npm. This
+  is the package `npm i sharpwave` / `npx -y sharpwave` installs, for Claude
+  Code, Cursor, Claude Desktop, or any other MCP client.
+- **`packages/openwave`** — the OpenClaw plugin: the same engine plus autonomic
+  wake-up hooks that inject memory into every turn and run the sleep system
+  in-process. This is what OpenClaw agents run instead of the MCP server. See
+  [`packages/openwave/README.md`](packages/openwave/README.md).
+
+`sharpwave-core` is bundled into each consumer at build time, so `sharpwave` and
+`openwave` always ship the exact engine they were built against — there is no
+version-skew path between them.
+
+---
+
 ## The problem
 
 Your agent forgets everything the moment a session ends. The usual fix is to dump conversation history into a vector store and retrieve the nearest chunks — which works until it doesn't:
