@@ -158,21 +158,22 @@ export async function runProactiveMonitor(
     // Hard 250ms budget so the total hook stays inside OpenClaw's 500ms gate.
     let semanticBoosted = 0;
     if (lastUserMsg) {
+      // fetchEmbedding REQUIRES config (Opus audit #2 — the old call omitted
+      // it, so this path threw immediately and semantic pre-priming never
+      // fired in production).
+      // When the 250ms budget wins the race we abort the signal so the
+      // underlying HTTP request is actually cancelled — not left dangling on a
+      // socket (this matters ×29 agents on every turn).
+      const embedController = new AbortController();
+      const embedPromise = fetchEmbedding(lastUserMsg, config, log, embedController.signal);
+      // We may abandon this promise when the budget elapses; swallow its late
+      // AbortError so it doesn't surface as an unhandled rejection.
+      embedPromise.catch(() => {});
       try {
-        // fetchEmbedding REQUIRES config (Opus audit #2 — the old call omitted
-        // it, so this path threw immediately and semantic pre-priming never
-        // fired in production).
-        // API drift (openwave/sharpwave-core split, Task 6C): sharpwave-core's
-        // `fetchEmbedding(text, config, log?)` has no AbortSignal parameter, so
-        // the 250ms race still bounds this path but no longer cancels the
-        // underlying HTTP request.
         const timeout = new Promise<null>((resolve) =>
-          setTimeout(() => { resolve(null); }, 250),
+          setTimeout(() => { embedController.abort(); resolve(null); }, 250),
         );
-        const queryVec = await Promise.race([
-          fetchEmbedding(lastUserMsg, config, log),
-          timeout,
-        ]);
+        const queryVec = await Promise.race([embedPromise, timeout]);
         if (queryVec) {
           const semanticMatches = vectorSearchNodes(agentId, queryVec, 15);
           db.transaction(() => {

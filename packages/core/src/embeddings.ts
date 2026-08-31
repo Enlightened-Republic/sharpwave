@@ -275,13 +275,21 @@ export async function fetchEmbedding(
   text: string,
   config: BrainConfig,
   log?: Logger,
+  signal?: AbortSignal,
 ): Promise<Float32Array | null> {
   const model = config.embeddingModel ?? "";
   const isOllama = model.startsWith("ollama/");
   const startMs = Date.now();
 
+  // Caller already gave up (e.g. proactive-monitor's 250ms budget elapsed
+  // before this even started) — don't open a socket we'll immediately drop.
+  if (signal?.aborted) {
+    log?.debug?.(structured({ op: "fetchEmbedding", outcome: "skipped", reason: "aborted" }));
+    return null;
+  }
+
   if (isOllama) {
-    return await fetchOllamaEmbedding(text, model.slice("ollama/".length), startMs, log);
+    return await fetchOllamaEmbedding(text, model.slice("ollama/".length), startMs, log, signal);
   }
 
   const apiKey = config.openRouterApiKey || process.env["OPENROUTER_API_KEY"] || "";
@@ -293,6 +301,9 @@ export async function fetchEmbedding(
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
+    // Fold the caller's signal into our own controller so a caller-side abort
+    // (budget elapsed) cancels the in-flight request, not just the 15s timeout.
+    signal?.addEventListener("abort", () => controller.abort(), { once: true });
 
     // OpenRouter uses the provider-namespaced model id as the `openai/...` form.
     // We strip a leading `openrouter/` so config can use either `openrouter/openai/...` or `openai/...`.
@@ -421,12 +432,14 @@ async function fetchOllamaEmbedding(
   modelId: string,
   startMs: number,
   log?: Logger,
+  signal?: AbortSignal,
 ): Promise<Float32Array | null> {
   const baseUrl = (process.env["OLLAMA_BASE_URL"] || OLLAMA_BASE_URL_DEFAULT).replace(/\/$/, "");
   const url = `${baseUrl}/api/embeddings`;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
+    signal?.addEventListener("abort", () => controller.abort(), { once: true });
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
