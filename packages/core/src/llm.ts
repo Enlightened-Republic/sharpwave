@@ -26,6 +26,14 @@ export async function callOpenRouter(
   maxTokens = 600,
   temperature?: number,
 ): Promise<string> {
+  // OpenRouter's chat-completions API wants the bare `provider/model` id. Config
+  // defaults (and operator overrides) may carry a leading `openrouter/` — strip
+  // it here so `openrouter/deepseek/deepseek-v4-flash` and `deepseek/deepseek-v4-flash`
+  // both resolve. Mirrors the same strip in embeddings.ts:fetchEmbedding.
+  const openRouterModel = model.startsWith("openrouter/")
+    ? model.slice("openrouter/".length)
+    : model;
+
   const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -33,7 +41,7 @@ export async function callOpenRouter(
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model,
+      model: openRouterModel,
       messages: [{ role: "user", content: message }],
       max_tokens: maxTokens,
       ...(temperature !== undefined ? { temperature } : {}),
