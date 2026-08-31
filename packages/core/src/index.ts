@@ -214,6 +214,14 @@ export {
 export type { Surface } from "./context-assembly.js";
 
 // ---------------------------------------------------------------------------
+// proactive-monitor — CogniFold pre-recall priming. Runs at the top of every
+// before_prompt_build pass and bumps eligibility_trace on nodes matching the
+// last few episodes (FTS), the current neuromodulator state, and the semantic
+// neighbourhood of the last user message. Ported from clawbrain-v4.
+// ---------------------------------------------------------------------------
+export { runProactiveMonitor } from "./proactive-monitor.js";
+
+// ---------------------------------------------------------------------------
 // tools — the unified brain_* tool surface shared by mcp + openwave
 // ---------------------------------------------------------------------------
 export {
