@@ -30,6 +30,31 @@ describe("embeddings", () => {
     closeDb(id);
   });
 
+  it("drainEmbeddingQueue aborts cleanly when the DB handle is closed mid-flight", async () => {
+    // Regression for the closed-DB guard (src/embeddings.ts `if (!db.open)`): a
+    // lifecycle cleanup (reset/delete/disable) can close the handle while a drain
+    // is in flight. Close the underlying handle WITHOUT evicting it from the
+    // module cache — closeDb() deletes the map entry, a raw .close() does not — so
+    // the getDb() inside drain hands back this same closed handle.
+    const id = fresh();
+    const db = getDb(id);
+    const nodeId = writeNode(id, "semantic", "closed-db drain guard node", "content for the closed-handle drain guard test");
+    queueEmbedding(id, nodeId);
+    db.close();
+    expect(db.open).toBe(false);
+
+    let threw: unknown = null;
+    try {
+      await drainEmbeddingQueue(id, { ...DEFAULT_CONFIG, openRouterApiKey: "" }, { info: () => {}, warn: () => {}, debug: () => {} });
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).toBeNull();
+
+    clearEmbeddingQueues();
+    closeDb(id);
+  });
+
   it("concurrent drain calls do not re-enter — second call returns early", async () => {
     const id = fresh();
     const nodeId = writeNode(id, "semantic", "concurrent test node", "content");
