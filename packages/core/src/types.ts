@@ -51,6 +51,10 @@ export interface BrainNode {
   // {t,g,r,s,d} entries; stability_sigma is the fitted multiplier (default 1.0).
   review_history: string | null;
   stability_sigma: number;
+  // VALOR injection counters (v17). inject_count = times this node was placed in
+  // a prompt; inject_hits = times the reply that followed actually used it.
+  inject_count: number;
+  inject_hits: number;
   created_at: number;
   accessed_at: number;
   updated_at: number;

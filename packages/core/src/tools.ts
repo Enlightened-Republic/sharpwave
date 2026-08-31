@@ -368,12 +368,18 @@ function scanWorkspace(root: string): WsEntry[] {
  * Agent resolution is a transport concern and stays with the host: the MCP
  * server has its pinned/multi-agent gate, openwave has openclaw's ctx. This
  * function never throws for an unknown tool — it returns an error result.
+ *
+ * `source` is the provenance string stamped on nodes written by `brain_write` /
+ * `brain_supersede`. It defaults to `"mcp"` so the MCP server's 4-arg call site
+ * is byte-identical to what it was before this parameter existed (the published
+ * surface is frozen); openwave passes `"openwave"`.
  */
 export async function dispatchBrainTool(
   name: string,
   agentId: string,
   args: Record<string, unknown>,
   config: BrainConfig,
+  source: string = "mcp",
 ): Promise<BrainToolResult> {
   switch (name) {
     // ── brain_query ───────────────────────────────────────────────────────
@@ -405,7 +411,7 @@ export async function dispatchBrainTool(
       const nodeId = writeNode(agentId, type as NodeType, label, content, {
         importance,
         emotional_weight,
-        source: "mcp",
+        source,
       });
       queueEmbedding(agentId, nodeId);
       return ok(`Written: node ${nodeId} (${type}) "${label}"`);
@@ -440,7 +446,7 @@ export async function dispatchBrainTool(
       const newId = writeNode(agentId, old.type as NodeType, new_label ?? old.label, new_content, {
         importance: old.importance,
         emotional_weight: old.emotional_weight,
-        source: "mcp",
+        source,
       });
       queueEmbedding(agentId, newId);
       closeEdgesFromNode(agentId, old.id);
