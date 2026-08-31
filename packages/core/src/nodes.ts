@@ -572,6 +572,46 @@ export function getTopByType(agentId: string, type: NodeType, limit = 5): BrainN
   ).all(type, limit) as BrainNode[];
 }
 
+/**
+ * Operational procedures for the always-on procedural block.
+ *
+ * WHY THIS BYPASSES RETRIEVAL ENTIRELY: `hybridRetrieve` is keyed on the user's
+ * message, and procedural knowledge is never lexically or semantically similar
+ * to what the user says. "did you look into that?" has zero overlap with a node
+ * about `&&` not being a PowerShell statement separator, so it can never match.
+ * Spreading activation does not rescue it either — activation seeds from
+ * identity/goal and never leaves that basin (measured 2026-07-31: identity 230
+ * injections, goal 73, procedural **0**; all 33 procedural nodes had
+ * inject_count = 0 since 2026-07-13, including a hand-written importance-0.9
+ * node describing the exact shell errors the agent was making ~30% of the time).
+ *
+ * Procedural memory is needed when the agent is about to ACT, which does not
+ * correlate with what was just said. So it gets a guaranteed slot instead of
+ * competing in a similarity ranking it cannot win.
+ *
+ * Ordering prefers `source='brain_manager'` (hand-written and verified for this
+ * machine) over extracted/SWS nodes, then importance. `minContentChars` drops
+ * SWS title-fragment artifacts like "## Step 1: Register Your Agent" (35 chars)
+ * that would otherwise outrank real rules on importance alone.
+ */
+export function getOperationalProcedures(
+  agentId: string,
+  limit = 6,
+  minContentChars = 80,
+): BrainNode[] {
+  const db = getDb(agentId);
+  return db.prepare(`
+    SELECT * FROM nodes
+    WHERE type = 'procedural'
+      AND (valid_until IS NULL OR valid_until > ?)
+      AND length(content) >= ?
+    ORDER BY (CASE WHEN source = 'brain_manager' THEN 1 ELSE 0 END) DESC,
+             importance DESC,
+             salience DESC
+    LIMIT ?
+  `).all(Date.now(), minContentChars, limit) as BrainNode[];
+}
+
 export function getActiveGoals(agentId: string): BrainNode[] {
   const db = getDb(agentId);
   return db.prepare(

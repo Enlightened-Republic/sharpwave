@@ -28,6 +28,7 @@ export {
 // ---------------------------------------------------------------------------
 export {
   writeNode, getNode, touchNode, ftsSearchNodes, getNeighbors, getTopByType,
+  getOperationalProcedures,
   getActiveGoals, getReviewQueue, propagateDopamineSpike, decayEligibilityTraces,
   decayRetrievability, fsrsRetrievability, getRetrievability, computeSalience,
   computePsHash, psHashHamming, updatePsHash,
@@ -200,6 +201,17 @@ export {
   isNodeUsed, valorFactor, recordInjection, scoreReplyAgainstInjections,
   clearPendingInjections,
 } from "./valor.js";
+
+// ---------------------------------------------------------------------------
+// context-assembly — the "wake up knowing" text-block builders openwave injects
+// on every agent turn (self-model header, bootstrap, query-gated recall,
+// always-on procedural rules). Ported from clawbrain-v4/src/bootstrap.ts.
+// ---------------------------------------------------------------------------
+export {
+  getDreamContext, buildSelfModelHeader, buildBootstrapContext,
+  buildRecallContext, buildProceduralContext, BRAIN_HEADER,
+} from "./context-assembly.js";
+export type { Surface } from "./context-assembly.js";
 
 // ---------------------------------------------------------------------------
 // tools — the unified brain_* tool surface shared by mcp + openwave
