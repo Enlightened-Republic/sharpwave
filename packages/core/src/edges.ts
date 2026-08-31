@@ -128,6 +128,21 @@ export function edgeExists(agentId: string, fromId: string, toId: string, type: 
   return !!row;
 }
 
+/**
+ * Direction-agnostic existence check for SYMMETRIC edge types (`associates`).
+ * Fable-5 audit F-8: autoLinkNode could write A→B when A's embedding drained
+ * and B→A when B's drained later — getNeighbors unions both directions, so the
+ * pair contributed two edges to fan-out shares and spreading activation
+ * double-counted the association.
+ */
+export function edgeExistsEitherDirection(agentId: string, aId: string, bId: string, type: EdgeType): boolean {
+  const db = getDb(agentId);
+  const row = db.prepare(
+    "SELECT id FROM edges WHERE type = ? AND valid_until IS NULL AND ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)) LIMIT 1"
+  ).get(type, aId, bId, bId, aId);
+  return !!row;
+}
+
 export function getEdge(agentId: string, id: string): BrainEdge | null {
   const db = getDb(agentId);
   return db.prepare("SELECT * FROM edges WHERE id = ?").get(id) as BrainEdge | null;

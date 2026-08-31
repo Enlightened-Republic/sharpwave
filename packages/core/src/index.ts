@@ -39,7 +39,7 @@ export {
 // ---------------------------------------------------------------------------
 export {
   writeEdge, closeEdge, closeEdgesFromNode, closeEdgesToNode,
-  getActiveEdgesFrom, getInhibitedNodeIds, edgeExists, getEdge,
+  getActiveEdgesFrom, getInhibitedNodeIds, edgeExists, edgeExistsEitherDirection, getEdge,
 } from "./edges.js";
 
 // ---------------------------------------------------------------------------
@@ -220,6 +220,13 @@ export type { Surface } from "./context-assembly.js";
 // neighbourhood of the last user message. Ported from clawbrain-v4.
 // ---------------------------------------------------------------------------
 export { runProactiveMonitor } from "./proactive-monitor.js";
+
+// ---------------------------------------------------------------------------
+// awake-replay — awake SWR-analog tick (30-min cadence): stabilises high-ripple
+// nodes, forms Hebbian associate edges from co-activation, prospective replay of
+// goal neighbours, and a dream-context snapshot. Ported from clawbrain-v4.
+// ---------------------------------------------------------------------------
+export { awakeReplayTick, recordCoactivations } from "./awake-replay.js";
 
 // ---------------------------------------------------------------------------
 // tools — the unified brain_* tool surface shared by mcp + openwave
