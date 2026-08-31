@@ -191,6 +191,17 @@ export { getMorningBrief, formatMorningBlock } from "./morning.js";
 export type { MorningBrief } from "./morning.js";
 
 // ---------------------------------------------------------------------------
+// valor — Value-Of-Recall utility gating. Module-level pending-injection map
+// is driven by openwave hooks (recordInjection on prompt build,
+// scoreReplyAgainstInjections on llm_output). Reads/writes nodes.inject_count
+// and nodes.inject_hits (schema v17).
+// ---------------------------------------------------------------------------
+export {
+  isNodeUsed, valorFactor, recordInjection, scoreReplyAgainstInjections,
+  clearPendingInjections,
+} from "./valor.js";
+
+// ---------------------------------------------------------------------------
 // tools — the unified brain_* tool surface shared by mcp + openwave
 // ---------------------------------------------------------------------------
 export {

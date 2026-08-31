@@ -192,6 +192,8 @@ function initSchema(db: Database.Database): void {
       valid_until           INTEGER,
       review_history        TEXT,
       stability_sigma       REAL NOT NULL DEFAULT 1.0,
+      inject_count          INTEGER NOT NULL DEFAULT 0,
+      inject_hits           INTEGER NOT NULL DEFAULT 0,
       created_at            INTEGER NOT NULL,
       accessed_at           INTEGER NOT NULL,
       updated_at            INTEGER NOT NULL
@@ -345,7 +347,7 @@ function initSchema(db: Database.Database): void {
 }
 
 function runMigrations(db: Database.Database): void {
-  const TARGET = 16;
+  const TARGET = 17;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
   const current = row?.version ?? 0;
 
@@ -581,6 +583,20 @@ function runMigrations(db: Database.Database): void {
     // pattern diverges from the population-average FSRS-6 weights.
     try { db.exec("ALTER TABLE nodes ADD COLUMN review_history TEXT"); } catch { /* already exists */ }
     try { db.exec("ALTER TABLE nodes ADD COLUMN stability_sigma REAL NOT NULL DEFAULT 1.0"); } catch { /* already exists */ }
+  }
+
+  if (current < 17) {
+    // v17 — VALOR utility gating (Anderson & Schooler 1991 rational analysis /
+    // ACT-R utility learning; Lisman-Grace VTA reward gating). inject_count is
+    // incremented when a node was injected into a prompt AND the assistant
+    // reply was observed (both sides required — a dropped llm_output hook must
+    // not poison utility). inject_hits increments when the reply referenced
+    // the node. Recall ranking demotes chronically-ignored nodes.
+    // (Ported from clawbrain-v4/src/db.ts:494-495, which numbers it v18 in that
+    // tree; sharpwave's schema was at v16, so it lands here as v17. Additive
+    // only — backfills to 0 on every existing brain.db.)
+    try { db.exec("ALTER TABLE nodes ADD COLUMN inject_count INTEGER NOT NULL DEFAULT 0"); } catch { /* already exists */ }
+    try { db.exec("ALTER TABLE nodes ADD COLUMN inject_hits INTEGER NOT NULL DEFAULT 0"); } catch { /* already exists */ }
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

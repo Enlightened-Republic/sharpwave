@@ -5,7 +5,7 @@ import { getDb, getMeta, setMeta, closeDb } from "../src/db.js";
 // sharpwave-core's db.ts keeps the migration target (16) as a module-local
 // constant and does not export it. The clawbrain-v4 test imported a
 // `SCHEMA_VERSION` symbol; here we assert against the known current value.
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 function freshAgent(): string {
   return `test-${randomUUID().slice(0, 8)}`;
@@ -73,6 +73,70 @@ describe("db", () => {
     expect(colNames).toContain("is_consolidated");
     expect(colNames).toContain("consolidated_at");
     closeDb(agentId);
+  });
+
+  it("nodes table has v17 VALOR columns (inject_count/inject_hits) on a fresh DB", () => {
+    const agentId = freshAgent();
+    const db = getDb(agentId);
+    const colNames = (db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>)
+      .map((c) => c.name);
+    expect(colNames).toContain("inject_count");
+    expect(colNames).toContain("inject_hits");
+    // Defaults must be 0 (VALOR treats a brand-new node as neutral utility 1.0).
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO nodes (id, type, label, content, created_at, accessed_at, updated_at)
+      VALUES ('v17probe', 'semantic', 'l', 'c', ?, ?, ?)
+    `).run(now, now, now);
+    const row = db.prepare("SELECT inject_count, inject_hits FROM nodes WHERE id = 'v17probe'").get() as {
+      inject_count: number; inject_hits: number;
+    };
+    expect(row.inject_count).toBe(0);
+    expect(row.inject_hits).toBe(0);
+    closeDb(agentId);
+  });
+
+  it("v17 migration is additive + idempotent — upgrades a simulated pre-v17 DB and re-opens cleanly", () => {
+    const agentId = freshAgent();
+
+    // 1. Open at current version, then simulate an older on-disk DB by dropping
+    //    the v17 columns and rewinding schema_version to 16.
+    const db1 = getDb(agentId);
+    db1.exec("ALTER TABLE nodes DROP COLUMN inject_hits");
+    db1.exec("ALTER TABLE nodes DROP COLUMN inject_count");
+    db1.exec("DELETE FROM schema_version");
+    db1.exec("INSERT INTO schema_version VALUES (16)");
+    // Seed a legacy row that predates the columns.
+    const now = Date.now();
+    db1.prepare(`
+      INSERT INTO nodes (id, type, label, content, created_at, accessed_at, updated_at)
+      VALUES ('legacy', 'semantic', 'old', 'old node', ?, ?, ?)
+    `).run(now, now, now);
+    closeDb(agentId);
+
+    // 2. Re-open: runMigrations must re-add both columns, backfill the legacy row
+    //    to 0, and stamp schema_version = 17.
+    const db2 = getDb(agentId);
+    const colNames = (db2.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>)
+      .map((c) => c.name);
+    expect(colNames).toContain("inject_count");
+    expect(colNames).toContain("inject_hits");
+    const legacy = db2.prepare("SELECT inject_count, inject_hits FROM nodes WHERE id = 'legacy'").get() as {
+      inject_count: number; inject_hits: number;
+    };
+    expect(legacy.inject_count).toBe(0);
+    expect(legacy.inject_hits).toBe(0);
+    const ver = db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number };
+    expect(ver.version).toBe(17);
+    closeDb(agentId);
+
+    // 3. Re-open a THIRD time — migrations already at target, must be a no-op
+    //    (the ALTER TABLE ADD COLUMN steps are wrapped in try/catch).
+    expect(() => {
+      const db3 = getDb(agentId);
+      db3.prepare("SELECT 1").get();
+      closeDb(agentId);
+    }).not.toThrow();
   });
 
   it("nodes table has v14 ps_hash column", () => {
