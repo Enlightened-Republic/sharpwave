@@ -1,8 +1,14 @@
 node_modules/
 dist/
+packages/*/dist/
 *.log
 *.tgz
+*.tsbuildinfo
 .DS_Store
 .env
 .env.*
 .npmrc
+
+# Build-copied into packages/mcp by esbuild.mjs from the repo root — not source.
+packages/mcp/README.md
+packages/mcp/LICENSE

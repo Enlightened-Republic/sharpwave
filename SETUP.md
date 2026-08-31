@@ -172,7 +172,7 @@ The script is idempotent — re-running it skips nodes that already have embeddi
 |---|---|---|
 | `brain_stats` returns `"err2 is not a function"` | v0.3.0 bug — fixed in v0.3.1 / PR #3 | Upgrade to ≥ v0.3.1 |
 | `Embeddings: 0/N (0%)` | No provider configured or provider unreachable | See [§4](#4-verify-it-actually-works) |
-| `DB Size: 0 B` in stats | `PRAGMA database_list` path extraction broken (cosmetic) | Tracked in PR #3 follow-up |
+| `DB Size: 0 B` in stats | Old `PRAGMA database_list` path-extraction bug (cosmetic) | Fixed — `brain_stats` now reports the real on-disk size |
 | `Last consolidation: never` | No consolidation cycle has run yet | Normal for fresh installs — runs every `consolidationTimeGateHours` (default 4h) |
 | `Neuromodulators: all 0.50` | Stats was broken (v0.3.0) so writes were silently failing | Fixed in PR #3 — restart MCP |
 | Switching providers broke semantic recall | Vec dim mismatch (1024 vs 1536) | Delete `~/.sharpwave/<agentId>/brain.db` and start fresh, OR keep same provider forever |
