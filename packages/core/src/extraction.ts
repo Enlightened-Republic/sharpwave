@@ -145,9 +145,11 @@ async function extractBatch(
   const prompt = buildExtractionPrompt(episodes);
 
   try {
-    // 1500-token budget preserved from clawbrain-v4's inline fetch (the shared
-    // callOpenRouter defaults to 600 for consolidation's REM path).
-    const text = await callOpenRouter(prompt, config.ingestionModel, apiKey, 1500);
+    // 1500-token budget + temperature 0.1 preserved from clawbrain-v4's inline
+    // fetch (extraction.ts:159-168) — low temperature keeps the JSON payload
+    // near-deterministic and prose-free. The shared callOpenRouter defaults to
+    // 600 tokens / no temperature key for consolidation's REM path.
+    const text = await callOpenRouter(prompt, config.ingestionModel, apiKey, 1500, 0.1);
     if (!text.trim()) {
       log.warn(`[clawbrain-v4] extraction: empty response from ${config.ingestionModel} — using heuristic fallback`);
       return { facts: heuristicFallback(episodes), temporal: heuristicTemporal(episodes) };
