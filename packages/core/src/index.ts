@@ -176,8 +176,26 @@ export { updateCheckDisabled, isNewer, checkForUpdate } from "./update-check.js"
 // ---------------------------------------------------------------------------
 export {
   agentIdFromKey, classifySentence, importanceForType, jaccardSim,
-  BoundedTtlMap, BoundedTtlSet,
+  extractBalancedJson, BoundedTtlMap, BoundedTtlSet,
 } from "./utils.js";
+
+// ---------------------------------------------------------------------------
+// llm — shared OpenRouter chat-completion call (consolidation REM + extraction)
+// ---------------------------------------------------------------------------
+export { callOpenRouter } from "./llm.js";
+
+// ---------------------------------------------------------------------------
+// extraction — LLM-based durable-fact extraction from queued episodes. Keeps a
+// module-level per-agent pending-episode queue driven by openwave hooks + the
+// scheduler. Degrades to a keyword heuristic when no OpenRouter key is present.
+// Ported from clawbrain-v4/src/extraction.ts.
+// ---------------------------------------------------------------------------
+export {
+  queueEpisodeForExtraction, drainExtractionQueue, guardProceduralFacts,
+} from "./extraction.js";
+export type {
+  ExtractedFact, TemporalRelation, DrainResult,
+} from "./extraction.js";
 
 // ---------------------------------------------------------------------------
 // episode-lanes — foreground/background episode-lane classification

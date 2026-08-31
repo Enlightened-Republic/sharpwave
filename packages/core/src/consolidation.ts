@@ -6,6 +6,7 @@ import { getEpisodesSince, getEpisodeCount } from "./episodes.js";
 import { mergeCoreferentNodes } from "./entity-resolution.js";
 import { detectSkillCandidates } from "./skill-evolution.js";
 import { classifySentence, importanceForType, jaccardSim } from "./utils.js";
+import { callOpenRouter } from "./llm.js";
 import { executeWithWalRetrySync } from "./wal-retry.js";
 import { bumpCounter, logObservabilityEvent, setLastConsolidationAt } from "./observability.js";
 import type { BrainConfig, Episode, BrainNode, NeuromodState } from "./types.js";
@@ -76,26 +77,9 @@ export function setSubagentRunner(fn: SubagentRunner | null): void {
   subagentRunner = fn;
 }
 
-// Direct LLM call via OpenRouter — used when no subagentRunner is injected
-// (i.e., in the standalone MCP server, where no host subagent API exists).
-// Falls back gracefully if the API key is missing.
-async function callRemLlm(message: string, model: string, apiKey: string): Promise<string> {
-  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: message }],
-      max_tokens: 600,
-    }),
-  });
-  if (!resp.ok) throw new Error(`OpenRouter HTTP ${resp.status}`);
-  const json = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
-  return json.choices?.[0]?.message?.content ?? "";
-}
+// Direct LLM call via OpenRouter now lives in ./llm.ts as `callOpenRouter`
+// (shared with extraction.ts). Behaviour is identical — the default 600-token
+// budget matches the old inline `callRemLlm`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Neuromodulators
@@ -878,7 +862,7 @@ async function runGenerativeRem(agentId: string, config: BrainConfig, log: Logge
         const result = await subagentRunner({ sessionKey: `rem-${jobId}-${c}`, message: prompt, model, deliver: false });
         responseText = result.text;
       } else {
-        responseText = await callRemLlm(prompt, model, config.openRouterApiKey);
+        responseText = await callOpenRouter(prompt, model, config.openRouterApiKey);
       }
     } catch (err) {
       log.warn(`[sharpwave] REM generative cluster ${c} LLM error: ${String(err)}`);
@@ -1018,7 +1002,7 @@ async function detectContradictionsViaSubagent(
       const result = await subagentRunner({ sessionKey: `rem-contradict-${jobId}`, message: prompt, model, deliver: false });
       responseText = result.text;
     } else {
-      responseText = await callRemLlm(prompt, model, config.openRouterApiKey);
+      responseText = await callOpenRouter(prompt, model, config.openRouterApiKey);
     }
   } catch (err) {
     log.warn(`[sharpwave] REM: contradiction LLM error: ${String(err)} — skipping this tick`);

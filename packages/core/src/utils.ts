@@ -152,6 +152,46 @@ export function importanceForType(type: NodeType | string): number {
   return (map as Record<string, number>)[type] ?? 0.5;
 }
 
+/**
+ * Extract the first balanced JSON object or array from free-form LLM output.
+ *
+ * Replaces the greedy `/\{[\s\S]*\}/` regex (Opus audit #5): when a model
+ * returned `{...}` followed by any trailing text containing another `}` (an
+ * example, a second object, commentary), the greedy match spanned both and
+ * JSON.parse threw — silently dropping the whole batch. This scanner tracks
+ * brace depth and string/escape state, so trailing garbage is ignored.
+ *
+ * Returns the balanced slice starting at the first `open` character, or null
+ * when no balanced value exists.
+ *
+ * Ported verbatim from clawbrain-v4/src/utils.ts (openwave / sharpwave-core
+ * split, Task 6d) — used by extraction.ts to parse the fact-extraction payload.
+ */
+export function extractBalancedJson(text: string, open: "{" | "[" = "{"): string | null {
+  const close = open === "{" ? "}" : "]";
+  const start = text.indexOf(open);
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 export function jaccardSim(a: string, b: string): number {
   const setA = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
   const setB = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
