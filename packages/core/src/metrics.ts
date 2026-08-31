@@ -3,6 +3,7 @@
  * Exports Prometheus-compatible metrics and structured logging helpers.
  */
 
+import { statSync } from "node:fs";
 import { getDb } from "./db.js";
 import type { BrainConfig } from "./types.js";
 
@@ -93,9 +94,9 @@ export async function collectMetrics(agentId: string, config: BrainConfig): Prom
   // Database size
   let dbSizeBytes = 0;
   try {
-    const dbPath = db.exec("PRAGMA database_list")[0]?.file as string | undefined;
+    const dbList = db.pragma("database_list") as Array<{ file?: string }>;
+    const dbPath = dbList[0]?.file;
     if (dbPath) {
-      const { statSync } = require("node:fs");
       dbSizeBytes = statSync(dbPath).size;
     }
   } catch {
