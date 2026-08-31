@@ -4,7 +4,7 @@
 
 **Goal:** Restructure `sharpwave` into a 3-package monorepo (`core` engine, `mcp` server, `openwave` OpenClaw plugin) and port ClawBrain v4's full autonomic wake-up layer onto the current engine, so OpenClaw agents wake up with memory auto-injected again.
 
-**Architecture:** npm workspaces. `packages/core` (`sharpwave-core`, `"private": true`) holds every engine module plus 8 cognition modules ported from `clawbrain-v4` and a unified tool-definition module. `packages/mcp` (`sharpwave`, npm-published, behavior frozen) and `packages/openwave` (new plugin) each depend on `sharpwave-core` via `workspace:*` and esbuild-bundle it into a single `dist/index.js`. Brain databases at `~/.sharpwave/<agentId>/brain.db` never move.
+**Architecture:** npm workspaces. `packages/core` (`sharpwave-core`, `"private": true`) holds every engine module plus 8 cognition modules ported from `clawbrain-v4` and a unified tool-definition module. `packages/mcp` (`sharpwave`, npm-published, behavior frozen) and `packages/openwave` (new plugin) each depend on `sharpwave-core` via a bare `"*"` version + the `workspaces` field (npm has no `workspace:*` protocol) and esbuild-bundle it into a single `dist/index.js`. Brain databases at `~/.sharpwave/<agentId>/brain.db` never move.
 
 **Tech Stack:** TypeScript 5.6, Node ≥22, ESM. `better-sqlite3` `~12.11.1` (native, external in every bundle). `sqlite-vec` `^0.1.9`. esbuild `^0.24`. vitest for unit tests. `@modelcontextprotocol/sdk` `^1.30` (mcp package only). No dependency on the `openclaw` package at build time — openwave inlines a minimal API type.
 
@@ -49,7 +49,7 @@ packages/core/src/tools.ts                unified brain_* tool defs + dispatch
 packages/core/test/*.test.ts              merged vitest suite (clawbrain-v4 + new)
 packages/core/test/setup.ts               temp-dir DB isolation
 
-packages/mcp/package.json                 name "sharpwave" (moved), deps: sharpwave-core workspace:*
+packages/mcp/package.json                 name "sharpwave" (moved), deps: sharpwave-core "*" (bare — npm has no workspace protocol)
 packages/mcp/tsconfig.json
 packages/mcp/esbuild.mjs                  moved + adjusted
 packages/mcp/src/index.ts                 today's src/index.ts, tool defs replaced by core import
@@ -89,7 +89,7 @@ tsconfig.json                   ->  packages/mcp/tsconfig.json (then trimmed)
 - Delete: root `tsconfig.json` (after copying to `packages/mcp/`)
 
 **Interfaces:**
-- Produces: workspace layout; `sharpwave-core` resolvable via `workspace:*`; `npm install` at root links everything.
+- Produces: workspace layout; `sharpwave-core` resolvable via a bare `"*"` version + the `workspaces` field (npm has no `workspace:*` protocol); `npm install` at root links everything.
 
 - [ ] **Step 1: Create the branch (if not already on it)**
 

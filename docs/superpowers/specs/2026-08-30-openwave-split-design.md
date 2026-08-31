@@ -99,17 +99,17 @@ sharpwave/                        (repo root — was the MCP server repo)
       src/index.ts                today's sharpwave/src/index.ts, verbatim,
                                    minus the inline tool defs (now from core)
       test/mcp-smoke.mjs          the publish gate — clean-env artifact test
-      package.json                deps: "sharpwave-core": "workspace:*"
+      package.json                deps: "sharpwave-core": "*"
     openwave/                     name: "openwave"   (OpenClaw plugin)
       src/
         index.ts                  plugin shell — ported from clawbrain-v4/index.ts
         bootstrap-delivery.ts     OpenClaw queued-injection drop workaround
         scheduler.ts              in-process timers (replay / consolidation / sweep)
       test/                       vitest — mock-api hook harness
-      package.json                deps: "sharpwave-core": "workspace:*"
+      package.json                deps: "sharpwave-core": "*"
 ```
 
-Both `mcp` and `openwave` declare `"sharpwave-core": "workspace:*"` and
+Both `mcp` and `openwave` declare `"sharpwave-core": "*"` and
 esbuild-**bundle** the compiled core into a single `dist/index.js` at build time
 (the pattern both trees already use). `sharpwave-core` is therefore never
 published to npm — "private, shared" is literal. A change to the engine is one
