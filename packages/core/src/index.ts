@@ -179,6 +179,12 @@ export {
 } from "./utils.js";
 
 // ---------------------------------------------------------------------------
+// episode-lanes — foreground/background episode-lane classification
+// ---------------------------------------------------------------------------
+export { classifyEpisodeLane, isForegroundLane } from "./episode-lanes.js";
+export type { EpisodeLane } from "./episode-lanes.js";
+
+// ---------------------------------------------------------------------------
 // tools — the unified brain_* tool surface shared by mcp + openwave
 // ---------------------------------------------------------------------------
 export {
