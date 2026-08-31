@@ -1,64 +1,20 @@
 {
-  "name": "sharpwave",
-  "version": "0.4.0",
-  "description": "Long-term memory for AI agents. An MCP server that remembers across sessions, forgets what stops mattering, and consolidates the rest — modeled on how the hippocampus actually works. Works with OpenClaw, Claude Code, Cursor, and any MCP client.",
+  "name": "sharpwave-monorepo",
+  "private": true,
   "type": "module",
-  "main": "dist/index.js",
-  "bin": {
-    "sharpwave": "dist/index.js"
-  },
+  "workspaces": ["packages/*"],
+  "engines": { "node": ">=22" },
   "scripts": {
-    "build": "node esbuild.mjs",
-    "start": "node dist/index.js",
-    "prepublishOnly": "npm run build",
-    "test:mcp": "node test/mcp-smoke.mjs"
-  },
-  "files": [
-    "dist/",
-    "README.md",
-    "LICENSE"
-  ],
-  "keywords": [
-    "mcp",
-    "model-context-protocol",
-    "memory",
-    "ai-memory",
-    "agent-memory",
-    "long-term-memory",
-    "multi-agent",
-    "claude",
-    "claude-code",
-    "cursor",
-    "openclaw",
-    "llm",
-    "knowledge-graph",
-    "spaced-repetition",
-    "fsrs",
-    "vector-search",
-    "sqlite"
-  ],
-  "author": "Enlightened Republic",
-  "license": "MIT",
-  "homepage": "https://github.com/Enlightened-Republic/sharpwave#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Enlightened-Republic/sharpwave.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Enlightened-Republic/sharpwave/issues"
-  },
-  "engines": {
-    "node": ">=22"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "better-sqlite3": "~12.11.1",
-    "sqlite-vec": "^0.1.9"
+    "build": "npm run build --workspace sharpwave-core && npm run build --workspace sharpwave && npm run build --workspace openwave",
+    "test": "npm run test --workspace sharpwave-core && npm run test --workspace openwave",
+    "test:mcp": "npm run build --workspace sharpwave-core && npm run build --workspace sharpwave && npm run test:mcp --workspace sharpwave",
+    "test:all": "npm run test && npm run test:mcp",
+    "typecheck": "tsc -b packages/core packages/mcp packages/openwave"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   }
 }
