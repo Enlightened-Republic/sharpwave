@@ -565,11 +565,15 @@ export function getNeighbors(
   }));
 }
 
+// valid_until filters (clawbrain-v4 Fable-5 audit F-9): retired/superseded nodes
+// must not surface in bootstrap blocks, the goals line, the review queue, or
+// dopamine propagation. getOperationalProcedures already carried this filter;
+// these four did not until the F-9 port.
 export function getTopByType(agentId: string, type: NodeType, limit = 5): BrainNode[] {
   const db = getDb(agentId);
   return db.prepare(
-    "SELECT * FROM nodes WHERE type = ? ORDER BY salience DESC LIMIT ?"
-  ).all(type, limit) as BrainNode[];
+    "SELECT * FROM nodes WHERE type = ? AND (valid_until IS NULL OR valid_until > ?) ORDER BY salience DESC LIMIT ?"
+  ).all(type, Date.now(), limit) as BrainNode[];
 }
 
 /**
@@ -615,16 +619,16 @@ export function getOperationalProcedures(
 export function getActiveGoals(agentId: string): BrainNode[] {
   const db = getDb(agentId);
   return db.prepare(
-    "SELECT * FROM nodes WHERE type = 'goal' AND retrievability > 0.1 ORDER BY salience DESC LIMIT 10"
-  ).all() as BrainNode[];
+    "SELECT * FROM nodes WHERE type = 'goal' AND retrievability > 0.1 AND (valid_until IS NULL OR valid_until > ?) ORDER BY salience DESC LIMIT 10"
+  ).all(Date.now()) as BrainNode[];
 }
 
 export function getReviewQueue(agentId: string, limit = 5): BrainNode[] {
   const db = getDb(agentId);
   // Danger zone: R between 0.08 and 0.28 — fading but not yet lost
   return db.prepare(
-    "SELECT * FROM nodes WHERE retrievability >= 0.08 AND retrievability <= 0.28 ORDER BY retrievability ASC LIMIT ?"
-  ).all(limit) as BrainNode[];
+    "SELECT * FROM nodes WHERE retrievability >= 0.08 AND retrievability <= 0.28 AND (valid_until IS NULL OR valid_until > ?) ORDER BY retrievability ASC LIMIT ?"
+  ).all(Date.now(), limit) as BrainNode[];
 }
 
 export function propagateDopamineSpike(
@@ -633,8 +637,8 @@ export function propagateDopamineSpike(
 ): void {
   const db = getDb(agentId);
   const traced = db.prepare(
-    "SELECT id, eligibility_trace FROM nodes WHERE eligibility_trace > 0.1 ORDER BY eligibility_trace DESC LIMIT 15"
-  ).all() as Array<{ id: string; eligibility_trace: number }>;
+    "SELECT id, eligibility_trace FROM nodes WHERE eligibility_trace > 0.1 AND (valid_until IS NULL OR valid_until > ?) ORDER BY eligibility_trace DESC LIMIT 15"
+  ).all(Date.now()) as Array<{ id: string; eligibility_trace: number }>;
 
   if (traced.length === 0) return;
   // Salience cap prevents runaway dopamine boosts (code-1 P1-6 / SYNTHESIS).
