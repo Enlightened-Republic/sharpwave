@@ -37,7 +37,7 @@ export type BootstrapDeliveryDecision =
 
 /** The idempotency key session_start enqueues under, and the drain must match. */
 export function bootstrapIdempotencyKey(sessionId: string): string {
-  return `clawbrain-v4:bootstrap:${sessionId}`;
+  return `openwave:bootstrap:${sessionId}`;
 }
 
 export function decideBootstrapDelivery(args: {
