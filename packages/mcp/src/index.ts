@@ -102,6 +102,13 @@ const TOOLS = MCP_TOOL_NAMES.map((name) => ({ name, ...BRAIN_TOOL_DEFS[name] }))
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
 async function dispatch(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  // Base sharpwave@0.4.0 checked the tool name before resolving the agent, so an
+  // unknown tool with no `agent` arg (multi-agent mode) returned the unknown-tool
+  // error, not the agent-resolution error. Preserve that ordering.
+  if (!MCP_TOOL_NAMES.includes(name)) {
+    return { content: [{ type: "text", text: `Error: unknown tool: ${name}` }], isError: true };
+  }
+
   const ag = resolveAgent(args);
   if (!ag.ok) return { content: [{ type: "text", text: `Error: ${ag.error}` }], isError: true };
 

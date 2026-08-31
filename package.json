@@ -9,6 +9,7 @@
     "test": "npm run build --workspace sharpwave-core && npm run test --workspace sharpwave-core && npm run test --workspace openwave",
     "test:mcp": "npm run build --workspace sharpwave-core && npm run build --workspace sharpwave && npm run test:mcp --workspace sharpwave",
     "test:all": "npm run test && npm run test:mcp",
+    "test:pack": "node packages/mcp/test/pack-smoke.mjs",
     "typecheck": "tsc -b packages/core packages/mcp packages/openwave"
   },
   "devDependencies": {

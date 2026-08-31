@@ -49,7 +49,7 @@ packages/core/src/tools.ts                unified brain_* tool defs + dispatch
 packages/core/test/*.test.ts              merged vitest suite (clawbrain-v4 + new)
 packages/core/test/setup.ts               temp-dir DB isolation
 
-packages/mcp/package.json                 name "sharpwave" (moved), deps: sharpwave-core "*" (bare — npm has no workspace protocol)
+packages/mcp/package.json                 name "sharpwave" (moved), devDeps: sharpwave-core "*" (build-time only — esbuild inlines it; must NOT be a runtime dep since it's unpublished; bare "*" — npm has no workspace protocol)
 packages/mcp/tsconfig.json
 packages/mcp/esbuild.mjs                  moved + adjusted
 packages/mcp/src/index.ts                 today's src/index.ts, tool defs replaced by core import
@@ -233,19 +233,20 @@ export const sharedEsbuild = {
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "~12.11.1",
-    "sqlite-vec": "^0.1.9",
-    "sharpwave-core": "*"
+    "sqlite-vec": "^0.1.9"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "sharpwave-core": "*"
   }
 }
 ```
 
 > `"sharpwave-core": "*"` resolves to the workspace package. Do not use `workspace:*` — npm (unlike pnpm/yarn) does not support that protocol; a bare `*` plus the `workspaces` field is the npm-correct form.
+> It lives in **`devDependencies`**, not `dependencies` (build-time only — esbuild inlines it; must NOT be a runtime dep since it's unpublished — `npm install sharpwave` would 404 on it). Runtime deps stay `@modelcontextprotocol/sdk`, `better-sqlite3`, `sqlite-vec`.
 
 - [ ] **Step 9: Write `packages/mcp/tsconfig.json`**
 
@@ -774,12 +775,16 @@ Copy `clawbrain-v4/test/{bootstrap,procedural-injection,valor-fsrs,extraction,ep
     "compat": { "pluginApi": ">=2026.5.0", "minGatewayVersion": "2026.5.0" }
   },
   "dependencies": {
-    "sharpwave-core": "*",
     "better-sqlite3": "~12.11.1",
     "sqlite-vec": "^0.1.9"
+  },
+  "devDependencies": {
+    "sharpwave-core": "*"
   }
 }
 ```
+
+> `"sharpwave-core": "*"` is a **devDependency** (build-time only — esbuild inlines it; must NOT be a runtime dep since it's unpublished). openwave is `"private": true` and loaded as a bundled file, so it's harmless either way, but keep it correct.
 
 - [ ] **Step 2: Write `packages/openwave/esbuild.mjs`**
 

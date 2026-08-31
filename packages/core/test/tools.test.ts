@@ -74,7 +74,7 @@ test("dispatch write then query round-trips", async () => {
 test("unknown tool is an error result, not a throw", async () => {
   const r = await dispatchBrainTool("brain_nope", "x", {}, DEFAULT_CONFIG);
   expect(r.isError).toBe(true);
-  expect(r.text).toBe("unknown tool: brain_nope");
+  expect(r.text).toBe("Error: unknown tool: brain_nope");
 });
 
 // ─── brain_review dispatch wrapper (validate → getNode → touchNode → format) ───

@@ -779,6 +779,8 @@ export async function dispatchBrainTool(
     }
 
     default:
-      return { text: `unknown tool: ${name}`, isError: true };
+      // Text matches base sharpwave@0.4.0 (77bc427:src/index.ts), which returned
+      // err("unknown tool: <name>") = "Error: unknown tool: <name>".
+      return { text: `Error: unknown tool: ${name}`, isError: true };
   }
 }

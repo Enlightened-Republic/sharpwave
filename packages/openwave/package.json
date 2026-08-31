@@ -16,7 +16,6 @@
     }
   },
   "dependencies": {
-    "sharpwave-core": "*",
     "better-sqlite3": "~12.11.1",
     "sqlite-vec": "^0.1.9"
   },
@@ -24,6 +23,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "sharpwave-core": "*"
   }
 }

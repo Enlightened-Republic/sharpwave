@@ -103,17 +103,19 @@ sharpwave/                        (repo root — was the MCP server repo)
       src/index.ts                today's sharpwave/src/index.ts, verbatim,
                                    minus the inline tool defs (now from core)
       test/mcp-smoke.mjs          the publish gate — clean-env artifact test
-      package.json                deps: "sharpwave-core": "*"
+      package.json                devDeps: "sharpwave-core": "*"  (build-time only; esbuild inlines it)
     openwave/                     name: "openwave"   (OpenClaw plugin)
       src/
         index.ts                  plugin shell — ported from clawbrain-v4/index.ts
         bootstrap-delivery.ts     OpenClaw queued-injection drop workaround
         scheduler.ts              in-process timers (replay / consolidation / sweep)
       test/                       vitest — mock-api hook harness
-      package.json                deps: "sharpwave-core": "*"
+      package.json                devDeps: "sharpwave-core": "*"  (build-time only; esbuild inlines it)
 ```
 
-Both `mcp` and `openwave` declare `"sharpwave-core": "*"` and
+Both `mcp` and `openwave` declare `"sharpwave-core": "*"` as a **devDependency**
+(build-time only — esbuild inlines its compiled output; it must NOT be a runtime
+dep since it is unpublished) and
 esbuild-**bundle** the compiled core into a single `dist/index.js` at build time
 (the pattern both trees already use). `sharpwave-core` is therefore never
 published to npm — "private, shared" is literal. A change to the engine is one
@@ -218,6 +220,10 @@ autonomic layer expects; the ported modules are rewired to sharpwave's API.
   workspace. Output still a single `dist/index.js` with a shebang.
 - `package.json`: `bin`, `files`, `version` (independent — this package keeps its
   own semver line and npm release cadence), `prepublishOnly: npm run build`.
+  `"sharpwave-core": "*"` sits in **`devDependencies`**, not `dependencies` —
+  esbuild inlines it at build time, so a runtime dep on the unpublished package
+  would 404 every `npm install sharpwave`. Runtime deps are only
+  `@modelcontextprotocol/sdk`, `better-sqlite3`, `sqlite-vec`.
 - **`test:mcp` (`test/mcp-smoke.mjs`) stays the publish gate.** It spawns the
   built `dist/index.js`, speaks MCP over stdio, and exercises every tool in a
   directory with no local ollama. Must pass before any `npm publish`. npm publish

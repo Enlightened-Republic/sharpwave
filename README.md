@@ -28,7 +28,15 @@ This repository is an npm-workspaces monorepo of three packages:
 
 `sharpwave-core` is bundled into each consumer at build time, so `sharpwave` and
 `openwave` always ship the exact engine they were built against — there is no
-version-skew path between them.
+version-skew path between them. It is a **devDependency** of both consumers, not
+a runtime one — esbuild inlines it, and a runtime dep on an unpublished package
+would break every `npm install sharpwave`.
+
+`npm run test:pack` is the pre-publish gate: it packs `sharpwave`, installs the
+tarball in a clean workspace-free directory (where a stray runtime dep on
+`sharpwave-core` would 404), and drives the installed server over MCP. Run it
+before every `npm publish`. It is not part of `npm run test:all` (slow, and the
+`npm install` touches the network).
 
 ---
 
