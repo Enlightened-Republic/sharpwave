@@ -177,3 +177,13 @@ export {
   agentIdFromKey, classifySentence, importanceForType, jaccardSim,
   BoundedTtlMap, BoundedTtlSet,
 } from "./utils.js";
+
+// ---------------------------------------------------------------------------
+// tools — the unified brain_* tool surface shared by mcp + openwave
+// ---------------------------------------------------------------------------
+export {
+  BRAIN_TOOL_DEFS, dispatchBrainTool, MCP_TOOL_NAMES, OPENWAVE_TOOL_NAMES,
+} from "./tools.js";
+export type {
+  BrainToolDef, BrainToolInputSchema, BrainToolResult,
+} from "./tools.js";
