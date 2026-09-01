@@ -1,41 +1,36 @@
 # Sharpwave
 
-**Long-term memory for AI agents** — one engine that remembers across sessions,
-forgets what stops mattering, and consolidates the rest. It ships in **two forms**:
-
-| | What it is | For |
-|---|---|---|
-| **`sharpwave`** | a stdio **MCP server** (`npx -y sharpwave`) | Claude Code, Cursor, Claude Desktop, any MCP client |
-| **`openwave`** | an **OpenClaw plugin** — same engine, runs *in-process* | OpenClaw agents |
-
-The MCP server answers when an agent calls a `brain_*` tool. **openwave** goes
-further: it hooks OpenClaw's turn lifecycle and injects the relevant memories
-into *every* turn automatically — no tool call — plus runs the sleep system
-(consolidation, replay, extraction) on in-process timers. Full details:
-[`packages/openwave/README.md`](packages/openwave/README.md).
-
-Both are built from one shared engine (`packages/core`), so they can never drift.
+**A long-term memory MCP server for AI agents.** It remembers across sessions,
+forgets what stops mattering, and consolidates the rest — modeled on how human
+memory actually works, not a vector store with extra steps.
 
 ```bash
 npx -y sharpwave
 ```
 
+Works with Claude Code, Claude Desktop, Cursor, and any other MCP client.
+
+> **Building on [OpenClaw](https://openclaw.ai)?** Use **[openwave](packages/openwave/README.md)**
+> instead — the same engine as a native OpenClaw plugin. It does everything this
+> MCP server does, *plus* it injects the relevant memories into every agent turn
+> automatically (no tool call) and runs the sleep system in-process. Install:
+> `openclaw plugins install clawhub:openwave`. openwave is packaged separately —
+> see [`packages/openwave/`](packages/openwave/).
+
 ---
 
 ## Repository layout
 
-This repository is an npm-workspaces monorepo of three packages:
+npm-workspaces monorepo:
 
-- **`packages/core`** — `sharpwave-core`, the shared memory engine (retrieval,
-  consolidation, extraction, the FSRS forgetting curve, the graph). Private —
-  never published to npm.
+- **`packages/core`** — `sharpwave-core`, the memory engine (retrieval,
+  consolidation, extraction, the FSRS forgetting curve, the graph). Published to
+  npm as the shared engine behind both `sharpwave` and `openwave`.
 - **`packages/mcp`** — `sharpwave`, the stdio MCP server published to npm. This
-  is the package `npm i sharpwave` / `npx -y sharpwave` installs, for Claude
-  Code, Cursor, Claude Desktop, or any other MCP client.
-- **`packages/openwave`** — the **OpenClaw plugin**: the same engine plus
-  autonomic wake-up hooks that inject memory into every turn and run the sleep
-  system in-process. This is what OpenClaw agents run instead of the MCP server.
-  See [`packages/openwave/README.md`](packages/openwave/README.md).
+  is what `npm i sharpwave` / `npx -y sharpwave` installs.
+- **`packages/openwave`** — the OpenClaw plugin. Being moved to its own repo
+  (`Enlightened-Republic/openwave`) and published independently; it lives here
+  for now. See [`packages/openwave/README.md`](packages/openwave/README.md).
 
 `sharpwave-core` is bundled into each consumer at build time, so `sharpwave` and
 `openwave` always ship the exact engine they were built against — there is no
