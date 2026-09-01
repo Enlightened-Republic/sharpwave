@@ -10,27 +10,29 @@ npx -y sharpwave
 
 Works with Claude Code, Claude Desktop, Cursor, and any other MCP client.
 
-> **Building on [OpenClaw](https://openclaw.ai)?** Use **[openwave](packages/openwave/README.md)**
+> **Building on [OpenClaw](https://openclaw.ai)?** Use **[openwave](https://github.com/Enlightened-Republic/openwave)**
 > instead — the same engine as a native OpenClaw plugin. It does everything this
 > MCP server does, *plus* it injects the relevant memories into every agent turn
-> automatically (no tool call) and runs the sleep system in-process. Install:
-> `openclaw plugins install clawhub:openwave`. openwave is packaged separately —
-> see [`packages/openwave/`](packages/openwave/).
+> automatically (no tool call) and runs the sleep system in-process.
+> `openclaw plugins install npm:openwave`
 
 ---
 
 ## Repository layout
 
-npm-workspaces monorepo:
+npm-workspaces monorepo, two packages:
 
-- **`packages/core`** — `sharpwave-core`, the memory engine (retrieval,
-  consolidation, extraction, the FSRS forgetting curve, the graph). Published to
-  npm as the shared engine behind both `sharpwave` and `openwave`.
-- **`packages/mcp`** — `sharpwave`, the stdio MCP server published to npm. This
-  is what `npm i sharpwave` / `npx -y sharpwave` installs.
-- **`packages/openwave`** — the OpenClaw plugin. Being moved to its own repo
-  (`Enlightened-Republic/openwave`) and published independently; it lives here
-  for now. See [`packages/openwave/README.md`](packages/openwave/README.md).
+- **`packages/core`** — [`sharpwave-core`](https://www.npmjs.com/package/sharpwave-core),
+  the memory engine (retrieval, consolidation, extraction, the FSRS forgetting
+  curve, the graph). Published to npm as the shared engine behind both the
+  `sharpwave` MCP server and the [`openwave`](https://github.com/Enlightened-Republic/openwave)
+  OpenClaw plugin.
+- **`packages/mcp`** — [`sharpwave`](https://www.npmjs.com/package/sharpwave),
+  the stdio MCP server. This is what `npm i sharpwave` / `npx -y sharpwave`
+  installs.
+
+The OpenClaw plugin lives in its own repo:
+[`Enlightened-Republic/openwave`](https://github.com/Enlightened-Republic/openwave).
 
 `sharpwave-core` is bundled into each consumer at build time, so `sharpwave` and
 `openwave` always ship the exact engine they were built against — there is no

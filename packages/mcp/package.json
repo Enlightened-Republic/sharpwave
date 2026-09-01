@@ -4,14 +4,20 @@
   "description": "Long-term memory for AI agents. An MCP server that remembers across sessions, forgets what stops mattering, and consolidates the rest — modeled on how the hippocampus actually works. Works with OpenClaw, Claude Code, Cursor, and any MCP client.",
   "type": "module",
   "main": "dist/index.js",
-  "bin": { "sharpwave": "dist/index.js" },
+  "bin": {
+    "sharpwave": "dist/index.js"
+  },
   "scripts": {
     "build": "node esbuild.mjs",
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build",
     "test:mcp": "node test/mcp-smoke.mjs"
   },
-  "files": ["dist/", "README.md", "LICENSE"],
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -41,7 +47,9 @@
   "bugs": {
     "url": "https://github.com/Enlightened-Republic/sharpwave/issues"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "~12.11.1",
@@ -52,6 +60,6 @@
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0",
-    "sharpwave-core": "*"
+    "sharpwave-core": "^0.4.1"
   }
 }

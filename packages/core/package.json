@@ -1,17 +1,20 @@
 {
   "name": "sharpwave-core",
   "version": "0.4.1",
-  "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "better-sqlite3": "~12.11.1",
@@ -19,5 +22,19 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13"
+  },
+  "description": "The memory engine behind sharpwave (MCP server) and openwave (OpenClaw plugin): graph store, FSRS-6 forgetting curve, spreading activation, sleep-style consolidation, LLM extraction.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Enlightened-Republic/sharpwave.git",
+    "directory": "packages/core"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
