@@ -1,13 +1,24 @@
 # Sharpwave
 
-**Long-term memory for AI agents.** An MCP server that remembers across sessions,
-forgets what stops mattering, and consolidates the rest.
+**Long-term memory for AI agents** — one engine that remembers across sessions,
+forgets what stops mattering, and consolidates the rest. It ships in **two forms**:
+
+| | What it is | For |
+|---|---|---|
+| **`sharpwave`** | a stdio **MCP server** (`npx -y sharpwave`) | Claude Code, Cursor, Claude Desktop, any MCP client |
+| **`openwave`** | an **OpenClaw plugin** — same engine, runs *in-process* | OpenClaw agents |
+
+The MCP server answers when an agent calls a `brain_*` tool. **openwave** goes
+further: it hooks OpenClaw's turn lifecycle and injects the relevant memories
+into *every* turn automatically — no tool call — plus runs the sleep system
+(consolidation, replay, extraction) on in-process timers. Full details:
+[`packages/openwave/README.md`](packages/openwave/README.md).
+
+Both are built from one shared engine (`packages/core`), so they can never drift.
 
 ```bash
 npx -y sharpwave
 ```
-
-Works with OpenClaw, Claude Code, Claude Desktop, Cursor, and any other MCP client.
 
 ---
 
@@ -21,10 +32,10 @@ This repository is an npm-workspaces monorepo of three packages:
 - **`packages/mcp`** — `sharpwave`, the stdio MCP server published to npm. This
   is the package `npm i sharpwave` / `npx -y sharpwave` installs, for Claude
   Code, Cursor, Claude Desktop, or any other MCP client.
-- **`packages/openwave`** — the OpenClaw plugin: the same engine plus autonomic
-  wake-up hooks that inject memory into every turn and run the sleep system
-  in-process. This is what OpenClaw agents run instead of the MCP server. See
-  [`packages/openwave/README.md`](packages/openwave/README.md).
+- **`packages/openwave`** — the **OpenClaw plugin**: the same engine plus
+  autonomic wake-up hooks that inject memory into every turn and run the sleep
+  system in-process. This is what OpenClaw agents run instead of the MCP server.
+  See [`packages/openwave/README.md`](packages/openwave/README.md).
 
 `sharpwave-core` is bundled into each consumer at build time, so `sharpwave` and
 `openwave` always ship the exact engine they were built against — there is no
