@@ -1,0 +1,63 @@
+{
+  "id": "openwave",
+  "name": "openwave",
+  "version": "0.1.0",
+  "description": "Autonomic wake-up memory for OpenClaw agents. Injects identity, goals and query-relevant recall into every turn, and runs the sleep system (consolidation, awake replay, extraction) in-process. Powered by sharpwave-core.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "brain_query",
+      "brain_write",
+      "brain_link",
+      "brain_supersede",
+      "brain_stats",
+      "brain_history",
+      "brain_expand",
+      "brain_review",
+      "brain_forget",
+      "brain_edges",
+      "brain_reset",
+      "brain_update_self_model",
+      "brain_reflect",
+      "brain_generate_skill",
+      "brain_workspace",
+      "brain_docs"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "agents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["main"],
+        "description": "OpenClaw agent ids openwave serves. Each routes to ~/.sharpwave/<id>/brain.db."
+      },
+      "contextBudget": { "type": "number", "default": 2000 },
+      "workingMemorySlots": { "type": "number", "default": 7 },
+      "spreadingActivationHops": { "type": "number", "default": 1 },
+      "activationThreshold": { "type": "number", "default": 0.1 },
+      "inhibitionStrength": { "type": "number", "default": 0.6 },
+      "recallTopK": { "type": "number", "default": 10 },
+      "bootstrapTopK": { "type": "number", "default": 15 },
+      "efDefault": { "type": "number", "default": 2.5 },
+      "retrievabilityFloor": { "type": "number", "default": 0.05 },
+      "consolidationTimeGateHours": { "type": "number", "default": 4 },
+      "consolidationEpisodeGate": { "type": "number", "default": 10 },
+      "pruneAfterDays": { "type": "number", "default": 90 },
+      "ingestionModel": { "type": "string", "default": "openrouter/deepseek/deepseek-v4-flash" },
+      "remModel": { "type": "string" },
+      "openRouterApiKey": { "type": "string", "default": "" },
+      "embeddingModel": { "type": "string", "default": "ollama/qwen3-embedding:0.6b" },
+      "llmExtractionEnabled": { "type": "boolean", "default": false },
+      "llmExtractionMinImportance": { "type": "number", "default": 0.4 },
+      "skillEvolution": { "type": "boolean", "default": false },
+      "skillEvolveMinPatternCount": { "type": "number", "default": 5 },
+      "workspaceSkillsDir": { "type": "string", "default": "" },
+      "brainDocsDir": { "type": "string", "default": "" }
+    }
+  }
+}

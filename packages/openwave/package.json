@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "openclaw": {
+    "extensions": ["./src/index.ts"],
     "runtimeExtensions": ["./dist/index.js"],
     "compat": {
       "pluginApi": ">=2026.5.0",

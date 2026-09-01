@@ -17,14 +17,31 @@ clients (Cursor, Claude Code, Claude Desktop).
 
 ## Install
 
-Add the built plugin to `openclaw.json`:
+Add the built plugin to `openclaw.json`. `plugins.load.paths` points at the
+**package directory** (not `dist/index.js` directly) so the gateway can read
+`openclaw.plugin.json` + `package.json` alongside the built entry — this is how
+OpenClaw validates `plugins.entries.openwave.config` against the plugin's
+`configSchema` before it loads any plugin code (`docs/plugins/manifest.md`).
 
 ```jsonc
 "plugins": {
-  "load": { "paths": ["C:/Users/wubbu/Desktop/Projects/sharpwave/packages/openwave/dist/index.js"] },
-  "entries": { "openwave": { "enabled": true, "config": { "agents": ["main"] } } }
+  // If plugins.allow is set (exclusive allowlist), openwave MUST be added to it.
+  "allow": ["...existing ids...", "openwave"],
+  "load": { "paths": ["C:/Users/wubbu/Desktop/Projects/sharpwave/packages/openwave"] },
+  "entries": {
+    "openwave": {
+      "enabled": true,
+      "hooks": { "allowConversationAccess": true },
+      "config": { "agents": ["main"] }
+    }
+  }
 }
 ```
+
+`hooks.allowConversationAccess: true` is required — openwave is a non-bundled
+plugin and its `before_prompt_build` / `agent_turn_prepare` / `llm_output` /
+`agent_end` hooks read conversation content (`docs/plugins/hooks.md`).
+`allowPromptInjection` is left at its default (allowed).
 
 The plugin config lives under `entries.openwave.config` (the `register` handler
 also accepts fields at the top level of the entry as a fallback, but `config` is
