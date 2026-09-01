@@ -4,6 +4,8 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-08-31
+
 ### Fixed
 
 - **`callOpenRouter` now strips a leading `openrouter/` from the model id.**
@@ -29,6 +31,10 @@ All notable changes to the Sharpwave TypeScript MCP server.
   (0.4.0 briefly framed everything around OpenClaw; the OpenClaw-specific
   wake-up/auto-injection layer is moving to a separate `openwave` plugin, so
   the MCP server stays cross-platform.)
+- **Injected-context and log markers rebranded** `ClawBrain v4` → `SharpWave`.
+  The always-on headers now read `[SharpWave active]` (bootstrap) and
+  `[SharpWave]` (self-model); structured-log lines are prefixed `[sharpwave]`.
+  `BRAIN_HEADER` keeps a `(compat: ClawBrain v3)` tail.
 
 ## [0.4.0] — 2026-08-30
 

@@ -1,6 +1,6 @@
 {
   "name": "sharpwave",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Long-term memory for AI agents. An MCP server that remembers across sessions, forgets what stops mattering, and consolidates the rest — modeled on how the hippocampus actually works. Works with OpenClaw, Claude Code, Cursor, and any MCP client.",
   "type": "module",
   "main": "dist/index.js",
