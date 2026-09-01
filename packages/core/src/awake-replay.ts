@@ -47,13 +47,13 @@ export async function awakeReplayTick(
     buildDreamContext(agentId, db, replayed);
     await new Promise<void>((r) => setImmediate(r));
     if (replayed > 0) {
-      log.info(`[clawbrain-v4] awake replay: ${replayed} nodes stabilized (agent=${agentId})`);
+      log.info(`[sharpwave] awake replay: ${replayed} nodes stabilized (agent=${agentId})`);
     }
     if (prospectivelyActivated > 0) {
-      log.info(`[clawbrain-v4] awake replay: ${prospectivelyActivated} prospective node(s) pre-activated (agent=${agentId})`);
+      log.info(`[sharpwave] awake replay: ${prospectivelyActivated} prospective node(s) pre-activated (agent=${agentId})`);
     }
   } catch (err) {
-    log.warn(`[clawbrain-v4] awakeReplayTick error (agent=${agentId}): ${String(err)}`);
+    log.warn(`[sharpwave] awakeReplayTick error (agent=${agentId}): ${String(err)}`);
   }
 }
 
@@ -195,7 +195,7 @@ function formHebbianEdgesSync(
   }
 
   if (formed > 0) {
-    log.info(`[clawbrain-v4] Hebbian: ${formed} associate edge(s) formed (agent=${agentId})`);
+    log.info(`[sharpwave] Hebbian: ${formed} associate edge(s) formed (agent=${agentId})`);
   }
 }
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   writeNode, getNode, touchNode, ftsSearchNodes, getActiveGoals,
+  getTopByType, getReviewQueue, propagateDopamineSpike,
   computeSalience, decayEligibilityTraces, getNeighbors,
   fsrsRetrievability, getRetrievability, computePsHash, psHashHamming,
 } from "../src/nodes.js";
@@ -383,5 +384,77 @@ describe("pattern separation hash (v14)", () => {
     expect(psHashHamming(a, c)).toBe(0);
     const d = Buffer.from([0x0f, 0x0f, 0x0f, 0x0f]); // half bits set vs a
     expect(psHashHamming(a, d)).toBe(16);
+  });
+});
+
+// valid_until filters (clawbrain-v4 Fable-5 audit F-9 — never reached sharpwave
+// in the MCP split): a node whose valid_until is in the past has been retired /
+// superseded and must not surface in bootstrap blocks, the goals line, the
+// review queue, or dopamine propagation. getOperationalProcedures already
+// filtered; these four did not.
+describe("nodes — valid_until retirement filter (F-9)", () => {
+  function retire(db: ReturnType<typeof getDb>, nodeId: string): void {
+    db.prepare("UPDATE nodes SET valid_until = ? WHERE id = ?").run(Date.now() - 60_000, nodeId);
+  }
+
+  it("getTopByType excludes a retired node", () => {
+    const id = fresh();
+    const db = getDb(id);
+    const live = writeNode(id, "identity", "current self", "I am the live identity node", { importance: 0.9 });
+    const dead = writeNode(id, "identity", "old self", "I was a former identity that got superseded", { importance: 0.9 });
+    retire(db, dead);
+
+    const ids = getTopByType(id, "identity", 10).map((n) => n.id);
+    expect(ids).toContain(live);
+    expect(ids).not.toContain(dead);
+    closeDb(id);
+  });
+
+  it("getActiveGoals excludes a retired goal", () => {
+    const id = fresh();
+    const db = getDb(id);
+    const live = writeNode(id, "goal", "ship the release", "finish and publish 0.4.1", { importance: 0.8 });
+    const dead = writeNode(id, "goal", "abandoned goal", "this goal was dropped and retired", { importance: 0.8 });
+    retire(db, dead);
+
+    const ids = getActiveGoals(id).map((n) => n.id);
+    expect(ids).toContain(live);
+    expect(ids).not.toContain(dead);
+    closeDb(id);
+  });
+
+  it("getReviewQueue excludes a retired node in the danger zone", () => {
+    const id = fresh();
+    const db = getDb(id);
+    const live = writeNode(id, "semantic", "fading fact", "a fact drifting toward the forgetting boundary");
+    const dead = writeNode(id, "semantic", "retired fact", "a superseded fact drifting toward the boundary");
+    // Both parked in the danger zone (0.08–0.28); one is retired.
+    db.prepare("UPDATE nodes SET retrievability = 0.15 WHERE id IN (?, ?)").run(live, dead);
+    retire(db, dead);
+
+    const ids = getReviewQueue(id, 10).map((n) => n.id);
+    expect(ids).toContain(live);
+    expect(ids).not.toContain(dead);
+    closeDb(id);
+  });
+
+  it("propagateDopamineSpike does not boost a retired traced node", () => {
+    const id = fresh();
+    const db = getDb(id);
+    const live = writeNode(id, "semantic", "live traced", "a live node carrying an eligibility trace");
+    const dead = writeNode(id, "semantic", "retired traced", "a retired node still carrying an eligibility trace");
+    db.prepare("UPDATE nodes SET eligibility_trace = 0.9 WHERE id IN (?, ?)").run(live, dead);
+    retire(db, dead);
+
+    const salienceBefore = (nid: string) =>
+      (db.prepare("SELECT salience FROM nodes WHERE id = ?").get(nid) as { salience: number }).salience;
+    const deadBefore = salienceBefore(dead);
+    const liveBefore = salienceBefore(live);
+
+    propagateDopamineSpike(id, 1.0);
+
+    expect(salienceBefore(dead)).toBe(deadBefore);
+    expect(salienceBefore(live)).toBeGreaterThan(liveBefore);
+    closeDb(id);
   });
 });

@@ -375,3 +375,54 @@ describe("fetchEmbedding — provider routing and dim guard (Bug B regression)",
     }
   });
 });
+
+// ─── fetchEmbedding — caller AbortSignal (follow-up ticket, 2026-08-31) ────────
+//
+// proactive-monitor races fetchEmbedding against a 250ms budget so the
+// before_prompt_build hook stays inside OpenClaw's gate. In the MCP split
+// core's fetchEmbedding dropped the AbortSignal parameter, so when the race
+// timed out the underlying HTTP request kept running — socket pressure ×29
+// agents. Restore an optional trailing `signal` that cancels the fetch.
+describe("fetchEmbedding — caller AbortSignal", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
+
+  const openRouterCfg = {
+    ...DEFAULT_CONFIG,
+    embeddingModel: "openai/text-embedding-3-large",
+    openRouterApiKey: "test-key",
+  };
+
+  it("returns null without calling fetch when the signal is already aborted", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+
+    const vec = await fetchEmbedding("hello", openRouterCfg, undefined, AbortSignal.abort());
+
+    expect(vec).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("aborts the in-flight fetch when the caller's signal fires", async () => {
+    const caller = new AbortController();
+    let passedSignal: AbortSignal | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+      passedSignal = (init as RequestInit).signal ?? undefined;
+      return new Promise((_resolve, reject) => {
+        passedSignal?.addEventListener("abort", () =>
+          reject(new DOMException("The operation was aborted.", "AbortError")),
+        );
+      });
+    });
+
+    const p = fetchEmbedding("hello", openRouterCfg, undefined, caller.signal);
+    caller.abort();
+    const vec = await p;
+
+    expect(vec).toBeNull();
+    expect(passedSignal).toBeInstanceOf(AbortSignal);
+    expect(passedSignal!.aborted).toBe(true);
+  });
+});

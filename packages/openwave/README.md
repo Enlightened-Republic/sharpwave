@@ -50,7 +50,7 @@ engine call. The fields the plugin logic reads directly:
 | `enabled` | `boolean` | `true` | Set `false` (or `entries.openwave.enabled: false`) and `register` returns immediately — no tools, no hooks. |
 | `llmExtractionEnabled` | `boolean` | `false` | When `true`, `message_received` / `llm_output` episodes at or above `llmExtractionMinImportance` are queued for LLM fact extraction into graph nodes. When `false`, only the heuristic extractor runs. |
 | `llmExtractionMinImportance` | `number` | `0.4` | Importance floor for queueing an episode for extraction. |
-| `ingestionModel` | `string` | `"openrouter/deepseek/deepseek-v4-flash"` | Model for LLM fact extraction and the generative half of REM consolidation. See caveat below. |
+| `ingestionModel` | `string` | `"openrouter/deepseek/deepseek-v4-flash"` | Model for LLM fact extraction and the generative half of REM consolidation. Both the `openrouter/provider/model` and bare `provider/model` forms work (the engine strips a leading `openrouter/`). |
 | `openRouterApiKey` | `string` | `process.env.OPENROUTER_API_KEY` ?? `process.env.SHARPWAVE_OPENROUTER_API_KEY` ?? `""` | OpenRouter key for all engine LLM calls. If empty, extraction and generative-REM degrade to keyword/heuristic mode (non-fatal). Prefer setting the `OPENROUTER_API_KEY` env var over putting the key in `openclaw.json`. |
 
 Engine (`BrainConfig`) fields you can also override under `config` — passed
@@ -70,7 +70,7 @@ straight through to `sharpwave-core`, defaults from `core.DEFAULT_CONFIG`:
 | `consolidationTimeGateHours` | `number` | `4` | Hours since last consolidation before the gate opens. |
 | `consolidationEpisodeGate` | `number` | `10` | New-episode count before the consolidation gate opens. |
 | `pruneAfterDays` | `number` | `90` | Age after which low-value nodes are pruned. |
-| `remModel` | `string?` | _(unset)_ | REM-consolidation model override; falls through to `ingestionModel` when unset. Same bare-form caveat applies. |
+| `remModel` | `string?` | _(unset)_ | REM-consolidation model override; falls through to `ingestionModel` when unset. `openrouter/` prefix optional, as above. |
 | `embeddingModel` | `string` | `process.env.SHARPWAVE_EMBEDDING_MODEL` ?? `"ollama/qwen3-embedding:0.6b"` | Embedding model (1024-dim). |
 | `skillEvolution` | `boolean` | `false` | Enable pattern→skill generation. |
 | `skillEvolveMinPatternCount` | `number` | `5` | Pattern occurrences before a skill is generated. |
@@ -83,16 +83,17 @@ Env vars read directly: `OPENROUTER_API_KEY` / `SHARPWAVE_OPENROUTER_API_KEY`
 only for a boolean presence line in the `register` diagnostic log — the engine
 is single-provider OpenRouter and does not use it.
 
-### `ingestionModel` caveat
+### `ingestionModel` / `remModel` form
 
-Use the **bare** `provider/model` form — e.g. `deepseek/deepseek-v4-flash` —
-**not** `openrouter/deepseek/deepseek-v4-flash`. The engine passes this string
-verbatim as the `model` field of the OpenRouter chat-completions request, and
-OpenRouter rejects the `openrouter/` prefix. With the prefix, LLM fact
-extraction and generative-REM consolidation silently fall back to keyword mode.
-Note that `core.DEFAULT_CONFIG.ingestionModel` currently ships the prefixed
-string; override it explicitly in your `openclaw.json` until the engine-side
-fix lands (tracked separately).
+Either the `openrouter/provider/model` or the bare `provider/model` form works.
+`sharpwave-core`'s `callOpenRouter` strips a leading `openrouter/` before it
+builds the OpenRouter chat-completions request (the same strip `fetchEmbedding`
+already did for embeddings), so `core.DEFAULT_CONFIG.ingestionModel`'s prefixed
+`"openrouter/deepseek/deepseek-v4-flash"` resolves correctly with no override.
+
+Earlier `sharpwave` releases (through 0.4.0) passed the string verbatim, so the
+prefixed default 404'd and LLM fact extraction / generative-REM consolidation
+silently fell back to keyword mode. Fixed on `main` after 0.4.0.
 
 ---
 
