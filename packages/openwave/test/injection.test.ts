@@ -5,11 +5,11 @@ import plugin from "../src/index.js";
 import { makeMockApi } from "./mock-api.js";
 
 // Marker that only the BOOTSTRAP block carries (context-assembly.ts BRAIN_HEADER).
-// The self-model header is "[ClawBrain v4] Identity..." — a different string —
+// The self-model header is "[SharpWave] Identity..." — a different string —
 // so this distinguishes "bootstrap was injected into prependContext" from the
 // always-on self-model header on appendSystemContext.
-const BOOTSTRAP_MARKER = "[ClawBrain v4 active]";
-const SELF_MODEL_MARKER = "[ClawBrain v4]";
+const BOOTSTRAP_MARKER = "[SharpWave active]";
+const SELF_MODEL_MARKER = "[SharpWave]";
 
 function seed(agentId: string): void {
   core.writeNode(agentId, "semantic", "db", "Production uses PostgreSQL 16.", { importance: 0.8 });

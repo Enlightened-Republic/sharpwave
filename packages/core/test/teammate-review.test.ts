@@ -479,7 +479,7 @@ describe("Test 3 — Dream context feeds bootstrap without brain_query (no-looku
     const ctx = await buildBootstrapContext(agentId, session, DEFAULT_CONFIG);
 
     // Header always present
-    expect(ctx).toContain("[ClawBrain");
+    expect(ctx).toContain("[SharpWave");
 
     // Dream layer injected (getDreamContext age-gate: 30 min — this is fresh)
     expect(ctx).toContain("[BRAIN: subconscious");
@@ -731,7 +731,7 @@ describe("Test 5 — Full v2→v5 round-trip: migrate, activate, dream, Hebbian 
     // Goals are present (directly queried via getActiveGoals, no brain_query)
     const p8HasGoals = p8Ctx.includes("[BRAIN: active goals]") || p8Ctx.includes("Explore memory");
     expect(p8HasGoals).toBe(true);                      // CHECKPOINT 8c: goals present
-    expect(p8Ctx).toContain("[ClawBrain");              // CHECKPOINT 8d: header present
+    expect(p8Ctx).toContain("[SharpWave");             // CHECKPOINT 8d: header present
 
     cleanupAgent(agentName);
   });

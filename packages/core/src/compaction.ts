@@ -21,9 +21,9 @@ export function handleCompaction(
 
   try {
     const nodeIds = extractNodesFromSummary(agentId, summary, payload.sourceEpisodeIds ?? []);
-    log.info(`[clawbrain-v4] compaction: extracted ${nodeIds.length} node(s) from summary (agent=${agentId})`);
+    log.info(`[sharpwave] compaction: extracted ${nodeIds.length} node(s) from summary (agent=${agentId})`);
   } catch (err) {
-    log.warn(`[clawbrain-v4] compaction extraction failed: ${String(err)}`);
+    log.warn(`[sharpwave] compaction extraction failed: ${String(err)}`);
   }
 }
 

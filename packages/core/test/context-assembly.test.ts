@@ -9,8 +9,9 @@ import { DEFAULT_CONFIG } from "../src/types.js";
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 
 describe("bootstrap", () => {
-  it("BRAIN_HEADER contains ClawBrain v3 mention", () => {
-    expect(BRAIN_HEADER).toContain("ClawBrain v3");
+  it("BRAIN_HEADER carries the SharpWave marker and the legacy compat mention", () => {
+    expect(BRAIN_HEADER).toContain("[SharpWave active]");
+    expect(BRAIN_HEADER).toContain("ClawBrain v3"); // compat tail for external greps
     expect(BRAIN_HEADER).toContain("brain_query");
     expect(BRAIN_HEADER).toContain("brain_write");
   });
@@ -87,11 +88,11 @@ describe("bootstrap", () => {
 // ─── Layer-1 self-model header (T2.2 / CLAWBRAIN_V3_INJECTION_FIX_PLAN.md) ───────
 
 describe("buildSelfModelHeader (Layer 1 — appendSystemContext, every turn)", () => {
-  it("returns a non-empty string with the v4 header line for an empty agent", async () => {
+  it("returns a non-empty string with the SharpWave header line for an empty agent", async () => {
     const id = fresh();
     const header = await buildSelfModelHeader(id, DEFAULT_CONFIG);
     expect(header.length).toBeGreaterThan(0);
-    expect(header).toContain("[ClawBrain v4]");
+    expect(header).toContain("[SharpWave]");
     closeDb(id);
   });
 
@@ -144,7 +145,7 @@ describe("buildSelfModelHeader (Layer 1 — appendSystemContext, every turn)", (
     const id = fresh();
     const header = await buildSelfModelHeader(id, DEFAULT_CONFIG);
     // Minimum: the descriptive header + [neuro] block
-    expect(header).toContain("[ClawBrain v4]");
+    expect(header).toContain("[SharpWave]");
     expect(header).toContain("[neuro]");
     closeDb(id);
   });

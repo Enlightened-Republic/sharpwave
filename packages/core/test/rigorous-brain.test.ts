@@ -354,7 +354,7 @@ describe("Scenario 5 — Bootstrap auto-injection (brain pre-loads agent at sess
 
     const ctx = await buildBootstrapContext(id, session, DEFAULT_CONFIG);
 
-    expect(ctx).toContain("[ClawBrain");
+    expect(ctx).toContain("[SharpWave");
     closeDb(id);
   });
 
