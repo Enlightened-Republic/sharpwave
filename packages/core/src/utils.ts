@@ -200,3 +200,33 @@ export function jaccardSim(a: string, b: string): number {
   const union = new Set([...setA, ...setB]).size;
   return union === 0 ? 0 : intersection / union;
 }
+
+// ─── Confidence-weighted affect updating ───────────────────────────────────
+
+/**
+ * Blend a new emotional-weight observation into an existing one, weighted by
+ * accumulated confidence rather than overwritten or passively decayed.
+ *
+ * Adapted from the Bayesian-inspired updating rule in "Dynamic Affective
+ * Memory Management for Personalized LLM Agents" (arXiv:2510.27418):
+ *   C_new = (C*W + S*P) / (W+S),  W_new = W+S
+ * where the current value acts as a prior and the incoming observation acts
+ * as evidence. A value reinforced by many prior observations (`currentWeight`
+ * large) resists being swung by one new outlier; a fresh value (`currentWeight`
+ * 0) adopts the first real observation outright.
+ *
+ * This is deliberately generic over what "weight" means — callers can use a
+ * dedicated confidence counter or reuse an existing reinforcement signal
+ * (e.g. `ripple_count`) as the weight proxy.
+ */
+export function blendEmotionalWeight(
+  currentValue: number,
+  currentWeight: number,
+  incomingValue: number,
+  incomingStrength: number = 1,
+): { value: number; weight: number } {
+  const weight = currentWeight + incomingStrength;
+  if (weight <= 0) return { value: 0, weight: 0 };
+  const value = (currentValue * currentWeight + incomingValue * incomingStrength) / weight;
+  return { value, weight };
+}

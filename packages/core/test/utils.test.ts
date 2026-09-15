@@ -1,7 +1,8 @@
 /**
  * Tests for shared utility functions in src/utils.ts.
  * Covers: classifySentence (all node types), importanceForType, jaccardSim,
- *         agentIdFromKey (Code-1 P1-1 fix), BoundedTtlMap / BoundedTtlSet (T3.4)
+ *         agentIdFromKey (Code-1 P1-1 fix), BoundedTtlMap / BoundedTtlSet (T3.4),
+ *         blendEmotionalWeight (confidence-weighted affect updating)
  */
 
 import { describe, it, expect } from "vitest";
@@ -12,6 +13,7 @@ import {
   agentIdFromKey,
   BoundedTtlMap,
   BoundedTtlSet,
+  blendEmotionalWeight,
 } from "../src/utils.js";
 
 // NOTE (openwave/sharpwave-core split, Task 3): the clawbrain-v4 utils.ts also
@@ -360,3 +362,47 @@ describe("BoundedTtlSet — sibling for sessionId tracking", () => {
 // NOTE (Task 3): the clawbrain-v4 `stripControlDirectives` regression block was
 // removed — that helper is not part of sharpwave-core's utils.ts (see the import
 // note at the top of this file).
+
+// ─── blendEmotionalWeight ───────────────────────────────────────────────────
+//
+// Confidence-weighted affect update, adapted from the Bayesian-inspired
+// updating rule in "Dynamic Affective Memory Management for Personalized LLM
+// Agents" (arXiv:2510.27418): C_new = (C*W + S*P) / (W+S), W_new = W+S.
+// A repeatedly-reinforced value resists being swung by one outlier
+// observation; a fresh value adopts the first real observation outright.
+
+describe("blendEmotionalWeight", () => {
+  it("adopts the incoming value outright when current weight is zero", () => {
+    const result = blendEmotionalWeight(0, 0, 0.6, 1);
+    expect(result.value).toBeCloseTo(0.6, 10);
+    expect(result.weight).toBe(1);
+  });
+
+  it("blends to the midpoint when current and incoming weight are equal", () => {
+    const result = blendEmotionalWeight(-0.4, 1, 0.4, 1);
+    expect(result.value).toBeCloseTo(0, 10);
+    expect(result.weight).toBe(2);
+  });
+
+  it("weights the established value more heavily than a single new observation", () => {
+    // current: 0.2 with weight 5 (well-established); incoming: 0.9 with strength 1.
+    const result = blendEmotionalWeight(0.2, 5, 0.9, 1);
+    expect(result.value).toBeCloseTo((0.2 * 5 + 0.9 * 1) / 6, 10);
+    expect(result.weight).toBe(6);
+  });
+
+  it("accumulates weight across repeated blends instead of resetting it", () => {
+    const first = blendEmotionalWeight(0, 0, 0.5, 1);
+    const second = blendEmotionalWeight(first.value, first.weight, 0.5, 1);
+    const third = blendEmotionalWeight(second.value, second.weight, 0.5, 1);
+    expect(third.weight).toBe(3);
+    // Three identical observations should converge exactly on that value.
+    expect(third.value).toBeCloseTo(0.5, 10);
+  });
+
+  it("does not divide by zero when both current and incoming weight are zero", () => {
+    const result = blendEmotionalWeight(0.3, 0, 0.7, 0);
+    expect(result.value).toBe(0);
+    expect(result.weight).toBe(0);
+  });
+});

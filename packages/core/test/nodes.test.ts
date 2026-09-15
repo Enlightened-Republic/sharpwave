@@ -29,6 +29,24 @@ describe("nodes", () => {
     closeDb(id);
   });
 
+  it("writeNode blends emotional_weight into the canonical row on dedupe merge instead of discarding it", () => {
+    const id = fresh();
+    // Identical content + type guarantees findNearDuplicates matches (similarity 1.0).
+    const content = "The gateway must stay on loopback for safety and never expose a public port";
+    const first = writeNode(id, "semantic", "gateway safety", content, { emotional_weight: 0.2 });
+
+    const merged = writeNode(id, "semantic", "gateway safety", content, { emotional_weight: 0.8 });
+    expect(merged).toBe(first); // confirms this went through the merge path, not a fresh insert
+
+    const node = getNode(id, first)!;
+    // Canonical row starts at weight = ripple_count(0) + 1 = 1 (the creation
+    // write itself counts as one observation); incoming strength = 1.
+    // blended = (0.2*1 + 0.8*1) / 2 = 0.5
+    expect(node.emotional_weight).toBeCloseTo(0.5, 10);
+    expect(node.ripple_count).toBe(1);
+    closeDb(id);
+  });
+
   it("writeNode stores encoding_context when provided", () => {
     const id = fresh();
     const neuroState = { dopamine: 0.7, serotonin: 0.5, acetylcholine: 0.8, norepinephrine: 0.3, interpretation: "test" };

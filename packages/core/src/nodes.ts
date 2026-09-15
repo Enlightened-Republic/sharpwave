@@ -3,6 +3,7 @@ import { getDb, bumpWriteCounter } from "./db.js";
 import { executeWithWalRetrySync } from "./wal-retry.js";
 import { bumpCounter, logObservabilityEvent } from "./observability.js";
 import { findNearDuplicates } from "./entity-resolution.js";
+import { blendEmotionalWeight } from "./utils.js";
 import type { BrainNode, BrainConfig, NodeType, NeuromodState } from "./types.js";
 
 const HALF_LIFE_DAYS: Record<string, number> = {
@@ -307,16 +308,30 @@ export function writeNode(
       if (dups.length > 0) {
         const canonical = dups[0].id;
         // Bump importance on the canonical row instead of inserting a duplicate.
+        // Also blend the incoming emotional_weight into the canonical row's
+        // existing value (confidence-weighted by ripple_count) instead of
+        // silently discarding it — see blendEmotionalWeight in utils.ts.
+        // ripple_count + 1 treats the row's own creation write as weight 1,
+        // so the first merge adopts the new observation fully and each
+        // subsequent merge resists outliers a little more.
         executeWithWalRetrySync(
           db,
           (d) => {
+            const existing = d.prepare(
+              "SELECT emotional_weight, ripple_count FROM nodes WHERE id = ?",
+            ).get(canonical) as { emotional_weight: number; ripple_count: number } | undefined;
+            const blended = existing
+              ? blendEmotionalWeight(existing.emotional_weight, existing.ripple_count + 1, emotionalWeight, 1)
+              : { value: emotionalWeight, weight: 1 };
             d.prepare(`
               UPDATE nodes
               SET importance = MAX(importance, ?),
                   access_count = access_count + 1,
+                  emotional_weight = ?,
+                  ripple_count = ripple_count + 1,
                   updated_at = ?
               WHERE id = ?
-            `).run(importance, Date.now(), canonical);
+            `).run(importance, blended.value, Date.now(), canonical);
           },
           { op: `nodes.dedupeMerge:${canonical.slice(0, 8)}` },
         );
