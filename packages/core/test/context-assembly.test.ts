@@ -45,6 +45,32 @@ describe("bootstrap", () => {
     closeDb(id);
   });
 
+  it("buildBootstrapContext omits the active-goals block when externalMemoryActive is true", async () => {
+    const id = fresh();
+    writeNode(id, "goal", "complete the v3 brain rebuild", "finish rebuilding ClawBrain v3", { importance: 0.9 });
+
+    const ctx = await buildBootstrapContext(id, "sess1", DEFAULT_CONFIG, undefined, "chat", { externalMemoryActive: true });
+    // The curated goals block is gone. The goal node can still surface through
+    // the separate, general-relevance "[BRAIN: know]" retrieval block — that's
+    // a different mechanism (top salient nodes of any type) and out of scope
+    // for this flag, which targets only the redundant curated-goals framing.
+    expect(ctx).not.toContain("[BRAIN: active goals]");
+    expect(ctx).not.toContain("• complete the v3 brain rebuild");
+    closeDb(id);
+  });
+
+  it("buildBootstrapContext still includes self-model and BRAIN_HEADER when externalMemoryActive is true", async () => {
+    const id = fresh();
+    const db = getDb(id);
+    db.prepare("UPDATE self_model SET identity = ? WHERE id = 'singleton'")
+      .run("I am Mac, a creative AI assistant with persistent memory.");
+
+    const ctx = await buildBootstrapContext(id, "sess1", DEFAULT_CONFIG, undefined, "chat", { externalMemoryActive: true });
+    expect(ctx.startsWith(BRAIN_HEADER)).toBe(true);
+    expect(ctx).toContain("Mac");
+    closeDb(id);
+  });
+
   it("buildBootstrapContext includes review queue when fading nodes exist", async () => {
     const id = fresh();
     const db = getDb(id);
@@ -111,6 +137,24 @@ describe("buildSelfModelHeader (Layer 1 — appendSystemContext, every turn)", (
     const header = await buildSelfModelHeader(id, DEFAULT_CONFIG);
     expect(header).toContain("[goals]");
     expect(header).toContain("ship v4");
+    closeDb(id);
+  });
+
+  it("omits the [goals] line when externalMemoryActive is true (a host memory system already curates goals)", async () => {
+    const id = fresh();
+    writeNode(id, "goal", "ship v4", "complete the v4 ClawBrain delivery", { importance: 0.9 });
+    const header = await buildSelfModelHeader(id, DEFAULT_CONFIG, undefined, "chat", { externalMemoryActive: true });
+    expect(header).not.toContain("[goals]");
+    expect(header).not.toContain("ship v4");
+    closeDb(id);
+  });
+
+  it("still includes identity and neuro when externalMemoryActive is true (only goals are host-owned)", async () => {
+    const id = fresh();
+    updateSelfModelField(id, "identity", "I am Mac, a curious autonomous agent");
+    const header = await buildSelfModelHeader(id, DEFAULT_CONFIG, undefined, "chat", { externalMemoryActive: true });
+    expect(header).toContain("[identity]");
+    expect(header).toContain("[neuro]");
     closeDb(id);
   });
 

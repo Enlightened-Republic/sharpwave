@@ -45,11 +45,26 @@ export function getDreamContext(agentId: string): string {
  */
 export type Surface = "voice" | "chat";
 
+export interface ContextAssemblyOptions {
+  /**
+   * Set when a host-level memory system (e.g. OpenClaw's bundled memory-core
+   * and its dreaming-curated MEMORY.md/USER.md) is already active for this
+   * agent. Suppresses the sections whose *purpose* — not literal text —
+   * duplicates what that curated tier already owns (currently: active
+   * goals). Graph-specific content (identity, neuromodulator state, recall,
+   * dream context, episodes) is unaffected; only a host memory system can
+   * curate goals the way MEMORY.md/USER.md do, so this is additive
+   * suppression, not a guess at overlapping content.
+   */
+  externalMemoryActive?: boolean;
+}
+
 export async function buildSelfModelHeader(
   agentId: string,
   _config: BrainConfig,
   log?: { warn: (msg: string) => void },
   surface: Surface = "chat",
+  opts: ContextAssemblyOptions = {},
 ): Promise<string> {
   const isVoice = surface === "voice";
   const parts: string[] = [];
@@ -82,13 +97,15 @@ export async function buildSelfModelHeader(
     log?.warn(`[sharpwave] selfModelHeader identity failed: ${String(err)}`);
   }
 
-  try {
-    const goals = getActiveGoals(agentId).slice(0, 3);
-    if (goals.length > 0) {
-      parts.push(`[goals] ${goals.map((g) => g.label).join(" · ")}`);
+  if (!opts.externalMemoryActive) {
+    try {
+      const goals = getActiveGoals(agentId).slice(0, 3);
+      if (goals.length > 0) {
+        parts.push(`[goals] ${goals.map((g) => g.label).join(" · ")}`);
+      }
+    } catch (err) {
+      log?.warn(`[sharpwave] selfModelHeader goals failed: ${String(err)}`);
     }
-  } catch (err) {
-    log?.warn(`[sharpwave] selfModelHeader goals failed: ${String(err)}`);
   }
 
   // Neuromodulator state is irrelevant on a phone call — drop on voice surface.
@@ -113,6 +130,7 @@ export async function buildBootstrapContext(
   config: BrainConfig,
   log?: { warn: (msg: string) => void },
   surface: Surface = "chat",
+  opts: ContextAssemblyOptions = {},
 ): Promise<string> {
   const isVoice = surface === "voice";
   // Voice surface gets a tight budget — Vapi has ~22s LLM tolerance and the
@@ -158,17 +176,21 @@ export async function buildBootstrapContext(
     }
   }
 
-  // Active goals
-  try {
-    const goals = getActiveGoals(agentId);
-    if (goals.length > 0) {
-      const goalLines = goals.slice(0, 5).map((g) => `• ${g.label}`).join("\n");
-      const goalBlock = `[BRAIN: active goals]\n${goalLines}`;
-      blocks.push(goalBlock);
-      used += goalBlock.length;
+  // Active goals — skipped when a host memory system (MEMORY.md/USER.md) is
+  // already active, since goals are exactly the kind of durable, curated
+  // content that tier owns. See ContextAssemblyOptions.externalMemoryActive.
+  if (!opts.externalMemoryActive) {
+    try {
+      const goals = getActiveGoals(agentId);
+      if (goals.length > 0) {
+        const goalLines = goals.slice(0, 5).map((g) => `• ${g.label}`).join("\n");
+        const goalBlock = `[BRAIN: active goals]\n${goalLines}`;
+        blocks.push(goalBlock);
+        used += goalBlock.length;
+      }
+    } catch (err) {
+      log?.warn(`[sharpwave] bootstrap goals failed: ${String(err)}`);
     }
-  } catch (err) {
-    log?.warn(`[sharpwave] bootstrap goals failed: ${String(err)}`);
   }
 
   // Bootstrap retrieval — top semantic/skill nodes. Voice caps at 3, chat at 8.
