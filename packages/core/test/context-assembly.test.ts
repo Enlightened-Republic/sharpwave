@@ -11,7 +11,7 @@ function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 describe("bootstrap", () => {
   it("BRAIN_HEADER carries the SharpWave marker and the legacy compat mention", () => {
     expect(BRAIN_HEADER).toContain("[SharpWave active]");
-    expect(BRAIN_HEADER).toContain("ClawBrain v3"); // compat tail for external greps
+    expect(BRAIN_HEADER).toContain("ClawBrain v3");
     expect(BRAIN_HEADER).toContain("brain_query");
     expect(BRAIN_HEADER).toContain("brain_write");
   });
@@ -50,16 +50,12 @@ describe("bootstrap", () => {
     writeNode(id, "goal", "complete the v3 brain rebuild", "finish rebuilding ClawBrain v3", { importance: 0.9 });
 
     const ctx = await buildBootstrapContext(id, "sess1", DEFAULT_CONFIG, undefined, "chat", { externalMemoryActive: true });
-    // The curated goals block is gone. The goal node can still surface through
-    // the separate, general-relevance "[BRAIN: know]" retrieval block — that's
-    // a different mechanism (top salient nodes of any type) and out of scope
-    // for this flag, which targets only the redundant curated-goals framing.
     expect(ctx).not.toContain("[BRAIN: active goals]");
     expect(ctx).not.toContain("• complete the v3 brain rebuild");
     closeDb(id);
   });
 
-  it("buildBootstrapContext still includes self-model and BRAIN_HEADER when externalMemoryActive is true", async () => {
+  it("buildBootstrapContext keeps BRAIN_HEADER but omits self-model prose when externalMemoryActive is true", async () => {
     const id = fresh();
     const db = getDb(id);
     db.prepare("UPDATE self_model SET identity = ? WHERE id = 'singleton'")
@@ -67,7 +63,8 @@ describe("bootstrap", () => {
 
     const ctx = await buildBootstrapContext(id, "sess1", DEFAULT_CONFIG, undefined, "chat", { externalMemoryActive: true });
     expect(ctx.startsWith(BRAIN_HEADER)).toBe(true);
-    expect(ctx).toContain("Mac");
+    expect(ctx).not.toContain("[BRAIN: self]");
+    expect(ctx).not.toContain("I am Mac, a creative AI assistant with persistent memory.");
     closeDb(id);
   });
 
@@ -75,7 +72,6 @@ describe("bootstrap", () => {
     const id = fresh();
     const db = getDb(id);
     const nodeId = writeNode(id, "semantic", "fading memory test node", "content that is fading", { importance: 0.6 });
-    // Manually set retrievability to danger zone
     db.prepare("UPDATE nodes SET retrievability = 0.15 WHERE id = ?").run(nodeId);
 
     const ctx = await buildBootstrapContext(id, "sess1", DEFAULT_CONFIG);
@@ -103,15 +99,11 @@ describe("bootstrap", () => {
 
     const result = await buildRecallContext(id, "recall test memory", "sess1", DEFAULT_CONFIG);
     if (result.length > 0) {
-      // Header carries the provenance caveat since the 2026-07-13
-      // reality-monitoring fix; match on the stable prefix.
       expect(result).toContain("[BRAIN: on your mind");
     }
     closeDb(id);
   });
 });
-
-// ─── Layer-1 self-model header (T2.2 / CLAWBRAIN_V3_INJECTION_FIX_PLAN.md) ───────
 
 describe("buildSelfModelHeader (Layer 1 — appendSystemContext, every turn)", () => {
   it("returns a non-empty string with the SharpWave header line for an empty agent", async () => {
@@ -149,12 +141,17 @@ describe("buildSelfModelHeader (Layer 1 — appendSystemContext, every turn)", (
     closeDb(id);
   });
 
-  it("still includes identity and neuro when externalMemoryActive is true (only goals are host-owned)", async () => {
+  it("omits identity and user_model but keeps banner + neuro when externalMemoryActive is true", async () => {
     const id = fresh();
     updateSelfModelField(id, "identity", "I am Mac, a curious autonomous agent");
+    updateSelfModelField(id, "user_model", JSON.stringify({ favorite_color: "teal", telegram_id: "1" }));
     const header = await buildSelfModelHeader(id, DEFAULT_CONFIG, undefined, "chat", { externalMemoryActive: true });
-    expect(header).toContain("[identity]");
+    expect(header).toContain("[SharpWave]");
     expect(header).toContain("[neuro]");
+    expect(header).not.toContain("[identity]");
+    expect(header).not.toContain("Mac");
+    expect(header).not.toContain("[user]");
+    expect(header).not.toContain("favorite_color");
     closeDb(id);
   });
 
@@ -170,9 +167,6 @@ describe("buildSelfModelHeader (Layer 1 — appendSystemContext, every turn)", (
   });
 
   it("does NOT call spreadActivation/bootstrapRetrieve (no ripple_count growth)", async () => {
-    // Plan BLOCKER 1: Layer-1 must be pure-read. We verify by writing a node,
-    // capturing its ripple_count, calling buildSelfModelHeader N times, and
-    // checking ripple_count is unchanged.
     const id = fresh();
     const nodeId = writeNode(id, "identity", "stable node", "should never tick ripple_count", { importance: 0.9 });
     const db = getDb(id);
@@ -188,7 +182,6 @@ describe("buildSelfModelHeader (Layer 1 — appendSystemContext, every turn)", (
   it("is resilient to a fresh agent with no nodes / empty self_model", async () => {
     const id = fresh();
     const header = await buildSelfModelHeader(id, DEFAULT_CONFIG);
-    // Minimum: the descriptive header + [neuro] block
     expect(header).toContain("[SharpWave]");
     expect(header).toContain("[neuro]");
     closeDb(id);
