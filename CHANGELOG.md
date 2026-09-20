@@ -4,6 +4,27 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-09-20
+
+### Fixed
+
+- **vec0 index writes no longer fail on re-embedding, and a UNIQUE error no
+  longer disables vector writes.** `vec0` virtual tables ignore
+  `INSERT OR REPLACE`, so re-embedding an already-indexed node threw
+  `UNIQUE constraint failed on nodes_vec primary key`. `storeEmbedding` misread
+  that as a dimension mismatch and switched off every later vec0 write for the
+  process, leaving a growing share of nodes out of vector search (observed:
+  170 of 413 nodes in one live brain). Writes now go through the new
+  `upsertNodeVector` (delete + insert in one transaction), and only a genuine
+  dimension error disables vec0 writes. `consolidation` uses the same helper
+  for schema-centroid vectors.
+
+### Added
+
+- **`rebuildNodesVec(agentId)`** re-indexes `nodes_vec` from the embedding blobs
+  stored on `nodes` (only blobs of exactly `EXPECTED_VEC_DIM` floats), is safe
+  to re-run, and re-arms vec0 writes. `upsertNodeVector` is exported too.
+
 ## [0.4.1] — 2026-08-31
 
 ### Fixed
