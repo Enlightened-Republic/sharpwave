@@ -529,10 +529,61 @@ function finalizeEmbedding(
   return vec;
 }
 
-// Process-level flag: once a dimension mismatch is observed, stop attempting
-// vec0 writes until the operator rebuilds the table. Prevents an inifinite
+// Process-level flag: once a REAL dimension mismatch is observed, stop attempting
+// vec0 writes until the operator rebuilds the table. Prevents an infinite
 // stream of error logs for every node insertion after a config swap.
 let vec0Disabled = false;
+
+/**
+ * Upsert one node's vector into the vec0 index.
+ *
+ * vec0 virtual tables do NOT honor `INSERT OR REPLACE`: inserting a rowid that
+ * already exists raises "UNIQUE constraint failed on nodes_vec primary key"
+ * instead of replacing it. Re-embedding an already-indexed node (content edit,
+ * sweep, consolidation) therefore has to delete the old row first. Both
+ * statements run in one transaction so a failed insert cannot leave the node
+ * without a vector.
+ */
+export function upsertNodeVector(
+  db: ReturnType<typeof getDb>,
+  nodeId: string,
+  buf: Buffer,
+): void {
+  db.transaction(() => {
+    db.prepare(
+      "DELETE FROM nodes_vec WHERE rowid = (SELECT rowid FROM nodes WHERE id = ?)"
+    ).run(nodeId);
+    db.prepare(
+      "INSERT INTO nodes_vec(rowid, embedding) SELECT rowid, ? FROM nodes WHERE id = ?"
+    ).run(buf, nodeId);
+  })();
+}
+
+/**
+ * Rebuild the vec0 index for one agent from the embeddings stored on `nodes`.
+ * Only blobs of exactly EXPECTED_VEC_DIM floats are indexed; anything else is
+ * counted as skipped. Safe to run repeatedly. Also re-arms vec0 writes.
+ */
+export function rebuildNodesVec(agentId: string): { indexed: number; skipped: number } {
+  const db = getDb(agentId);
+  const rows = db
+    .prepare("SELECT rowid AS rid, embedding FROM nodes WHERE embedding IS NOT NULL")
+    .all() as Array<{ rid: number | bigint; embedding: Buffer }>;
+  let indexed = 0;
+  let skipped = 0;
+  db.transaction(() => {
+    db.prepare("DELETE FROM nodes_vec").run();
+    const ins = db.prepare("INSERT INTO nodes_vec(rowid, embedding) VALUES (?, ?)");
+    for (const r of rows) {
+      if (r.embedding.length !== EXPECTED_VEC_DIM * 4) { skipped++; continue; }
+      // vec0 rowids must bind as BigInt.
+      ins.run(BigInt(r.rid), r.embedding);
+      indexed++;
+    }
+  })();
+  vec0Disabled = false;
+  return { indexed, skipped };
+}
 
 export function storeEmbedding(
   agentId: string,
@@ -548,9 +599,7 @@ export function storeEmbedding(
   if (vec0Disabled) return;
 
   try {
-    db.prepare(
-      "INSERT OR REPLACE INTO nodes_vec(rowid, embedding) SELECT rowid, ? FROM nodes WHERE id = ?"
-    ).run(buf, nodeId);
+    upsertNodeVector(db, nodeId, buf);
   } catch (err) {
     const msg = String(err);
     // Two failure modes:
@@ -562,7 +611,10 @@ export function storeEmbedding(
       // table missing — silent expected path
       return;
     }
-    if (msg.includes("dimension") || msg.includes("constraint") || msg.includes("MATCH")) {
+    // Only a genuine dimension mismatch disables vec0 writes. A UNIQUE/constraint
+    // error is a per-node failure (the old code misread it as a dim mismatch and
+    // silenced every later write for the process), so it falls through to warn.
+    if (/dimension/i.test(msg)) {
       vec0Disabled = true;
       log?.error?.(
         structured({

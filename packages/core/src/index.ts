@@ -47,7 +47,7 @@ export {
 // ---------------------------------------------------------------------------
 export {
   queueEmbedding, drainEmbeddingQueue, sweepMissingEmbeddings, clearEmbeddingQueues,
-  fetchEmbedding, fetchEmbeddingCached, storeEmbedding, vectorSearchNodes,
+  fetchEmbedding, fetchEmbeddingCached, storeEmbedding, upsertNodeVector, rebuildNodesVec, vectorSearchNodes,
   autoLinkNode, rrfFuse, cosineSimilarity, bufferToFloat32,
   embeddingCacheStats, clearEmbeddingCache, EXPECTED_VEC_DIM,
 } from "./embeddings.js";

@@ -1,6 +1,6 @@
 import { getDb, getMeta, setMeta, bumpWriteCounter } from "./db.js";
 import { decayEligibilityTraces, decayRetrievability, writeNode, ftsSearchNodes } from "./nodes.js";
-import { queueEmbedding, vectorSearchNodes, bufferToFloat32, cosineSimilarity } from "./embeddings.js";
+import { queueEmbedding, vectorSearchNodes, bufferToFloat32, cosineSimilarity, upsertNodeVector } from "./embeddings.js";
 import { writeEdge, edgeExists } from "./edges.js";
 import { getEpisodesSince, getEpisodeCount } from "./episodes.js";
 import { mergeCoreferentNodes } from "./entity-resolution.js";
@@ -650,9 +650,7 @@ async function runClusterSchemaPhase(agentId: string, log: Logger): Promise<void
     const centroidBuf = Buffer.from(centroid.buffer);
     db.prepare("UPDATE nodes SET embedding = ? WHERE id = ?").run(centroidBuf, schemaId);
     try {
-      db.prepare(
-        "INSERT OR REPLACE INTO nodes_vec(rowid, embedding) SELECT rowid, ? FROM nodes WHERE id = ?"
-      ).run(centroidBuf, schemaId);
+      upsertNodeVector(db, schemaId, centroidBuf);
     } catch { /* vec table may not exist in isolated tests */ }
 
     // Add centroid to dedup list for subsequent iterations
