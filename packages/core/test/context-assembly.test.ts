@@ -59,7 +59,7 @@ describe("bootstrap", () => {
     closeDb(id);
   });
 
-  it("buildBootstrapContext still includes self-model and BRAIN_HEADER when externalMemoryActive is true", async () => {
+  it("buildBootstrapContext keeps BRAIN_HEADER but omits self-model prose when externalMemoryActive is true", async () => {
     const id = fresh();
     const db = getDb(id);
     db.prepare("UPDATE self_model SET identity = ? WHERE id = 'singleton'")
@@ -67,7 +67,8 @@ describe("bootstrap", () => {
 
     const ctx = await buildBootstrapContext(id, "sess1", DEFAULT_CONFIG, undefined, "chat", { externalMemoryActive: true });
     expect(ctx.startsWith(BRAIN_HEADER)).toBe(true);
-    expect(ctx).toContain("Mac");
+    expect(ctx).not.toContain("[BRAIN: self]");
+    expect(ctx).not.toContain("I am Mac, a creative AI assistant with persistent memory.");
     closeDb(id);
   });
 
@@ -149,12 +150,17 @@ describe("buildSelfModelHeader (Layer 1 — appendSystemContext, every turn)", (
     closeDb(id);
   });
 
-  it("still includes identity and neuro when externalMemoryActive is true (only goals are host-owned)", async () => {
+  it("omits identity and user_model but keeps banner + neuro when externalMemoryActive is true", async () => {
     const id = fresh();
     updateSelfModelField(id, "identity", "I am Mac, a curious autonomous agent");
+    updateSelfModelField(id, "user_model", JSON.stringify({ favorite_color: "teal", telegram_id: "1" }));
     const header = await buildSelfModelHeader(id, DEFAULT_CONFIG, undefined, "chat", { externalMemoryActive: true });
-    expect(header).toContain("[identity]");
+    expect(header).toContain("[SharpWave]");
     expect(header).toContain("[neuro]");
+    expect(header).not.toContain("[identity]");
+    expect(header).not.toContain("Mac");
+    expect(header).not.toContain("[user]");
+    expect(header).not.toContain("favorite_color");
     closeDb(id);
   });
 
