@@ -50,11 +50,15 @@ export interface ContextAssemblyOptions {
    * Set when a host-level memory system (e.g. OpenClaw's bundled memory-core
    * and its dreaming-curated MEMORY.md/USER.md) is already active for this
    * agent. Suppresses the sections whose *purpose* — not literal text —
-   * duplicates what that curated tier already owns (currently: active
-   * goals). Graph-specific content (identity, neuromodulator state, recall,
-   * dream context, episodes) is unaffected; only a host memory system can
-   * curate goals the way MEMORY.md/USER.md do, so this is additive
-   * suppression, not a guess at overlapping content.
+   * duplicates what that curated tier already owns:
+   *   - buildSelfModelHeader: durable identity, user_model, active goals
+   *     (banner + neuromodulator state still inject)
+   *   - buildBootstrapContext: self-model prose + active goals
+   *     (header, dream/subconscious, morning brief, know/retrieval,
+   *     episodes, review queue, skill candidates still inject)
+   * false/omit = unchanged legacy behavior. Graph-specific recall,
+   * procedural, dream, and neuro content stay; only host-curated durable
+   * identity/goals prose is suppressed (Engram Graft A).
    */
   externalMemoryActive?: boolean;
 }
@@ -74,30 +78,32 @@ export async function buildSelfModelHeader(
     );
   }
 
-  try {
-    const selfModel = getSelfModel(agentId);
-    if (selfModel?.identity) {
-      const max = isVoice ? 200 : 400;
-      parts.push(`[identity] ${selfModel.identity.trim().slice(0, max)}`);
-    }
-    // [T1.5] user_model on every turn. Previously only in session_start
-    // bootstrap, so the mentalizing slot evaporated after turn 1.
-    if (!isVoice && selfModel?.user_model) {
-      try {
-        const um = JSON.parse(selfModel.user_model) as Record<string, string>;
-        const interesting = Object.entries(um)
-          .filter(([k]) => !["telegram_id", "timezone"].includes(k))
-          .slice(0, 4)
-          .map(([k, v]) => `${k}=${v}`)
-          .join(" · ");
-        if (interesting) parts.push(`[user] ${interesting}`);
-      } catch { /* malformed user_model */ }
-    }
-  } catch (err) {
-    log?.warn(`[sharpwave] selfModelHeader identity failed: ${String(err)}`);
-  }
-
+  // Durable identity, user_model and goals are host-owned when a curated
+  // memory tier is active (see ContextAssemblyOptions.externalMemoryActive).
   if (!opts.externalMemoryActive) {
+    try {
+      const selfModel = getSelfModel(agentId);
+      if (selfModel?.identity) {
+        const max = isVoice ? 200 : 400;
+        parts.push(`[identity] ${selfModel.identity.trim().slice(0, max)}`);
+      }
+      // [T1.5] user_model on every turn. Previously only in session_start
+      // bootstrap, so the mentalizing slot evaporated after turn 1.
+      if (!isVoice && selfModel?.user_model) {
+        try {
+          const um = JSON.parse(selfModel.user_model) as Record<string, string>;
+          const interesting = Object.entries(um)
+            .filter(([k]) => !["telegram_id", "timezone"].includes(k))
+            .slice(0, 4)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(" · ");
+          if (interesting) parts.push(`[user] ${interesting}`);
+        } catch { /* malformed user_model */ }
+      }
+    } catch (err) {
+      log?.warn(`[sharpwave] selfModelHeader identity failed: ${String(err)}`);
+    }
+
     try {
       const goals = getActiveGoals(agentId).slice(0, 3);
       if (goals.length > 0) {
@@ -150,16 +156,19 @@ export async function buildBootstrapContext(
     log?.warn(`[sharpwave] bootstrap dream failed: ${String(err)}`);
   }
 
-  // Self model
-  try {
-    const selfModel = getSelfModel(agentId);
-    if (selfModel) {
-      const selfFrac = isVoice ? 0.15 : 0.25;
-      const selfBlock = formatSelfModelForContext(selfModel, Math.floor(budgetChars * selfFrac));
-      if (selfBlock) { blocks.push(selfBlock); used += selfBlock.length; }
+  // Self model prose — skipped when a host curated tier already owns durable
+  // identity/goals (see ContextAssemblyOptions.externalMemoryActive).
+  if (!opts.externalMemoryActive) {
+    try {
+      const selfModel = getSelfModel(agentId);
+      if (selfModel) {
+        const selfFrac = isVoice ? 0.15 : 0.25;
+        const selfBlock = formatSelfModelForContext(selfModel, Math.floor(budgetChars * selfFrac));
+        if (selfBlock) { blocks.push(selfBlock); used += selfBlock.length; }
+      }
+    } catch (err) {
+      log?.warn(`[sharpwave] bootstrap self-model failed: ${String(err)}`);
     }
-  } catch (err) {
-    log?.warn(`[sharpwave] bootstrap self-model failed: ${String(err)}`);
   }
 
   // Morning brief — only on chat surface (irrelevant on a phone call).

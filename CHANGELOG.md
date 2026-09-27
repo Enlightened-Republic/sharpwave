@@ -4,6 +4,19 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## [Unreleased]
 
+## [0.4.4] — Unreleased
+
+### Changed
+
+- **`externalMemoryActive` now suppresses all host-curated durable prose
+  (Engram Graft A).** When a host memory tier (OpenClaw memory-core's
+  MEMORY.md/USER.md) is active, `buildSelfModelHeader` omits `[identity]`,
+  `[user]` and `[goals]` (the `[SharpWave]` banner and `[neuro]` still inject),
+  and `buildBootstrapContext` omits the self-model prose block as well as
+  active goals. Recall, procedural, dream, morning-brief, episodes, review
+  queue and skill-candidate content are unchanged. Omitting the option or
+  passing `false` keeps the previous behavior. Required by openwave#1.
+
 ## [0.4.3] — 2026-09-20
 
 ### Fixed
