@@ -8,7 +8,7 @@ import { DEFAULT_CONFIG } from "../src/types.js";
 
 // sharpwave-core's db.ts does not export a `SCHEMA_VERSION` symbol; assert
 // against the known current value (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 // sharpwave-core's writeNode dedupes on near-identical content by default
 // (trigram-Jaccard >= 0.85, type-scoped) — clawbrain-v4's writeNode did not.

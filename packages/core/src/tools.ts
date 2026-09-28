@@ -120,6 +120,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
         content:          { type: "string", description: "Full content of the memory" },
         importance:       { type: "number", description: "0.0–1.0, default 0.5" },
         emotional_weight: { type: "number", description: "-1.0 to 1.0 (emotional salience)" },
+        writer_agent_id:  { type: "string", description: "Optional provenance stamp (defaults to the `agent` arg / pinned agent). Who created this memory." },
       },
       required: ["type", "label", "content"],
     },
@@ -394,9 +395,10 @@ export async function dispatchBrainTool(
       if (typeFilter) results = results.filter((n) => n.type === typeFilter);
       if (results.length === 0) return ok("No matching nodes found.");
 
-      const lines = results.slice(0, limit).map((n) =>
-        `[${n.id.slice(0, 8)}] (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  R=${n.retrievability.toFixed(2)} sal=${n.salience.toFixed(2)} imp=${n.importance.toFixed(2)}`
-      );
+      const lines = results.slice(0, limit).map((n) => {
+        const writer = n.writer_agent_id ? ` writer=${n.writer_agent_id}` : "";
+        return `[${n.id.slice(0, 8)}] (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  R=${n.retrievability.toFixed(2)} sal=${n.salience.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}`;
+      });
       return ok(lines.join("\n\n"));
     }
 
@@ -406,15 +408,20 @@ export async function dispatchBrainTool(
       if (!validation.ok) {
         return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
       }
-      const { type, label, content, importance, emotional_weight } = validation.data!;
+      const { type, label, content, importance, emotional_weight, writer_agent_id } = validation.data!;
 
+      // Default writer_agent_id to the resolved agent (MCP `agent` arg / pinned
+      // agent). Explicit override lets a shared-brain gateway stamp the real
+      // peer when dispatching on behalf of another agent.
+      const writerAgentId = writer_agent_id ?? agentId;
       const nodeId = writeNode(agentId, type as NodeType, label, content, {
         importance,
         emotional_weight,
         source,
+        writerAgentId,
       });
       queueEmbedding(agentId, nodeId);
-      return ok(`Written: node ${nodeId} (${type}) "${label}"`);
+      return ok(`Written: node ${nodeId} (${type}) "${label}" writer=${writerAgentId}`);
     }
 
     // ── brain_link ────────────────────────────────────────────────────────
@@ -447,6 +454,7 @@ export async function dispatchBrainTool(
         importance: old.importance,
         emotional_weight: old.emotional_weight,
         source,
+        writerAgentId: agentId,
       });
       queueEmbedding(agentId, newId);
       closeEdgesFromNode(agentId, old.id);
@@ -488,7 +496,8 @@ export async function dispatchBrainTool(
       if (results.length === 0) return ok("No matching episodes found.");
       const lines = results.map((e) => {
         const ts = new Date(e.created_at).toISOString().slice(0, 16).replace("T", " ");
-        return `[${ts}] ${e.role}: ${e.content.slice(0, 300)}`;
+        const writer = e.writer_agent_id ? ` writer=${e.writer_agent_id}` : "";
+        return `[${ts}] ${e.role}: ${e.content.slice(0, 300)}${writer}`;
       });
       return ok(lines.join("\n\n"));
     }
@@ -511,6 +520,7 @@ export async function dispatchBrainTool(
         `Difficulty: ${node.difficulty.toFixed(2)} | σ: ${node.stability_sigma.toFixed(3)} | Access count: ${node.access_count}`,
         `Ripple: ${node.ripple_count} | Trace: ${node.eligibility_trace.toFixed(3)} | Consolidated: ${node.is_consolidated === 1 ? "yes" : "no"}`,
         `Created: ${new Date(node.created_at).toISOString()} | Accessed: ${new Date(node.accessed_at).toISOString()}`,
+        `Writer: ${node.writer_agent_id ?? "(none)"}`,
       ];
 
       if (node.valid_from || node.valid_until) {

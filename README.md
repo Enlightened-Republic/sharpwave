@@ -221,7 +221,7 @@ Worth knowing before you install:
 
 - **Generative consolidation needs an LLM.** REM-style schema synthesis and contradiction detection call OpenRouter. Without `OPENROUTER_API_KEY` the deterministic consolidation passes still run, but the generative ones are skipped.
 - **Semantic similarity needs embeddings.** Without a provider you get full-text plus graph retrieval — good, but not synonym-aware.
-- **Single-writer per brain.** SQLite with WAL. One server process per database; pointing two at the same file is not supported.
+- **Single-writer per brain.** SQLite with WAL. One server process per database; pointing two at the same file is not supported. Connections set `PRAGMA busy_timeout` (default 5000 ms via `SHARPWAVE_BUSY_TIMEOUT_MS`) so brief lock waits do not surface as `SQLITE_BUSY`; the supported multi-agent path remains the shared-brain service.
 - **Consolidation is time-based.** Memory quality improves as passes accumulate. A brand-new database is a plain store until it has history to work with.
 
 ## Companion tools

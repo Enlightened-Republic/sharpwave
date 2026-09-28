@@ -34,7 +34,7 @@ import type { BrainNode } from "../src/types.js";
 
 // sharpwave-core's db.ts does not export a SCHEMA_VERSION symbol — assert against
 // the known current migration target (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 function freshSession(): string { return `sess-${randomUUID()}`; }

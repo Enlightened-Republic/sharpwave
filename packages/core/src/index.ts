@@ -21,7 +21,9 @@ export * from "./types.js";
 export {
   getDb, closeDb, closeAllDbs, getMeta, setMeta, maintenance,
   bumpWriteCounter, getWriteCount, getFtsOptimizeEvery,
+  resolveBusyTimeoutMs, DEFAULT_BUSY_TIMEOUT_MS,
 } from "./db.js";
+export type { GetDbOptions } from "./db.js";
 
 // ---------------------------------------------------------------------------
 // nodes — node CRUD, FTS, FSRS retrievability, salience, ps-hash, dopamine

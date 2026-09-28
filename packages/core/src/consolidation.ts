@@ -10,6 +10,7 @@ import { callOpenRouter } from "./llm.js";
 import { executeWithWalRetrySync } from "./wal-retry.js";
 import { bumpCounter, logObservabilityEvent, setLastConsolidationAt } from "./observability.js";
 import type { BrainConfig, Episode, BrainNode, NeuromodState } from "./types.js";
+import { SYSTEM_SLEEP_WRITER } from "./types.js";
 
 type Logger = { info: (msg: string) => void; warn: (msg: string) => void };
 
@@ -418,14 +419,14 @@ async function runSwsPhase(agentId: string, episodes: Episode[], log: Logger): P
       const prevLastInSession = lastNodePerSession.get(ep.session_id);
       if (prevLastInSession && prevLastInSession !== nodes[0]) {
         if (!edgeExists(agentId, prevLastInSession, nodes[0], "before")) {
-          writeEdge(agentId, prevLastInSession, nodes[0], "before", { weight: 0.5 });
+          writeEdge(agentId, prevLastInSession, nodes[0], "before", { weight: 0.5, writerAgentId: SYSTEM_SLEEP_WRITER });
         }
       }
       // Internal sequencing within a single episode is also chained, so the
       // graph captures the order in which sentences were classified.
       for (let k = 0; k + 1 < nodes.length; k++) {
         if (!edgeExists(agentId, nodes[k], nodes[k + 1], "before")) {
-          writeEdge(agentId, nodes[k], nodes[k + 1], "before", { weight: 0.4 });
+          writeEdge(agentId, nodes[k], nodes[k + 1], "before", { weight: 0.4, writerAgentId: SYSTEM_SLEEP_WRITER });
         }
       }
       lastNodePerSession.set(ep.session_id, nodes[nodes.length - 1]);
@@ -495,6 +496,7 @@ async function extractNodesFromEpisode(
     const id = writeNode(agentId, type, label, sentence, {
       importance,
       source: "sws",
+      writerAgentId: SYSTEM_SLEEP_WRITER,
       episode_ids: [episode.id],
       encodingContext: neuro,
       // SWS has its own Jaccard pre-check (line above). Disable the
@@ -644,6 +646,7 @@ async function runClusterSchemaPhase(agentId: string, log: Logger): Promise<void
     const schemaId = writeNode(agentId, "schema", schemaLabel, schemaContent, {
       importance: Math.min(1, avgImportance + 0.1),
       source: "nexus",
+      writerAgentId: SYSTEM_SLEEP_WRITER,
     });
 
     // Store centroid embedding directly (bypasses content-based re-embedding)
@@ -660,7 +663,7 @@ async function runClusterSchemaPhase(agentId: string, log: Logger): Promise<void
     db.transaction(() => {
       for (const m of members) {
         if (!edgeExists(agentId, m.id, schemaId, "instance_of")) {
-          writeEdge(agentId, m.id, schemaId, "instance_of", { weight: 0.7 });
+          writeEdge(agentId, m.id, schemaId, "instance_of", { weight: 0.7, writerAgentId: SYSTEM_SLEEP_WRITER });
         }
       }
     })();
@@ -872,13 +875,14 @@ async function runGenerativeRem(agentId: string, config: BrainConfig, log: Logge
       const patternId = writeNode(agentId, p.type, p.label, p.content, {
         importance: p.importance,
         source: "rem-generative",
+        writerAgentId: SYSTEM_SLEEP_WRITER,
       });
       queueEmbedding(agentId, patternId);
 
       // Link generated abstraction back to its constituent episodes.
       for (const inst of cluster) {
         if (!edgeExists(agentId, inst.id, patternId, "instance_of")) {
-          writeEdge(agentId, inst.id, patternId, "instance_of", { weight: 0.6 });
+          writeEdge(agentId, inst.id, patternId, "instance_of", { weight: 0.6, writerAgentId: SYSTEM_SLEEP_WRITER });
         }
       }
       writtenCount++;
@@ -1016,7 +1020,7 @@ async function detectContradictionsViaSubagent(
       ?? topPairs.find((p) => p.a.id === c.bId && p.b.id === c.aId);
     if (!pair) continue;
     if (!edgeExists(agentId, pair.a.id, pair.b.id, "contradicts")) {
-      writeEdge(agentId, pair.a.id, pair.b.id, "contradicts", { weight: 0.8 });
+      writeEdge(agentId, pair.a.id, pair.b.id, "contradicts", { weight: 0.8, writerAgentId: SYSTEM_SLEEP_WRITER });
       log.info(`[sharpwave] REM: contradiction (subagent-confirmed): "${pair.a.label}" vs "${pair.b.label}" — ${c.reason.slice(0, 120)}`);
     }
   }
@@ -1089,7 +1093,7 @@ async function detectContradictionsViaRegex(
       const bNeg = NEGATION.test(b.content);
       if (sim > 0.5 && aNeg !== bNeg) {
         if (!edgeExists(agentId, a.id, b.id, "contradicts")) {
-          writeEdge(agentId, a.id, b.id, "contradicts", { weight: 0.7 });
+          writeEdge(agentId, a.id, b.id, "contradicts", { weight: 0.7, writerAgentId: SYSTEM_SLEEP_WRITER });
           log.info(`[sharpwave] REM: contradiction (regex-fallback): "${a.label}" vs "${b.label}"`);
         }
       }
@@ -1140,13 +1144,13 @@ async function runRemKeywordBuckets(agentId: string, log: Logger): Promise<void>
       "pattern",
       patternLabel,
       `Observed ${group.length} episodes involving "${keyword}"`,
-      { importance: 0.65, source: "rem" },
+      { importance: 0.65, source: "rem", writerAgentId: SYSTEM_SLEEP_WRITER },
     );
     queueEmbedding(agentId, patternId);
 
     for (const instanceNode of group.slice(0, 10)) {
       if (!edgeExists(agentId, instanceNode.id, patternId, "instance_of")) {
-        writeEdge(agentId, instanceNode.id, patternId, "instance_of", { weight: 0.8 });
+        writeEdge(agentId, instanceNode.id, patternId, "instance_of", { weight: 0.8, writerAgentId: SYSTEM_SLEEP_WRITER });
       }
     }
 

@@ -135,14 +135,59 @@ function resolveDbPath(agentId: string): string {
   return join(dataDir, agentId, "brain.db");
 }
 
-export function getDb(agentId: string): Database.Database {
+/** Default SQLite busy_timeout (ms) applied to every brain connection. */
+export const DEFAULT_BUSY_TIMEOUT_MS = 5000;
+/** Upper bound for a configured busy_timeout — a stuck writer should surface, not hang forever. */
+const MAX_BUSY_TIMEOUT_MS = 600_000;
+
+/**
+ * Resolve the busy_timeout (ms) for a new connection.
+ *
+ * Precedence: explicit `override` (from `getDb(agentId, { busyTimeoutMs })`)
+ * → `SHARPWAVE_BUSY_TIMEOUT_MS` env → DEFAULT_BUSY_TIMEOUT_MS (5000).
+ * Non-numeric / negative values fall back to the default; values above
+ * MAX_BUSY_TIMEOUT_MS are clamped. `0` is honoured (disables waiting — SQLite
+ * then returns SQLITE_BUSY immediately and wal-retry.ts is the only backstop).
+ */
+export function resolveBusyTimeoutMs(override?: number): number {
+  const pick = (v: unknown): number | undefined => {
+    if (v === undefined || v === null || v === "") return undefined;
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n) || n < 0) return undefined;
+    return Math.min(Math.floor(n), MAX_BUSY_TIMEOUT_MS);
+  };
+  return pick(override)
+    ?? pick(process.env["SHARPWAVE_BUSY_TIMEOUT_MS"])
+    ?? DEFAULT_BUSY_TIMEOUT_MS;
+}
+
+export interface GetDbOptions {
+  /**
+   * SQLite busy_timeout in ms for this connection. Only takes effect when the
+   * connection is first opened (connections are cached per agentId).
+   * Defaults to `SHARPWAVE_BUSY_TIMEOUT_MS` or 5000.
+   */
+  busyTimeoutMs?: number;
+}
+
+export function getDb(agentId: string, opts: GetDbOptions = {}): Database.Database {
   if (dbs.has(agentId)) return dbs.get(agentId)!;
 
   const path = resolveDbPath(agentId);
   const dir = path.replace(/[/\\][^/\\]+$/, "");
   mkdirSync(dir, { recursive: true });
 
-  const db = new Database(path);
+  const busyTimeoutMs = resolveBusyTimeoutMs(opts.busyTimeoutMs);
+  const db = new Database(path, { timeout: busyTimeoutMs });
+  // busy_timeout FIRST: journal_mode=WAL and the schema/migration DDL below
+  // all need locks, and a second process opening the same brain.db at the same
+  // moment would otherwise get SQLITE_BUSY straight away. better-sqlite3's
+  // `timeout` option sets the same thing; the explicit PRAGMA makes the value
+  // visible/auditable (`PRAGMA busy_timeout`) and independent of driver defaults.
+  // This complements (does not replace) the wal-retry.ts backoff, which still
+  // catches SQLITE_BUSY_SNAPSHOT (a deferred read txn upgrading to write) —
+  // the one busy case SQLite will not wait out.
+  db.pragma(`busy_timeout = ${busyTimeoutMs}`);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
 
@@ -194,6 +239,7 @@ function initSchema(db: Database.Database): void {
       stability_sigma       REAL NOT NULL DEFAULT 1.0,
       inject_count          INTEGER NOT NULL DEFAULT 0,
       inject_hits           INTEGER NOT NULL DEFAULT 0,
+      writer_agent_id       TEXT,
       created_at            INTEGER NOT NULL,
       accessed_at           INTEGER NOT NULL,
       updated_at            INTEGER NOT NULL
@@ -214,7 +260,8 @@ function initSchema(db: Database.Database): void {
       valid_until INTEGER,
       learned_at  INTEGER NOT NULL,
       created_at  INTEGER NOT NULL,
-      meta        TEXT
+      meta        TEXT,
+      writer_agent_id TEXT
     );
 
     CREATE INDEX IF NOT EXISTS edges_from ON edges(from_id, valid_until);
@@ -231,7 +278,8 @@ function initSchema(db: Database.Database): void {
       ripple_count  INTEGER NOT NULL DEFAULT 0,
       llm_extracted INTEGER NOT NULL DEFAULT 0,
       created_at    INTEGER NOT NULL,
-      meta          TEXT
+      meta          TEXT,
+      writer_agent_id TEXT
     );
 
     CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
@@ -317,6 +365,7 @@ function initSchema(db: Database.Database): void {
     -- (v10/v13). When migrating from a pre-v10 DB the nodes/episodes table exists
     -- without those columns, so an index DDL here would fail before the migration
     -- adds the columns. Fresh DBs pick them up via the v10/v13 migration steps.
+    -- Same for nodes_writer_agent (v18 writer_agent_id provenance).
   `);
 
   // Migrate self_model: add created_at/updated_at if the table existed before v7
@@ -347,7 +396,7 @@ function initSchema(db: Database.Database): void {
 }
 
 function runMigrations(db: Database.Database): void {
-  const TARGET = 17;
+  const TARGET = 18;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
   const current = row?.version ?? 0;
 
@@ -597,6 +646,26 @@ function runMigrations(db: Database.Database): void {
     // only — backfills to 0 on every existing brain.db.)
     try { db.exec("ALTER TABLE nodes ADD COLUMN inject_count INTEGER NOT NULL DEFAULT 0"); } catch { /* already exists */ }
     try { db.exec("ALTER TABLE nodes ADD COLUMN inject_hits INTEGER NOT NULL DEFAULT 0"); } catch { /* already exists */ }
+  }
+
+  if (current < 18) {
+    // v18 — writer_agent_id provenance (shared-brain groundwork). Records WHICH
+    // agent (or system process) created a node / episode / edge, so that once
+    // several agents write into one brain (shared-brain service) every row can
+    // be attributed. Nullable and additive only:
+    //   • existing rows stay NULL = "written before provenance existed". We do
+    //     NOT backfill from the brain's agent id: with SHARPWAVE_DB_PATH (or a
+    //     copied/renamed brain dir) the opening agent id is not guaranteed to be
+    //     the historical writer, and a wrong stamp is worse than an honest NULL.
+    //     It also keeps the migration O(1) (no full-table rewrite).
+    //   • new writes are stamped by nodes.ts / episodes.ts / edges.ts —
+    //     default = the brain's own agentId; consolidation = "system:sleep".
+    // Index on nodes only — "what did agent X write" is a node-level query;
+    // episodes/edges are cheap to scan by session/node instead.
+    try { db.exec("ALTER TABLE nodes ADD COLUMN writer_agent_id TEXT"); } catch { /* already exists */ }
+    try { db.exec("ALTER TABLE episodes ADD COLUMN writer_agent_id TEXT"); } catch { /* already exists */ }
+    try { db.exec("ALTER TABLE edges ADD COLUMN writer_agent_id TEXT"); } catch { /* already exists */ }
+    try { db.exec("CREATE INDEX IF NOT EXISTS nodes_writer_agent ON nodes(writer_agent_id)"); } catch { /* ok */ }
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

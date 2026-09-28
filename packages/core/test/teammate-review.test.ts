@@ -31,7 +31,7 @@ import type { BrainNode, NeuromodState } from "../src/types.js";
 
 // sharpwave-core's db.ts does not export SCHEMA_VERSION — assert against the
 // known current migration target (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
