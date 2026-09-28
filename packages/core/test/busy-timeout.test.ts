@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { getDb, closeDb, resolveBusyTimeoutMs, DEFAULT_BUSY_TIMEOUT_MS } from "../src/db.js";
@@ -132,9 +132,16 @@ describe("multiple processes, one brain file", () => {
     dir = "";
   });
 
-  it("two child processes + parent interleave writes/reads: no SQLITE_BUSY, all rows land", async () => {
+  // Negative-control knob: `SHARPWAVE_TEST_CHILD_BUSY_TIMEOUT_MS=0 npx vitest run
+  // test/busy-timeout.test.ts` must make this test FAIL (writers get SQLITE_BUSY
+  // on the contended raw write). Default 5000 = production default.
+  const CHILD_BUSY_TIMEOUT_MS = Number(process.env["SHARPWAVE_TEST_CHILD_BUSY_TIMEOUT_MS"] ?? "5000");
+
+  it("holder keeps BEGIN IMMEDIATE open → two writer processes (+ parent) wait, then succeed: no SQLITE_BUSY, all rows land", async () => {
     dir = mkdtempSync(join(tmpdir(), "sw-bt-proc-"));
     const path = join(dir, "brain.db");
+    const signalDir = join(dir, "signals");
+    mkdirSync(signalDir);
     // Create + migrate once up front so children don't race schema init.
     const parentDb = withEnv({ SHARPWAVE_DB_PATH: path }, () => getDb("bt-parent"));
 
@@ -142,68 +149,77 @@ describe("multiple processes, one brain file", () => {
     const viteNode = join(dirname(req.resolve("vite-node/package.json")), "vite-node.mjs");
     const fixture = join(HERE, "fixtures", "busy-writer.ts");
     const ITERS = 30;
-    const startAt = Date.now() + 1200; // common barrier after child startup
+    const HOLD_MS = 300;
+    const WRITERS = ["proc-a", "proc-b"];
 
-    const runChild = (tag: string) => new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
-      const child = spawn(process.execPath, [viteNode, fixture], {
-        env: {
-          ...process.env,
-          SHARPWAVE_DB_PATH: path,
-          SHARPWAVE_BUSY_TIMEOUT_MS: "5000",
-          BUSY_TAG: tag,
-          BUSY_ITERS: String(ITERS),
-          BUSY_START_AT: String(startAt),
-          BUSY_HOLD_MS: "10",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
+    type Report = {
+      role: string; tag: string; busyTimeout: number; busy: number; errors: string[]; walRetries: number;
+      nodes?: number; episodes?: number; attemptAt?: number; doneAt?: number; heldAt?: number; commitAt?: number;
+    };
+    const runChild = (role: "holder" | "writer", tag: string) =>
+      new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
+        const child = spawn(process.execPath, [viteNode, fixture], {
+          env: {
+            ...process.env,
+            SHARPWAVE_DB_PATH: path,
+            SHARPWAVE_BUSY_TIMEOUT_MS: String(CHILD_BUSY_TIMEOUT_MS),
+            BUSY_ROLE: role,
+            BUSY_TAG: tag,
+            BUSY_SIGNAL_DIR: signalDir,
+            BUSY_WRITERS: String(WRITERS.length),
+            BUSY_ITERS: String(ITERS),
+            BUSY_HOLD_MS: String(HOLD_MS),
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let out = ""; let err = "";
+        child.stdout.on("data", (d) => { out += d; });
+        child.stderr.on("data", (d) => { err += d; });
+        child.on("close", (code) => resolve({ code, out, err }));
       });
-      let out = ""; let err = "";
-      child.stdout.on("data", (d) => { out += d; });
-      child.stderr.on("data", (d) => { err += d; });
-      child.on("close", (code) => resolve({ code, out, err }));
-    });
 
-    const children = [runChild("proc-a"), runChild("proc-b")];
+    const children = [runChild("holder", "proc-holder"), ...WRITERS.map((t) => runChild("writer", t))];
 
-    // Parent joins the fray from its own connection, yielding between steps so
-    // it can also collect child output.
-    while (Date.now() < startAt) await new Promise((r) => setTimeout(r, 10));
-    let parentBusy = 0;
+    // Parent joins once the holder has the lock: its first write blocks on
+    // busy_timeout (in-process), later ones interleave with writers' phase 2.
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(join(signalDir, "held"))) {
+      if (Date.now() > deadline) throw new Error("holder never acquired the lock");
+      await new Promise((r) => setTimeout(r, 5));
+    }
     const PARENT_ITERS = 40;
     for (let i = 0; i < PARENT_ITERS; i++) {
-      try {
-        writeNode("bt-parent", "semantic", `parent node ${i}`, `parent stress node ${i}`, { deduplicate: false });
-        parentDb.prepare("SELECT COUNT(*) FROM episodes").get();
-      } catch (e) {
-        if (/BUSY|locked/i.test(String(e))) parentBusy++;
-        throw e;
-      }
+      writeNode("bt-parent", "semantic", `parent node ${i}`, `parent stress node ${i}`, { deduplicate: false });
+      parentDb.prepare("SELECT COUNT(*) FROM episodes").get();
       await new Promise((r) => setImmediate(r));
     }
 
     const results = await Promise.all(children);
-    const reports = results.map((r) => {
+    const reports: Report[] = results.map((r) => {
       expect(r.code, r.err).toBe(0);
-      const line = r.out.trim().split("\n").pop() ?? "{}";
-      return JSON.parse(line) as {
-        tag: string; busyTimeout: number; nodes: number; episodes: number; busy: number; errors: string[];
-        waits: number; maxWaitMs: number; walRetries: number;
-      };
+      return JSON.parse(r.out.trim().split("\n").pop() ?? "{}") as Report;
     });
+    const holder = reports.find((r) => r.role === "holder")!;
+    const writers = reports.filter((r) => r.role === "writer");
 
     for (const rep of reports) {
       expect(rep.errors, `${rep.tag}: ${rep.errors.join(" | ")}`).toEqual([]);
       expect(rep.busy).toBe(0);
-      expect(rep.busyTimeout).toBe(5000);
-      expect(rep.nodes).toBe(ITERS);
+      expect(rep.busyTimeout).toBe(CHILD_BUSY_TIMEOUT_MS);
       // busy_timeout absorbed every wait; the wal-retry backstop never fired.
       expect(rep.walRetries).toBe(0);
     }
-    expect(parentBusy).toBe(0);
-    // The two children each hold the write lock ~10ms per iteration from a
-    // common start barrier, so they MUST have waited on each other at least
-    // once — otherwise this test would not be exercising contention at all.
-    expect(reports.reduce((s, r) => s + r.waits, 0)).toBeGreaterThan(0);
+    expect(holder.heldAt).toBeTypeOf("number");
+    expect(holder.commitAt).toBeTypeOf("number");
+    for (const w of writers) {
+      // Guaranteed collision, by construction: each writer issued its raw
+      // BEGIN IMMEDIATE while the holder still held the write lock, and only
+      // completed once the holder committed — i.e. it waited on busy_timeout.
+      expect(w.attemptAt!).toBeGreaterThanOrEqual(holder.heldAt!);
+      expect(w.attemptAt!).toBeLessThan(holder.commitAt!);
+      expect(w.doneAt!).toBeGreaterThanOrEqual(holder.commitAt!);
+      expect(w.nodes).toBe(ITERS);
+    }
 
     const perWriter = parentDb.prepare(
       "SELECT writer_agent_id AS w, COUNT(*) AS n FROM nodes GROUP BY writer_agent_id ORDER BY w",
@@ -213,14 +229,15 @@ describe("multiple processes, one brain file", () => {
       { w: "proc-a", n: ITERS },
       { w: "proc-b", n: ITERS },
     ]);
-    const expectedEpisodesPerChild = ITERS * 6; // 1 appendEpisode + 5 raw rows per iteration
+    const expectedEpisodesPerWriter = 1 + ITERS * 6; // collision row + (1 appendEpisode + 5 raw) per iteration
     const epPerWriter = parentDb.prepare(
       "SELECT writer_agent_id AS w, COUNT(*) AS n FROM episodes GROUP BY writer_agent_id ORDER BY w",
     ).all();
     expect(epPerWriter).toEqual([
-      { w: "proc-a", n: expectedEpisodesPerChild },
-      { w: "proc-b", n: expectedEpisodesPerChild },
+      { w: "proc-a", n: expectedEpisodesPerWriter },
+      { w: "proc-b", n: expectedEpisodesPerWriter },
+      { w: "proc-holder", n: 1 },
     ]);
     expect(parentDb.pragma("integrity_check", { simple: true })).toBe("ok");
-  }, 15_000);
+  }, 20_000);
 });
