@@ -1,0 +1,13 @@
+{
+  "root": "~/.sharpwave/service",
+  "port": 18790,
+  "tailnetHosts": ["100.121.136.3"],
+  "tailnetRetryWindowMs": 120000,
+  "tailnetBackgroundRetryMs": 60000,
+  "tokensFile": "~/.sharpwave/service/tokens.json",
+  "readConnectionsPerBrain": 2,
+  "allowReset": false,
+  "embedDrainIntervalMs": 30000,
+  "sleep":  { "enabled": true, "at": "03:30", "budgetMs": 900000, "respectGate": true },
+  "backup": { "enabled": true, "at": "02:30", "keep": 7 }
+}

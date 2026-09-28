@@ -4,6 +4,17 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## [Unreleased]
 
+### Added — `sharpwave-server` 0.1.0 (new private package, not published)
+
+- **Brain service** (`packages/server`): one process owns a `shared` brain
+  (starts empty) plus one private brain per agent; MCP Streamable HTTP on
+  `127.0.0.1:18790` + a tailnet IP (never `0.0.0.0`/`::`); per-agent bearer
+  tokens stored as sha256 hashes; server-stamped `writer_agent_id`; one
+  serialized write queue per brain + read-only WAL readers; in-process sleep with
+  a single budget; JSONL audit log; nightly `VACUUM INTO` backups with rotation;
+  `sharpwave-client` CLI; Windows scheduled-task scripts (not installed).
+  No `sharpwave-core` changes.
+
 ## [0.4.5] — Unreleased
 
 > **Do not publish until 0.4.4 is published first.** Schema 18 + busy_timeout

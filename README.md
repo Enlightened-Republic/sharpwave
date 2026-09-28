@@ -20,7 +20,7 @@ Works with Claude Code, Claude Desktop, Cursor, and any other MCP client.
 
 ## Repository layout
 
-npm-workspaces monorepo, two packages:
+npm-workspaces monorepo, three packages:
 
 - **`packages/core`** — [`sharpwave-core`](https://www.npmjs.com/package/sharpwave-core),
   the memory engine (retrieval, consolidation, extraction, the FSRS forgetting
@@ -30,6 +30,12 @@ npm-workspaces monorepo, two packages:
 - **`packages/mcp`** — [`sharpwave`](https://www.npmjs.com/package/sharpwave),
   the stdio MCP server. This is what `npm i sharpwave` / `npx -y sharpwave`
   installs.
+- **`packages/server`** — `sharpwave-server` (private, not published), the
+  **brain service**: one process that owns a `shared` brain plus one private
+  brain per agent and serves the brain tools over MCP Streamable HTTP on
+  `127.0.0.1:18790` (+ a tailnet IP) with per-agent bearer tokens, plus the
+  dependency-free `sharpwave-client` CLI. See
+  [`packages/server/README.md`](packages/server/README.md).
 
 The OpenClaw plugin lives in its own repo:
 [`Enlightened-Republic/openwave`](https://github.com/Enlightened-Republic/openwave).

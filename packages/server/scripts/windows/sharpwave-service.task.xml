@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Task Scheduler definition for the SharpWave brain service - equivalent to
+  what install-task.ps1 registers. Use EITHER this XML OR install-task.ps1.
+
+  Replace the placeholders (keep the file UTF-8, or re-save as UTF-16 LE if schtasks complains), then (normal, non-admin prompt):
+    schtasks /Create /TN "SharpWave Brain Service" /XML sharpwave-service.task.xml
+  Remove:
+    schtasks /Delete /TN "SharpWave Brain Service" /F
+
+  Placeholders:
+    __USER__    DOMAIN\user (e.g. from `whoami`)
+    __VBS__     full path to scripts\windows\sharpwave-service.vbs
+    __NODE__    full path to node.exe (Node >= 22)
+    __CLI__     full path to packages\server\dist\cli.js
+    __CONFIG__  full path to config.json (may not exist yet; then defaults apply)
+    __LOG__     full path to the service log file
+    __WORKDIR__ folder containing cli.js
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>SharpWave brain service (MCP over HTTP on 127.0.0.1:18790 + tailnet). Hidden via sharpwave-service.vbs.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>__USER__</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>__USER__</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>%SystemRoot%\System32\wscript.exe</Command>
+      <Arguments>//B //Nologo "__VBS__" "__NODE__" "__CLI__" "__CONFIG__" "__LOG__"</Arguments>
+      <WorkingDirectory>__WORKDIR__</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

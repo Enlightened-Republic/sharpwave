@@ -1,0 +1,45 @@
+{
+  "name": "sharpwave-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SharpWave brain service: one process that owns every brain (shared + one private per agent), served over MCP Streamable HTTP with per-agent bearer tokens.",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "sharpwave-server": "dist/cli.js",
+    "sharpwave-client": "bin/sharpwave-client.mjs"
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "start": "node dist/cli.js serve",
+    "test": "node esbuild.mjs && vitest run"
+  },
+  "files": [
+    "dist/",
+    "bin/",
+    "scripts/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "~12.11.1",
+    "sqlite-vec": "^0.1.9"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "sharpwave-core": "^0.4.5",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Enlightened-Republic/sharpwave.git",
+    "directory": "packages/server"
+  }
+}
