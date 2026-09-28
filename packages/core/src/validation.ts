@@ -81,6 +81,8 @@ export interface BrainWriteArgs {
   content: string;
   importance?: number;
   emotional_weight?: number;
+  /** Provenance (v18). Optional; defaults to the resolved `agent` at dispatch. */
+  writer_agent_id?: string;
 }
 
 export function validateBrainWrite(args: Record<string, unknown>): ValidationResult<BrainWriteArgs> {
@@ -139,6 +141,24 @@ export function validateBrainWrite(args: Record<string, unknown>): ValidationRes
     }
   }
 
+  // writer_agent_id is optional provenance. Empty string → undefined so the
+  // dispatch default (agent arg) still applies; any other string is accepted
+  // (agent-id shape is not re-validated here — the host already gated the
+  // primary `agent` arg, and system values like "system:sleep" are legal).
+  let writer_agent_id: string | undefined;
+  if (args["writer_agent_id"] !== undefined && args["writer_agent_id"] !== null) {
+    if (typeof args["writer_agent_id"] !== "string") {
+      errors.push({ field: "writer_agent_id", message: "writer_agent_id must be a string" });
+    } else {
+      const w = (args["writer_agent_id"] as string).trim();
+      if (w.length > 128) {
+        errors.push({ field: "writer_agent_id", message: "writer_agent_id cannot exceed 128 characters" });
+      } else if (w.length > 0) {
+        writer_agent_id = w;
+      }
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors };
   }
@@ -151,6 +171,7 @@ export function validateBrainWrite(args: Record<string, unknown>): ValidationRes
       content: (content as string).trim(),
       importance,
       emotional_weight,
+      writer_agent_id,
     },
   };
 }

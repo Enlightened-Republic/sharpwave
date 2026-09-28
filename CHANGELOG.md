@@ -4,6 +4,45 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## [Unreleased]
 
+### Added — `sharpwave-server` 0.1.0 (new private package, not published)
+
+- **Brain service** (`packages/server`): one process owns a `shared` brain
+  (starts empty) plus one private brain per agent; MCP Streamable HTTP on
+  `127.0.0.1:18790` + a tailnet IP (never `0.0.0.0`/`::`); per-agent bearer
+  tokens stored as sha256 hashes; server-stamped `writer_agent_id`; one
+  serialized write queue per brain + read-only WAL readers; in-process sleep with
+  a single budget; JSONL audit log; nightly `VACUUM INTO` backups with rotation;
+  `sharpwave-client` CLI; Windows scheduled-task scripts (not installed).
+  No `sharpwave-core` changes.
+
+## [0.4.5] — Unreleased
+
+> **Do not publish until 0.4.4 is published first.** Schema 18 + busy_timeout
+> land on top of the unpublished 0.4.4 Engram Graft A work.
+
+### Added
+
+- **`PRAGMA busy_timeout` on every brain connection** (default 5000 ms).
+  Configurable via `SHARPWAVE_BUSY_TIMEOUT_MS` or `getDb(agentId, { busyTimeoutMs })`.
+  Complements (does not replace) `wal-retry.ts`: SQLite waits out ordinary lock
+  contention; `wal-retry` still covers `SQLITE_BUSY_SNAPSHOT` and exhausted waits.
+  The single-writer-per-brain contract is unchanged — the shared-brain service
+  remains the supported multi-agent path.
+- **Schema 18 — `writer_agent_id` provenance** on `nodes`, `episodes`, and
+  `edges` (nullable TEXT; index `nodes_writer_agent`). Existing rows stay NULL
+  (no backfill — the opening agent id is not a reliable historical writer).
+  New writes default to the brain's own `agentId`; consolidation / sleep writes
+  stamp `system:sleep` (`SYSTEM_SLEEP_WRITER`). MCP `brain_write` accepts an
+  optional `writer_agent_id` (defaults to the `agent` arg). Query / history /
+  expand surface the stamp when present.
+
+### Tests
+
+- Multi-connection / multi-process interleaved write+read busy_timeout stress
+  (no `SQLITE_BUSY` surfaces; all rows land; <5 s).
+- Schema 17 → 18 migration against a copy of a real brain snapshot (counts
+  unchanged; new column present; new writes stamped).
+
 ## [0.4.4] — Unreleased
 
 ### Changed

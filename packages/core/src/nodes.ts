@@ -283,6 +283,11 @@ export function writeNode(
     /** Jaccard threshold for `deduplicate`. Default 0.85 (matches the Python
      *  reference's near-duplicate gate). */
     dedupeThreshold?: number;
+    /** Provenance (v18): who is writing this node. Defaults to `agentId` (the
+     *  brain's own agent). Consolidation passes SYSTEM_SLEEP_WRITER. Only
+     *  stamped on INSERT — a dedupe merge into an existing canonical node keeps
+     *  the canonical node's original writer (writer = creator, not last toucher). */
+    writerAgentId?: string;
   } = {},
 ): string {
   const db = getDb(agentId);
@@ -359,11 +364,11 @@ export function writeNode(
           (id, type, label, content, importance, salience, stability, retrievability, ef,
            access_count, emotional_weight, episode_ids, source, embedding,
            encoding_context, extraction_confidence, ripple_count, eligibility_trace,
-           created_at, accessed_at, updated_at)
+           writer_agent_id, created_at, accessed_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1.0, 2.5,
                 0, ?, ?, ?, NULL,
                 ?, ?, 0, 0.0,
-                ?, ?, ?)
+                ?, ?, ?, ?)
       `).run(
         id, type, label, content, importance, salience, stability,
         emotionalWeight,
@@ -371,6 +376,7 @@ export function writeNode(
         opts.source ?? null,
         opts.encodingContext ? JSON.stringify(opts.encodingContext) : null,
         opts.extractionConfidence ?? 1.0,
+        opts.writerAgentId ?? agentId,
         now, now, now,
       );
     },

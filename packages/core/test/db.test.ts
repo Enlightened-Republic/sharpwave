@@ -5,7 +5,7 @@ import { getDb, getMeta, setMeta, closeDb } from "../src/db.js";
 // sharpwave-core's db.ts keeps the migration target (16) as a module-local
 // constant and does not export it. The clawbrain-v4 test imported a
 // `SCHEMA_VERSION` symbol; here we assert against the known current value.
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 function freshAgent(): string {
   return `test-${randomUUID().slice(0, 8)}`;
@@ -127,7 +127,7 @@ describe("db", () => {
     expect(legacy.inject_count).toBe(0);
     expect(legacy.inject_hits).toBe(0);
     const ver = db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number };
-    expect(ver.version).toBe(17);
+    expect(ver.version).toBe(18);
     closeDb(agentId);
 
     // 3. Re-open a THIRD time — migrations already at target, must be a no-op

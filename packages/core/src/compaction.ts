@@ -53,6 +53,7 @@ function extractNodesFromSummary(
     const nodeId = writeNode(agentId, type, label, sentence, {
       importance,
       source: "compaction",
+      writerAgentId: agentId,
       episode_ids: episodeIds,
     });
     nodeIds.push(nodeId);

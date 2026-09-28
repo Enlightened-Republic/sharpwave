@@ -55,6 +55,10 @@ export interface BrainNode {
   // a prompt; inject_hits = times the reply that followed actually used it.
   inject_count: number;
   inject_hits: number;
+  // Provenance (v18). Who created this node: an agent id, or a "system:*" value
+  // for engine-internal writers (SYSTEM_SLEEP_WRITER for consolidation). NULL on
+  // rows written before v18 — see db.ts v18 migration for why there is no backfill.
+  writer_agent_id: string | null;
   created_at: number;
   accessed_at: number;
   updated_at: number;
@@ -71,6 +75,8 @@ export interface BrainEdge {
   learned_at: number;
   created_at: number;
   meta: string | null;
+  /** Provenance (v18) — see BrainNode.writer_agent_id. */
+  writer_agent_id?: string | null;
 }
 
 export interface Episode {
@@ -83,7 +89,18 @@ export interface Episode {
   ripple_count: number;
   created_at: number;
   meta: string | null;
+  /** Provenance (v18) — see BrainNode.writer_agent_id. */
+  writer_agent_id?: string | null;
 }
+
+/**
+ * writer_agent_id stamped on nodes/edges created by sleep-style consolidation
+ * (SWS extraction, NEXUS schemas, REM patterns, contradiction edges). These are
+ * derived by the engine, not asserted by any one agent — in a shared brain the
+ * sleep cycle is a system process — so they are attributed to the system rather
+ * than to whichever agent's turn happened to trigger consolidation.
+ */
+export const SYSTEM_SLEEP_WRITER = "system:sleep";
 
 export interface SelfModel {
   id: string;

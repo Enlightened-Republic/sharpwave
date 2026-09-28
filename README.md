@@ -20,7 +20,7 @@ Works with Claude Code, Claude Desktop, Cursor, and any other MCP client.
 
 ## Repository layout
 
-npm-workspaces monorepo, two packages:
+npm-workspaces monorepo, three packages:
 
 - **`packages/core`** — [`sharpwave-core`](https://www.npmjs.com/package/sharpwave-core),
   the memory engine (retrieval, consolidation, extraction, the FSRS forgetting
@@ -30,6 +30,12 @@ npm-workspaces monorepo, two packages:
 - **`packages/mcp`** — [`sharpwave`](https://www.npmjs.com/package/sharpwave),
   the stdio MCP server. This is what `npm i sharpwave` / `npx -y sharpwave`
   installs.
+- **`packages/server`** — `sharpwave-server` (private, not published), the
+  **brain service**: one process that owns a `shared` brain plus one private
+  brain per agent and serves the brain tools over MCP Streamable HTTP on
+  `127.0.0.1:18790` (+ a tailnet IP) with per-agent bearer tokens, plus the
+  dependency-free `sharpwave-client` CLI. See
+  [`packages/server/README.md`](packages/server/README.md).
 
 The OpenClaw plugin lives in its own repo:
 [`Enlightened-Republic/openwave`](https://github.com/Enlightened-Republic/openwave).
@@ -221,7 +227,7 @@ Worth knowing before you install:
 
 - **Generative consolidation needs an LLM.** REM-style schema synthesis and contradiction detection call OpenRouter. Without `OPENROUTER_API_KEY` the deterministic consolidation passes still run, but the generative ones are skipped.
 - **Semantic similarity needs embeddings.** Without a provider you get full-text plus graph retrieval — good, but not synonym-aware.
-- **Single-writer per brain.** SQLite with WAL. One server process per database; pointing two at the same file is not supported.
+- **Single-writer per brain.** SQLite with WAL. One server process per database; pointing two at the same file is not supported. Connections set `PRAGMA busy_timeout` (default 5000 ms via `SHARPWAVE_BUSY_TIMEOUT_MS`) so brief lock waits do not surface as `SQLITE_BUSY`; the supported multi-agent path remains the shared-brain service.
 - **Consolidation is time-based.** Memory quality improves as passes accumulate. A brand-new database is a plain store until it has history to work with.
 
 ## Companion tools

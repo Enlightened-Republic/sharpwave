@@ -25,6 +25,8 @@ export function writeEdge(
     weight?: number;
     validFrom?: number;
     meta?: Record<string, unknown>;
+    /** Provenance (v18): who is writing this edge. Defaults to `agentId`. */
+    writerAgentId?: string;
   } = {},
 ): string {
   if (fromId === toId) {
@@ -42,14 +44,15 @@ export function writeEdge(
     db,
     (d) => {
       d.prepare(`
-        INSERT INTO edges (id, from_id, to_id, type, weight, valid_from, valid_until, learned_at, created_at, meta)
-        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        INSERT INTO edges (id, from_id, to_id, type, weight, valid_from, valid_until, learned_at, created_at, meta, writer_agent_id)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
       `).run(
         id, fromId, toId, type,
         opts.weight ?? 1.0,
         opts.validFrom ?? now,
         now, now,
         opts.meta ? JSON.stringify(opts.meta) : null,
+        opts.writerAgentId ?? agentId,
       );
     },
     { op: `edges.write:${type}` },

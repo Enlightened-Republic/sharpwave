@@ -10,6 +10,10 @@ export function appendEpisode(
   content: string,
   importance?: number,
   meta?: Record<string, unknown>,
+  opts: {
+    /** Provenance (v18): who is writing this episode. Defaults to `agentId`. */
+    writerAgentId?: string;
+  } = {},
 ): string {
   const db = getDb(agentId);
   const id = randomUUID();
@@ -20,9 +24,13 @@ export function appendEpisode(
     db,
     (d) => {
       d.prepare(`
-        INSERT INTO episodes (id, session_id, role, content, importance, tokens, ripple_count, created_at, meta)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
-      `).run(id, sessionId, role, content, imp, estimateTokens(content), now, meta ? JSON.stringify(meta) : null);
+        INSERT INTO episodes (id, session_id, role, content, importance, tokens, ripple_count, created_at, meta, writer_agent_id)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+      `).run(
+        id, sessionId, role, content, imp, estimateTokens(content), now,
+        meta ? JSON.stringify(meta) : null,
+        opts.writerAgentId ?? agentId,
+      );
     },
     { op: `episodes.write:${role}` },
   );
