@@ -4,7 +4,7 @@
 //
 //   1. refuse to clobber: an existing --out needs --force; a LIVE brain path
 //      (anything under <root>/brains, or any file named brain.db) additionally
-//      needs the service to be stopped (its /health must not answer);
+//      needs the service to be stopped (nothing may be listening on its port);
 //   2. verify the manifest sha256 of the whole artifact (when the manifest is
 //      next to it), the key id, then stream-decrypt — the GCM tag and the
 //      manifest's plaintext HMAC must verify before the bytes are kept;
@@ -18,6 +18,7 @@ import * as sqliteVec from "sqlite-vec";
 import { existsSync, renameSync, unlinkSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+import { connect } from "node:net";
 
 import { decryptFile, type BackupKey } from "./crypt.js";
 import { snapshotStamp } from "./backup.js";
@@ -45,7 +46,7 @@ export interface RestoreOptions {
   force?: boolean;
   /** <root>/brains — anything inside is treated as a live brain. */
   brainsDir?: string;
-  /** Resolves true when the service is up (default: GET http://127.0.0.1:<port>/health). */
+  /** Resolves true when the service is up (default: TCP connect to 127.0.0.1:<port>). */
   serviceRunning?: () => Promise<boolean>;
   audit?: AuditLog;
   requireManifest?: boolean;
@@ -60,14 +61,19 @@ export function isLiveBrainPath(out: string, brainsDir?: string): boolean {
   return basename(out).toLowerCase() === "brain.db" || (!!brainsDir && inside(out, brainsDir));
 }
 
-export async function healthAnswers(port: number, host = "127.0.0.1", timeoutMs = 1500): Promise<boolean> {
-  try {
-    const res = await fetch(`http://${host}:${port}/health`, { signal: AbortSignal.timeout(timeoutMs) });
-    await res.body?.cancel();
-    return true; // any HTTP answer means something is listening on the service port
-  } catch {
-    return false;
-  }
+/**
+ * Is anything listening on the service port? A TCP connect is enough (the
+ * kernel accepts even while the service is busy); only ECONNREFUSED counts as
+ * "stopped" — a timeout or any other error is treated as running (fail safe).
+ */
+export function servicePortInUse(port: number, host = "127.0.0.1", timeoutMs = 1500): Promise<boolean> {
+  return new Promise((res) => {
+    const sock = connect({ port, host });
+    const done = (v: boolean) => { sock.destroy(); res(v); };
+    sock.setTimeout(timeoutMs, () => done(true));
+    sock.once("connect", () => done(true));
+    sock.once("error", (e: NodeJS.ErrnoException) => done(e.code !== "ECONNREFUSED"));
+  });
 }
 
 export function countRows(db: Database.Database): RestoreCounts {
