@@ -174,10 +174,17 @@ function chunkMarkdown(text, fileStem, maxChars = 1800) {
     const parts = [];
     let cur = "";
     for (const para of s.content.split(/\n{2,}/)) {
-      const pieces = para.length > maxChars ? para.match(new RegExp(`[\\s\\S]{1,${maxChars}}`, "g")) : [para];
-      for (const piece of pieces) {
-        if (cur && cur.length + 2 + piece.length > maxChars) { parts.push(cur); cur = ""; }
-        cur = cur ? `${cur}\n\n${piece}` : piece;
+      // Oversized paragraph (e.g. a long bullet list): split on line
+      // boundaries; only a single line longer than maxChars is hard-cut.
+      const units = para.length <= maxChars ? [para] : para.split("\n").flatMap((l) =>
+        l.length <= maxChars ? [l] : l.match(new RegExp(`[\\s\\S]{1,${maxChars}}`, "g")));
+      const sep = para.length <= maxChars ? "\n\n" : "\n";
+      let first = true;
+      for (const unit of units) {
+        const join = first ? "\n\n" : sep;
+        first = false;
+        if (cur && cur.length + join.length + unit.length > maxChars) { parts.push(cur); cur = ""; }
+        cur = cur ? `${cur}${join}${unit}` : unit;
       }
     }
     if (cur) parts.push(cur);

@@ -66,6 +66,27 @@ describe("seed", () => {
     ]);
   });
 
+  it("splits an oversized bullet list on line boundaries, never mid-line", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sw-seed-log-"));
+    try {
+      const bullets = Array.from({ length: 40 }, (_, i) => `- (2026-01-${String(i % 28 + 1).padStart(2, "0")}) fixture decision number ${i} ${"x".repeat(60)}`);
+      writeFileSync(join(dir, "log.md"), `# Log\n\n${bullets.join("\n")}\n`);
+      const r = await client(["seed", dir, "--offline", "--json", "--target", "shared", "--max-chars", "1000"]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(JSON.parse(r.stdout).results[0].chunks).toBe(5); // ~4k chars greedily packed into <=1000-char chunks
+      // Import for real and check every chunk holds only whole bullet lines.
+      const base = ["seed", dir, "--target", "shared", "--max-chars", "1000", "--url", h.url, "--token", admin, "--json"];
+      expect((await client(base)).code).toBe(0);
+      const hits = JSON.parse((await tool(h.url, admin, "brain_query", { query: "fixture decision", limit: 20, scope: "shared", format: "json" })).text).results;
+      expect(hits.length).toBe(5);
+      for (const hit of hits) {
+        const body = (hit.content as string).split("\n\nTags:")[0]!;
+        for (const line of body.split("\n")) expect(line).toMatch(/^- \(2026-01-\d\d\) fixture decision number \d+ x{60}$/);
+      }
+      expect(JSON.parse((await client([...base, "--remove"])).stdout).results[0].removed).toBe(5);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it("refuses unmapped files", async () => {
     const r = await client(["seed", fixtures, "--offline", "--map", "01-team.md=shared"]);
     expect(r.code).toBe(2);
@@ -111,8 +132,11 @@ describe("seed", () => {
 
   it("audit log has one brain_seed line per created node", () => {
     const lines = readFileSync(h.cfg.auditFile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-    const seeded = lines.filter((l) => l.tool === "brain_seed");
+    const seeded = lines.filter((l) => l.tool === "brain_seed" && !String(l.detail).includes("log.md"));
     expect(seeded).toHaveLength(8);
+    // the split test's import + remove were audited too
+    expect(lines.filter((l) => l.detail === "seed:log.md")).toHaveLength(5);
+    expect(lines.filter((l) => l.detail === "remove seed:log.md")).toHaveLength(5);
     expect(new Set(seeded.map((l) => l.agentId))).toEqual(new Set(["cos"]));
     expect(seeded.filter((l) => l.detail === "seed:03-private.md").every((l) => l.brain === "cos")).toBe(true);
   });
