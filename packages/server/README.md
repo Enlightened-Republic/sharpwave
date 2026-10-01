@@ -41,6 +41,41 @@ CLI (`sharpwave-server`):
 | `backup now [--keep N] [--brain name ...] [--no-offsite]` | snapshot every brain now (safe next to a live service), then encrypt + ship off-PC if enabled. Exit 0 ok, 1 local snapshot failed, 3 local ok but an off-PC step failed |
 | `backup keygen [--key-file f] [--force]` | write a new 256-bit backup key (default `~/.sharpwave/backup.key`); refuses to overwrite without `--force` (which renames the old key to `backup.key.old-<UTC>`) |
 | `backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest] [--json]` | verify + decrypt + `PRAGMA integrity_check`; prints node/edge/episode counts |
+| `brain adopt --agent <id> --from <brain.db\|dir> [--mode copy\|move] [--dry-run] [--force] [--backfill-writer legacy\|<id>] [--json]` | adopt an EXISTING brain.db (e.g. a legacy `~/.sharpwave/<agent>/brain.db`) as that agent's private brain. See below |
+
+### Adopting an existing brain (`brain adopt`)
+
+The service keeps private brains at `<root>/brains/<agentId>/brain.db` and core
+resolves them by agent id under that dir, so there is no per-agent "brain path"
+setting to point at a legacy file (and pointing the service at the live legacy
+file would make OpenWave local mode and the service share one writer-unsafe
+file with no rollback). `brain adopt` copies instead:
+
+1. refuses if the service port answers (stop the service first), or if the
+   target already holds data (unless `--force`, which renames it to
+   `brain.db.pre-adopt-<UTC>`; an empty target is renamed without `--force`);
+2. byte-copies the source (`brain.db` + `-wal`) to a temp staging dir — the
+   source is never opened by SQLite, so no `-shm`/locks are created next to it —
+   and re-hashes it to detect a concurrent writer;
+3. checkpoints the staged WAL, takes a pre-adopt backup with `VACUUM INTO`
+   (`<backups>/<id>/pre-adopt/<id>-pre-adopt-<UTC>.db` + `.json` manifest with
+   sha256 and counts), and copies that verified backup into the brain path;
+4. opens it through sharpwave-core, which runs the additive migrations to
+   schema 18 (`writer_agent_id`, NULL on existing rows);
+5. verifies `integrity_check = ok`, node/edge/episode counts equal, schema ≥ 18;
+   on failure the adopted copy is renamed `brain.db.failed-adopt-<UTC>` and any
+   replaced brain is put back;
+6. writes one audit line (`tool: brain_adopt`, counts/hashes, no content).
+
+`--mode copy` (default) leaves the source byte-identical, so OpenWave local
+mode / the sharpwave MCP keep working on it as a rollback. `--mode move`
+renames the source files to `*.adopted-<UTC>` after success (never deletes).
+
+`--backfill-writer`: default is to leave `writer_agent_id` NULL on adopted rows
+(core's documented meaning: "written before provenance existed"; nothing in the
+service gates on the writer). `legacy` stamps NULL rows as `legacy:<agentId>`,
+which keeps them distinguishable from rows written through the service
+(stamped `<agentId>`). Never stamp them as the bare agent id unless you mean it.
 
 ## Design
 
