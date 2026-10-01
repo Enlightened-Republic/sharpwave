@@ -3,13 +3,21 @@
 ' Same pattern as OpenClaw's gateway.vbs: the Scheduled Task runs
 '   wscript.exe //B //Nologo sharpwave-service.vbs "<node.exe>" "<dist\cli.js>" ["<config.json>"] ["<log file>"]
 ' and this script starts node through WScript.Shell.Run with window style 0
-' (hidden), so no console window ever appears - at logon, on restart-on-failure,
-' or on a manual "Run". It WAITS for node to exit and returns node's exit code,
-' so Task Scheduler sees crashes as failures and its restart-on-failure policy
-' applies. It never passes a secret on the command line.
+' (hidden), so no console window ever appears - at logon, after a crash, or on
+' a manual "Run". It WAITS for node to exit. It never passes a secret on the
+' command line.
+'
+' Crash restart: Task Scheduler's "restart on failure" setting only fires when
+' the task fails to START; it does not fire when an already-running action
+' exits with a non-zero code. So this wrapper supervises node itself: if node
+' exits non-zero (crash, port 18790 still taken, killed), it waits 30 s and
+' starts it again, up to 1000 times. A clean exit (code 0, e.g. Ctrl+C or
+' SIGBREAK) ends the wrapper. To stop the service for good, stop the TASK
+' first (Stop-ScheduledTask ends this wrapper), then end node.exe if it is
+' still running; see uninstall-task.ps1 / docs/windows-install-runbook.md.
 Option Explicit
 
-Dim sh, fso, args, nodeExe, cliJs, configPath, logFile, cmd, rc
+Dim sh, fso, args, nodeExe, cliJs, configPath, logFile, cmd, rc, restarts
 
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -37,7 +45,14 @@ If Len(logFile) > 0 Then cmd = cmd & " --log-file " & Q(logFile)
 
 sh.CurrentDirectory = fso.GetParentFolderName(cliJs)
 ' 0 = hidden window, True = wait for exit (so the task tracks the process).
-rc = sh.Run(cmd, 0, True)
+restarts = 0
+Do
+  rc = sh.Run(cmd, 0, True)
+  If rc = 0 Then Exit Do
+  restarts = restarts + 1
+  If restarts > 1000 Then Exit Do
+  WScript.Sleep 30000
+Loop
 WScript.Quit rc
 
 Function Q(s)

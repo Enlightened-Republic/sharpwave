@@ -10,6 +10,8 @@
 // Common: --config <file> (default <root>/config.json if present), --root <dir>
 // (default ~/.sharpwave/service), --tokens-file <file>.
 
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { brainsDir, backupsDir, defaultConfigPath, defaultRoot, expandHome, loadConfigFile, resolveConfig, type ServiceConfig } from "./config.js";
 import { mintToken, parseScopes, readTokenFile, revokeToken } from "./tokens.js";
 import { snapshotAll } from "./backup.js";
@@ -169,7 +171,21 @@ async function main(argv: string[]): Promise<number> {
 main(process.argv.slice(2)).then(
   (code) => { if (code !== undefined) process.exitCode = code; },
   (e) => {
-    process.stderr.write(`sharpwave-server: ${e instanceof Error ? e.message : String(e)}\n`);
+    const msg = `sharpwave-server: ${e instanceof Error ? e.message : String(e)}`;
+    process.stderr.write(msg + "\n");
+    // Under the hidden Windows task there is no console, so stderr is lost:
+    // also append fatal startup errors (bad config, port in use, ...) to the
+    // --log-file when one was given.
+    const i = process.argv.indexOf("--log-file");
+    const eq = process.argv.find((a) => a.startsWith("--log-file="));
+    const logFile = eq ? eq.slice("--log-file=".length) : i >= 0 ? process.argv[i + 1] : undefined;
+    if (logFile) {
+      try {
+        const f = expandHome(logFile);
+        mkdirSync(dirname(f), { recursive: true });
+        appendFileSync(f, `${new Date().toISOString()} [sharpwave-server] fatal ${msg}\n`);
+      } catch { /* best effort */ }
+    }
     process.exitCode = 1;
   },
 );

@@ -9,6 +9,7 @@
 //   node sharpwave-client.mjs read   <nodeId>   [--shared]
 //   node sharpwave-client.mjs write  <content...> --label "Short name" [--type semantic] [--importance 0.6] [--shared]
 //   node sharpwave-client.mjs stats  [--scope all|private|shared]
+//   node sharpwave-client.mjs forget <nodeId>   [--shared] [--force]
 //   node sharpwave-client.mjs health
 //   node sharpwave-client.mjs seed   <dir> [--target shared|private|skip] [--map file=shared|private|skip ...]
 //                                    [--type file=nodeType ...] [--tag t ...] [--importance 0.6] [--max-chars 1800]
@@ -27,7 +28,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
 const VERSION = "0.1.0";
-const BOOL = new Set(["json", "shared", "help", "h", "version", "dry-run", "offline", "remove", "list", "prune"]);
+const BOOL = new Set(["json", "shared", "force", "help", "h", "version", "dry-run", "offline", "remove", "list", "prune"]);
 const MULTI = new Set(["map", "type", "tag"]);
 
 function parse(argv) {
@@ -54,6 +55,7 @@ Usage:
   sharpwave-client read <nodeId> [--shared] [--json]
   sharpwave-client write <content...> --label "name" [--type semantic] [--importance 0.5] [--shared] [--json]
   sharpwave-client stats [--scope all|private|shared] [--json]
+  sharpwave-client forget <nodeId> [--shared] [--force]   (delete one node; needs write / shared-write)
   sharpwave-client health [--json]
   sharpwave-client seed <dir> [--target shared|private|skip] [--map file=shared|private|skip ...]
                    [--type file=nodeType ...] [--tag t ...] [--importance 0.6] [--max-chars 1800]
@@ -331,6 +333,12 @@ async function main() {
       args = { type: typeof f.type === "string" ? f.type : "semantic", label: f.label, content };
       if (f.importance) args.importance = Number(f.importance);
       if (f.shared) args.visibility = "shared";
+      break;
+    }
+    case "forget": {
+      if (!rest[0]) usage("forget needs a node id");
+      name = "brain_forget";
+      args = { node_id: rest[0], ...(f.force ? { force: true } : {}), ...(f.shared ? { visibility: "shared" } : {}) };
       break;
     }
     case "stats": {

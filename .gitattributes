@@ -1,0 +1,6 @@
+# Windows service scripts are run by Windows PowerShell 5.1, wscript.exe and
+# schtasks; keep them CRLF in every checkout (Linux/macOS included), so a copy
+# made from a non-Windows clone still parses.
+packages/server/scripts/windows/*.ps1 text eol=crlf
+packages/server/scripts/windows/*.vbs text eol=crlf
+packages/server/scripts/windows/*.xml text eol=crlf

@@ -175,6 +175,20 @@ describe("seed", () => {
     expect(by).toEqual({ private: 0, shared: 1 }); // the hand-written node survives
   });
 
+  it("client forget deletes one node (private and --shared)", async () => {
+    const w = JSON.parse((await client(["write", "temporary", "smoke", "--label", "smoke", "--url", h.url, "--token", agent, "--json"])).stdout);
+    const f = await client(["forget", w.id, "--url", h.url, "--token", agent]);
+    expect(f.code, f.stderr).toBe(0);
+    expect(f.stdout).toContain(`Deleted node ${w.id}`);
+    const r = await client(["read", w.id, "--url", h.url, "--token", agent]);
+    expect(r.code).toBe(1);
+    const sw = JSON.parse((await client(["write", "shared", "smoke", "--label", "smoke", "--shared", "--url", h.url, "--token", admin, "--json"])).stdout);
+    const denied = await client(["forget", sw.id, "--shared", "--url", h.url, "--token", agent]);
+    expect(denied.code).toBe(1);
+    expect(denied.stderr).toContain("shared-write");
+    expect((await client(["forget", sw.id, "--shared", "--url", h.url, "--token", admin])).code).toBe(0);
+  });
+
   it("server validates inputs", async () => {
     const bad = await tool(h.url, admin, "brain_seed", { mode: "import", source: "../x.md", chunks: [] });
     expect(bad.isError).toBe(true);

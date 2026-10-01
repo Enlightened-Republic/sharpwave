@@ -43,6 +43,10 @@ if (-not $ServerCli) { $ServerCli = Join-Path $PSScriptRoot "..\..\dist\cli.js" 
 if (-not (Test-Path $ServerCli)) { throw "server CLI not found at $ServerCli - run 'npm run build' in packages/server first" }
 $ServerCli = (Resolve-Path $ServerCli).Path
 
+if (-not (Test-Path $ConfigPath)) {
+  Write-Warning "No config at $ConfigPath - the service will use built-in defaults, which ALSO try to bind the tailnet IP 100.121.136.3. For a 127.0.0.1-only install create the config first (docs/windows-install-runbook.md step 2)."
+}
+
 $Vbs = (Resolve-Path (Join-Path $PSScriptRoot "sharpwave-service.vbs")).Path
 $Wscript = Join-Path $env:SystemRoot "System32\wscript.exe"
 $UserId = "$env:USERDOMAIN\$env:USERNAME"
@@ -62,11 +66,11 @@ $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -
 Write-Host "Task      : $TaskName"
 Write-Host "Action    : $Wscript $argLine"
 Write-Host "Trigger   : at logon of $UserId"
-Write-Host "Restart   : every 1 min on failure (up to 999x), no time limit"
+Write-Host "Restart   : the .vbs wrapper restarts node 30 s after a non-zero exit (up to 1000x); no time limit"
 
 if ($PSCmdlet.ShouldProcess($TaskName, "Register-ScheduledTask")) {
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-    -Description "SharpWave brain service (MCP over HTTP on 127.0.0.1:18790 + tailnet). Hidden via sharpwave-service.vbs." -Force | Out-Null
+    -Description "SharpWave brain service (MCP over HTTP on 127.0.0.1:18790, plus the tailnet IP only if configured). Hidden via sharpwave-service.vbs." -Force | Out-Null
   Write-Host "Registered. Not started." -ForegroundColor Green
   if ($StartNow) {
     Start-ScheduledTask -TaskName $TaskName
