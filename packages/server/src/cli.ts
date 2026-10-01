@@ -8,13 +8,18 @@
 //   sharpwave-server backup keygen [--key-file f] [--force]
 //   sharpwave-server backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest]
 //   sharpwave-server brain adopt  --agent <id> --from <brain.db|dir> [--mode copy|move] [--dry-run] [--force] [--backfill-writer legacy|<id>] [--json]
+//   sharpwave-server noise scan     --agent <id> [--out base] [--include-retired] [--json]
+//   sharpwave-server noise check    --agent <id> --query <text> [--limit 10] [--json]
+//   sharpwave-server noise retire   --agent <id> --ids-file <reviewed.csv|json|txt> [--dry-run] [--json]
+//   sharpwave-server noise unretire --agent <id> (--batch <id> | --ids-file <f> | --all) [--dry-run] [--json]
+//   sharpwave-server noise status   --agent <id> [--json]
 //   sharpwave-server version
 //
 // Common: --config <file> (default <root>/config.json if present), --root <dir>
 // (default ~/.sharpwave/service), --tokens-file <file>.
 
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { brainsDir, backupsDir, defaultConfigPath, defaultRoot, expandHome, loadConfigFile, resolveConfig, type ServiceConfig } from "./config.js";
 import { mintToken, parseScopes, readTokenFile, revokeToken } from "./tokens.js";
 import { runBackupJob } from "./backup-job.js";
@@ -25,15 +30,17 @@ import { servicePortInUse, restoreBackup } from "./restore.js";
 import { defaultKeyFile } from "./config.js";
 import { offsiteOk } from "./offsite.js";
 import { adoptBrain, formatAdoptResult, type AdoptMode } from "./adopt.js";
+import { defaultReportBase, ftsProbe, parseSelection, registryStatus, retireItems, scanBrainFile, unretireItems, writeReport } from "./noise.js";
 import { BrainService } from "./service.js";
 import { VERSION } from "./version.js";
+import { validateAgentId } from "./tokens.js";
 
 interface Parsed {
   _: string[];
   flags: Map<string, string[]>;
 }
 
-const BOOL_FLAGS = new Set(["json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run"]);
+const BOOL_FLAGS = new Set(["json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
 
 function parse(argv: string[]): Parsed {
   const out: Parsed = { _: [], flags: new Map() };
@@ -103,6 +110,19 @@ Usage:
       Make an existing brain.db the agent's private brain (<root>/brains/<id>/brain.db). The service must be stopped.
       Pre-adopt backup (VACUUM INTO, WAL included) + sha256, migrate via sharpwave-core, verify integrity/counts/schema.
       copy (default) never touches the source; --force moves an existing non-empty target aside (never deletes).
+  sharpwave-server noise scan --agent <id> [--out <report base path>] [--include-retired] [--json]
+      Read-only (safe while the service runs). Lists system-noise candidates (NO_REPLY / HEARTBEAT_OK triage,
+      heartbeat/exec/cron wake markers, nodes minted from such episodes, triage phrasing) and writes
+      <root>/noise-reports/<id>-<UTC>.csv + .json. High-confidence rows say action=retire, others action=review.
+  sharpwave-server noise check --agent <id> --query <text> [--limit 10] [--json]
+      Read-only FTS probe: top hits for the query among current (non-retired) nodes, flagged if candidates.
+  sharpwave-server noise retire --agent <id> --ids-file <reviewed.csv|.json|.txt> [--dry-run] [--json]
+      Service must be stopped. Backup first (VACUUM INTO -> <backups>/<id>/noise-retire/), then soft-retire ONLY
+      rows left at action=retire: nodes get valid_until=now (hidden from recall), episodes importance=0. Prior
+      values are kept in meta_kv (retired:node:/retired:episode:) for unretire. Nothing is deleted. Audit-logged.
+  sharpwave-server noise unretire --agent <id> (--batch <noise-...> | --ids-file <f> | --all) [--dry-run] [--json]
+      Service must be stopped. Backup first, then restore the recorded prior values exactly.
+  sharpwave-server noise status --agent <id> [--json]
   sharpwave-server version
 
 Binds 127.0.0.1 always, plus the tailnet IP (default 100.121.136.3). Never 0.0.0.0/::.
@@ -257,6 +277,79 @@ async function main(argv: string[]): Promise<number> {
     });
     process.stdout.write((bool(p, "json") ? JSON.stringify(r, null, 2) : formatAdoptResult(r)) + "\n");
     return 0;
+  }
+
+  if (cmd === "noise") {
+    const agent = one(p, "agent");
+    if (!agent) throw new Error("noise needs --agent <id>");
+    const bad = agent === "shared" ? null : validateAgentId(agent);
+    if (bad) throw new Error(bad);
+    const dbPath = join(brainsDir(cfg), agent, "brain.db");
+    if (!existsSync(dbPath)) throw new Error(`no brain for "${agent}" at ${dbPath}`);
+    const json = bool(p, "json");
+    const out = (o: unknown, text: string) => process.stdout.write((json ? JSON.stringify(o, null, 2) : text) + "\n");
+    const mustBeStopped = async () => {
+      if (await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first (noise ${sub} writes the brain file directly)`);
+    };
+    if (sub === "scan") {
+      const scan = scanBrainFile(dbPath, agent, { includeRetired: bool(p, "include-retired") });
+      const files = writeReport(scan, one(p, "out") ? expandHome(one(p, "out")!) : defaultReportBase(cfg.root, agent));
+      const c = scan.counts;
+      out({ ...scan.counts, byCategory: scan.byCategory, report: files }, [
+        `scanned ${agent}: ${c.nodes} nodes, ${c.episodes} episodes`,
+        `candidates: ${c.candidates} (nodes ${c.nodeCandidates}, episodes ${c.episodeCandidates}; high ${c.high}, review ${c.medium}; already retired ${c.alreadyRetired})`,
+        ...Object.entries(scan.byCategory).map(([k, v]) => `  ${k.padEnd(28)} ${v}`),
+        `report: ${files.csv}`,
+        `        ${files.json}`,
+        `Review the CSV: keep action=retire only on rows to retire (change others to keep), then run noise retire --ids-file <csv>.`,
+      ].join("\n"));
+      return 0;
+    }
+    if (sub === "check") {
+      const q = one(p, "query");
+      if (!q) throw new Error("noise check needs --query <text>");
+      const scan = scanBrainFile(dbPath, agent);
+      const cand = new Map(scan.candidates.map((c) => [c.id, c]));
+      const hits = ftsProbe(dbPath, q, Number(one(p, "limit") ?? 10)).map((h) => ({ ...h, candidate: cand.get(h.id)?.category ?? null }));
+      out({ query: q, hits, candidatesInTop: hits.filter((h) => h.candidate).length },
+        [`FTS top ${hits.length} for "${q}" (current nodes only):`, ...hits.map((h, i) => `${String(i + 1).padStart(2)}. ${h.candidate ? `[NOISE:${h.candidate}] ` : ""}${h.type} ${h.id}  ${h.preview.slice(0, 80)}`),
+          `${hits.filter((h) => h.candidate).length} candidate(s) in the top ${hits.length}.`].join("\n"));
+      return 0;
+    }
+    if (sub === "status") {
+      const rows = registryStatus(dbPath);
+      out(rows, rows.length ? rows.map((r) => `${r.batch}  nodes=${r.nodes} episodes=${r.episodes}  at ${r.retiredAt} by ${r.by}`).join("\n") : "nothing retired");
+      return 0;
+    }
+    if (sub === "retire" || sub === "unretire") {
+      const dryRun = bool(p, "dry-run");
+      if (!dryRun) await mustBeStopped();
+      const audit = new AuditLog(cfg.auditFile);
+      const common = { dbPath, brain: agent, backupsDir: backupsDir(cfg), audit, dryRun, by: "admin:cli" };
+      if (sub === "retire") {
+        const f = one(p, "ids-file");
+        if (!f) throw new Error("noise retire needs --ids-file <reviewed file>");
+        const sel = parseSelection(expandHome(f));
+        const r = retireItems(sel, common);
+        out({ ...r, ignoredRows: sel.ignored }, [
+          `${dryRun ? "DRY RUN — would retire" : "retired"} nodes=${r.retired.nodes.length} episodes=${r.retired.episodes.length}  batch=${r.batch}`,
+          ...(r.backup ? [`backup   ${r.backup}`, `manifest ${r.manifest}`] : []),
+          ...(sel.ignored ? [`rows not marked action=retire (left alone): ${sel.ignored}`] : []),
+          ...r.skipped.map((s) => `skipped ${s.id}: ${s.reason}`),
+          ...(dryRun ? [] : [`undo: sharpwave-server noise unretire --agent ${agent} --batch ${r.batch}`]),
+        ].join("\n"));
+        return 0;
+      }
+      const f = one(p, "ids-file");
+      const r = unretireItems({ ...common, batch: one(p, "batch"), ids: f ? parseSelection(expandHome(f)) : undefined, all: bool(p, "all") });
+      out(r, [
+        `${dryRun ? "DRY RUN — would restore" : "restored"} nodes=${r.restored.nodes.length} episodes=${r.restored.episodes.length}`,
+        ...(r.backup ? [`backup ${r.backup}`] : []),
+        ...r.skipped.map((s) => `skipped ${s.id}: ${s.reason}`),
+      ].join("\n"));
+      return 0;
+    }
+    throw new Error(`unknown noise subcommand "${sub ?? ""}" (scan | check | retire | unretire | status)`);
   }
 
   throw new Error(`unknown command "${cmd}" — run sharpwave-server help`);

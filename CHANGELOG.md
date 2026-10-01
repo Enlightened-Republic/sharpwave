@@ -4,6 +4,21 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## [Unreleased]
 
+### Added — system-noise guard + reversible noise review (`engram/skip-heartbeat-noise`)
+
+- **core** `system-noise.ts`: `isSystemNoiseTurn` / `classifySystemTurn` /
+  `isSystemNoiseEpisode` (OpenClaw 2026.9.7 markers; mirror of openwave 0.1.4).
+  `runSwsPhase` consumes noise episodes without extracting nodes;
+  `drainExtractionQueue` drops them. Retire registry keys
+  (`retired:node:<id>` / `retired:episode:<id>` in `meta_kv`): SWS synaptic
+  downscaling and Deep pruning skip registered nodes.
+- **core fix**: spreading activation (`getNeighbors`) and the bootstrap
+  top-salience fill no longer surface nodes whose `valid_until` has passed
+  (retired / superseded nodes leaked back into recall through live edges).
+- **server**: `brain_episode_append` skips system-noise turns
+  (`skipSystemNoiseEpisodes`, default true); `noise scan|check|retire|unretire|status`
+  admin commands (`docs/noise-review-runbook.md`).
+
 ### Added — `sharpwave-server` 0.1.0 (new private package, not published)
 
 - **Brain service** (`packages/server`): one process owns a `shared` brain

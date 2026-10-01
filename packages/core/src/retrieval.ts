@@ -93,8 +93,8 @@ export async function bootstrapRetrieve(
 
   // Fill remaining budget with top-salience nodes
   const topSalience = db.prepare(
-    "SELECT * FROM nodes WHERE salience > 0 ORDER BY salience DESC LIMIT ?"
-  ).all(config.bootstrapTopK) as BrainNode[];
+    "SELECT * FROM nodes WHERE salience > 0 AND (valid_until IS NULL OR valid_until > ?) ORDER BY salience DESC LIMIT ?"
+  ).all(Date.now(), config.bootstrapTopK) as BrainNode[];
 
   const seen = new Set(activated.map((n) => n.id));
   const combined: ActivatedNode[] = [...activated];

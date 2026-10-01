@@ -566,18 +566,23 @@ export function getNeighbors(
   nodeId: string,
 ): Array<{ node: BrainNode; edgeType: string; weight: number }> {
   const db = getDb(agentId);
+  // Retired / superseded nodes (valid_until in the past) must not re-enter recall
+  // through spreading activation from a live neighbour.
+  const now = Date.now();
   const rows = db.prepare(`
     SELECT e.type as edge_type, e.weight, n.*
     FROM edges e
     JOIN nodes n ON n.id = e.to_id
     WHERE e.from_id = ? AND e.valid_until IS NULL
+      AND (n.valid_until IS NULL OR n.valid_until > ?)
     UNION
     SELECT e.type as edge_type, e.weight, n.*
     FROM edges e
     JOIN nodes n ON n.id = e.from_id
     WHERE e.to_id = ? AND e.valid_until IS NULL
       AND e.type NOT IN ('inhibits', 'contradicts', 'supersedes', 'coreference_of')
-  `).all(nodeId, nodeId) as Array<{ edge_type: string; weight: number } & BrainNode>;
+      AND (n.valid_until IS NULL OR n.valid_until > ?)
+  `).all(nodeId, now, nodeId, now) as Array<{ edge_type: string; weight: number } & BrainNode>;
 
   return rows.map((r) => ({
     edgeType: r.edge_type,

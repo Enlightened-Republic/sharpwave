@@ -16,7 +16,7 @@
 // Kept in its own file (plus two lines of registration in tools.ts) to stay
 // clear of other in-flight packages/server branches.
 
-import { appendEpisode, scoreImportance } from "sharpwave-core";
+import { appendEpisode, classifySystemTurn, scoreImportance } from "sharpwave-core";
 
 import { SHARED_BRAIN } from "./brains.js";
 import type { Scope } from "./tokens.js";
@@ -92,6 +92,16 @@ export async function callEpisodeAppend(ctx: ToolContext, args: Record<string, u
   }
   if (problems.length) return err(`Invalid arguments:\n- ${problems.join("\n- ")}`);
 
+  // System-noise guard (heartbeat polls, exec/cron wakes, NO_REPLY / HEARTBEAT_OK
+  // replies): not stored, so sleep can never consolidate them. Not an error —
+  // older clients (openwave <= 0.1.3) send these and must not warn.
+  if (ctx.skipSystemNoiseEpisodes !== false) {
+    const v = classifySystemTurn({ role: role as Role, content: content as string, sessionKey: sessionId as string });
+    if (v.skip) {
+      ctx.audit.append({ agentId: p.agentId, tool: EPISODE_TOOL_NAME, brain, nodeId: null, outcome: "ok", detail: `skipped system-noise (${v.reason})` });
+      return { text: `Skipped: system-noise turn not stored (${v.reason}). brain=${brain === SHARED_BRAIN ? "shared" : "private"} writer=${p.agentId}` };
+    }
+  }
   const imp = typeof importance === "number" ? importance : scoreImportance(role as Role, content as string);
   const id = await ctx.brains.write(brain, () =>
     appendEpisode(brain, sessionId as string, role as Role, content as string, imp, (meta as Record<string, unknown> | undefined) ?? undefined, {

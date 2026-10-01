@@ -1,6 +1,7 @@
 import { classifySentence, importanceForType, extractBalancedJson } from "./utils.js";
 import { callOpenRouter } from "./llm.js";
 import type { Episode, BrainConfig, NodeType } from "./types.js";
+import { isSystemNoiseEpisode } from "./system-noise.js";
 
 export interface ExtractedFact {
   type: NodeType;
@@ -96,7 +97,9 @@ export async function drainExtractionQueue(
   }
 
   const q = pendingEpisodes.get(agentId) ?? [];
-  const eligible = q.filter((e) => e.importance >= config.llmExtractionMinImportance);
+  // System-noise guard (heartbeat/exec/cron wakes, NO_REPLY/HEARTBEAT_OK replies):
+  // never handed to the extractor, whatever the caller queued.
+  const eligible = q.filter((e) => e.importance >= config.llmExtractionMinImportance && !isSystemNoiseEpisode(e));
   pendingEpisodes.delete(agentId);
 
   if (eligible.length === 0) return makeDrainResult([], [], []);

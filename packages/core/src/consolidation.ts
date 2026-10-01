@@ -9,6 +9,7 @@ import { classifySentence, importanceForType, jaccardSim } from "./utils.js";
 import { callOpenRouter } from "./llm.js";
 import { executeWithWalRetrySync } from "./wal-retry.js";
 import { bumpCounter, logObservabilityEvent, setLastConsolidationAt } from "./observability.js";
+import { isSystemNoiseEpisode, RETIRED_NODE_META_PREFIX } from "./system-noise.js";
 import type { BrainConfig, Episode, BrainNode, NeuromodState } from "./types.js";
 import { SYSTEM_SLEEP_WRITER } from "./types.js";
 
@@ -387,6 +388,7 @@ async function runSwsPhase(agentId: string, episodes: Episode[], log: Logger): P
     WHERE type NOT IN ('identity', 'goal')
       AND created_at < ?
       AND (stability > 0.01 OR retrievability > 0.01)
+      AND NOT EXISTS (SELECT 1 FROM meta_kv m WHERE m.key = '${RETIRED_NODE_META_PREFIX}' || nodes.id)
   `).run(now, now - 86_400_000);
   if (downscaled.changes > 0) {
     log.info(`[sharpwave] SWS downscale: -5% stability/retrievability on ${downscaled.changes} non-protected node(s)`);
@@ -404,9 +406,19 @@ async function runSwsPhase(agentId: string, episodes: Episode[], log: Logger): P
   // Captured once per phase so the values are consistent across writes.
   const neuro = getNeuromodulatorState(agentId);
 
+  let noiseSkipped = 0;
   for (let i = 0; i < episodes.length; i++) {
     const ep = episodes[i];
     if (ep.content.length < 20) continue;
+    // System-noise guard: OpenClaw heartbeat/exec/cron wakes and NO_REPLY /
+    // HEARTBEAT_OK triage replies are machinery, not memories. Consume the
+    // episode (llm_extracted = 1 below) so it never occupies an SWS slot again,
+    // but extract nothing from it.
+    if (isSystemNoiseEpisode(ep)) {
+      consumedEpisodeIds.push(ep.id);
+      noiseSkipped++;
+      continue;
+    }
 
     const nodes = await extractNodesFromEpisode(agentId, ep, neuro);
     bumpRipple.run(ep.id);
@@ -436,6 +448,8 @@ async function runSwsPhase(agentId: string, episodes: Episode[], log: Logger): P
     // Yield after every episode — FTS search per sentence blocks event loop
     await new Promise<void>((r) => setImmediate(r));
   }
+
+  if (noiseSkipped > 0) log.info(`[sharpwave] SWS: skipped ${noiseSkipped} system-noise episode(s) (heartbeat/exec/cron wakes, NO_REPLY/HEARTBEAT_OK)`);
 
   // T1.3 — flip llm_extracted = 1 on every episode this pass consumed so
   // subsequent SWS passes (and any future drain) skip them.
@@ -1183,7 +1197,9 @@ async function runRemKeywordBuckets(agentId: string, log: Logger): Promise<void>
  *
  * Identity and goal nodes are protected — same exclusion as v3. Nodes
  * referenced by any active edge (valid_until IS NULL) are also skipped so
- * we never orphan a live graph.
+ * we never orphan a live graph. Nodes held by the reversible retire registry
+ * (meta_kv `retired:node:<id>`, sharpwave-server `noise retire`) are never
+ * pruned, so `noise unretire` can always restore them.
  *
  * Periodic PRAGMA wal_checkpoint(TRUNCATE) after a batch prune is what
  * actually shrinks the on-disk file.
@@ -1204,6 +1220,7 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): void {
         SELECT 1 FROM edges e
         WHERE (e.from_id = n.id OR e.to_id = n.id) AND e.valid_until IS NULL
       )
+      AND NOT EXISTS (SELECT 1 FROM meta_kv m WHERE m.key = '${RETIRED_NODE_META_PREFIX}' || n.id)
     UNION
     SELECT n.id, n.rowid FROM nodes n
     WHERE n.type = 'episodic'
@@ -1214,6 +1231,7 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): void {
         SELECT 1 FROM edges e
         WHERE (e.from_id = n.id OR e.to_id = n.id) AND e.valid_until IS NULL
       )
+      AND NOT EXISTS (SELECT 1 FROM meta_kv m WHERE m.key = '${RETIRED_NODE_META_PREFIX}' || n.id)
   `).all(cutoff) as { id: string; rowid: number }[];
 
   if (candidates.length === 0) return;
