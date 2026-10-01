@@ -7,6 +7,7 @@
 //   sharpwave-server backup now   [--keep n] [--brain name]... [--no-offsite]
 //   sharpwave-server backup keygen [--key-file f] [--force]
 //   sharpwave-server backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest]
+//   sharpwave-server brain adopt  --agent <id> --from <brain.db|dir> [--mode copy|move] [--dry-run] [--force] [--backfill-writer legacy|<id>] [--json]
 //   sharpwave-server version
 //
 // Common: --config <file> (default <root>/config.json if present), --root <dir>
@@ -23,6 +24,7 @@ import { generateKeyFile, loadKey } from "./crypt.js";
 import { servicePortInUse, restoreBackup } from "./restore.js";
 import { defaultKeyFile } from "./config.js";
 import { offsiteOk } from "./offsite.js";
+import { adoptBrain, formatAdoptResult, type AdoptMode } from "./adopt.js";
 import { BrainService } from "./service.js";
 import { VERSION } from "./version.js";
 
@@ -31,7 +33,7 @@ interface Parsed {
   flags: Map<string, string[]>;
 }
 
-const BOOL_FLAGS = new Set(["json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest"]);
+const BOOL_FLAGS = new Set(["json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run"]);
 
 function parse(argv: string[]): Parsed {
   const out: Parsed = { _: [], flags: new Map() };
@@ -96,6 +98,11 @@ Usage:
   sharpwave-server backup now [--keep N] [--brain name ...] [--no-offsite]
   sharpwave-server backup keygen [--key-file f] [--force]
   sharpwave-server backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest]
+  sharpwave-server brain adopt --agent <id> --from <brain.db or its folder> [--mode copy|move] [--dry-run] [--force]
+                               [--backfill-writer legacy|<writer-id>] [--json]
+      Make an existing brain.db the agent's private brain (<root>/brains/<id>/brain.db). The service must be stopped.
+      Pre-adopt backup (VACUUM INTO, WAL included) + sha256, migrate via sharpwave-core, verify integrity/counts/schema.
+      copy (default) never touches the source; --force moves an existing non-empty target aside (never deletes).
   sharpwave-server version
 
 Binds 127.0.0.1 always, plus the tailnet IP (default 100.121.136.3). Never 0.0.0.0/::.
@@ -229,6 +236,27 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     throw new Error(`unknown backup subcommand "${sub ?? ""}" (now | keygen | restore)`);
+  }
+
+  if (cmd === "brain") {
+    if (sub !== "adopt") throw new Error(`unknown brain subcommand "${sub ?? ""}" (adopt)`);
+    const agent = one(p, "agent");
+    const from = one(p, "from");
+    if (!agent || !from) throw new Error("brain adopt needs --agent <id> and --from <path to brain.db or its folder>");
+    const r = await adoptBrain({
+      agentId: agent,
+      from: expandHome(from),
+      brainsDir: brainsDir(cfg),
+      backupsDir: backupsDir(cfg),
+      auditFile: cfg.auditFile,
+      mode: (one(p, "mode") ?? "copy") as AdoptMode,
+      dryRun: bool(p, "dry-run"),
+      force: bool(p, "force"),
+      backfillWriter: one(p, "backfill-writer") ?? null,
+      serviceRunning: () => servicePortInUse(cfg.port),
+    });
+    process.stdout.write((bool(p, "json") ? JSON.stringify(r, null, 2) : formatAdoptResult(r)) + "\n");
+    return 0;
   }
 
   throw new Error(`unknown command "${cmd}" — run sharpwave-server help`);
