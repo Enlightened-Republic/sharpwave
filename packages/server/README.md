@@ -104,6 +104,7 @@ which keeps them distinguishable from rows written through the service
   - `brain_expand` / `brain_edges` look in private then shared; another agent's
     private brain is unreachable by any argument.
   - `brain_reset` is disabled unless `allowReset: true` **and** the token has `admin`.
+  - `brain_episode_append` (service-only, needs `write`) appends an episode to the caller's private brain (`visibility: "shared"` needs `shared-write`); the writer is stamped from the token and the service's sleep consolidates it like a local episode.
 - **Sleep.** Daily at `sleep.at` (default 03:30), one cycle walks all brains
   round-robin through their write queues with a single wall-clock budget
   (`sleep.budgetMs`, default 15 min). Brains not reached are deferred to the next

@@ -696,7 +696,7 @@ of PR #12 (or the SHA Engram gives):
 ```powershell
 Set-Location $Repo
 git fetch origin
-git checkout --detach PASTE-THE-PR-12-MERGE-SHA
+git checkout --detach 1fe8e6e17e78569e753037decdaeffcf3671955c
 npm.cmd ci
 npm.cmd run build
 node $Cli help | Select-String "brain adopt"
