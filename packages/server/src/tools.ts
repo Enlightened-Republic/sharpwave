@@ -32,6 +32,7 @@ import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "
 import { SHARED_BRAIN, type BrainManager } from "./brains.js";
 import type { AuditLog } from "./audit.js";
 import type { Principal, Scope } from "./tokens.js";
+import { EPISODE_TOOL_DEF, EPISODE_TOOL_NAME, callEpisodeAppend } from "./episode-tool.js";
 
 export const WRITE_SOURCE = "sharpwave-server";
 
@@ -133,6 +134,7 @@ export const SERVICE_TOOLS = [
       required: ["mode", "source"],
     },
   },
+  EPISODE_TOOL_DEF,
 ];
 
 const TOOL_NAMES = new Set(SERVICE_TOOLS.map((t) => t.name));
@@ -423,6 +425,9 @@ function statsFor(db: Database.Database, which: "private" | "shared"): BrainStat
 // ─── dispatcher ─────────────────────────────────────────────────────────────
 
 export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<string, unknown>): Promise<ToolOutput> {
+  if (name === EPISODE_TOOL_NAME) {
+    try { return await callEpisodeAppend(ctx, rawArgs ?? {}); } catch (e) { return err(String(e instanceof Error ? e.message : e)); }
+  }
   if (!TOOL_NAMES.has(name)) return err(`unknown tool: ${name}`);
   const args = rawArgs ?? {};
   const p = ctx.principal;
