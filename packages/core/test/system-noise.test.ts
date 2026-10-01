@@ -8,6 +8,8 @@ import { getDb, setMeta, closeDb } from "../src/db.js";
 import { runConsolidation } from "../src/consolidation.js";
 import { queueEpisodeForExtraction, drainExtractionQueue } from "../src/extraction.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
+import { writeEdge } from "../src/edges.js";
+import { hybridRetrieve, bootstrapRetrieve } from "../src/retrieval.js";
 import * as core from "../src/index.js";
 import { KEEP, NOISE } from "./fixtures/system-noise-fixtures.js";
 
@@ -90,6 +92,24 @@ describe("retire registry: sleep never prunes or downscales a retired node", () 
     const ids = (db.prepare("SELECT id, stability FROM nodes").all() as Array<{ id: string; stability: number }>);
     expect(ids.find((r) => r.id === keep)?.stability).toBe(0.5); // not downscaled either
     expect(ids.some((r) => r.id === gone)).toBe(false);
+    closeDb(id);
+  });
+});
+
+describe("retired nodes stay out of recall", () => {
+  it("spreading activation and bootstrap skip a node whose valid_until has passed", async () => {
+    const id = fresh();
+    const seed = writeNode(id, "semantic", "pelican seed", "The pelican migration passes the lake in March.", { importance: 0.9 });
+    const retired = writeNode(id, "semantic", "retired neighbour", "NO_REPLY — nothing urgent in scope, next tick soon.", { importance: 0.95 });
+    writeEdge(id, seed, retired, "relates_to", 0.9);
+    const before = await hybridRetrieve(id, "pelican", "s1", { ...DEFAULT_CONFIG, openrouterApiKey: "" } as never);
+    expect(before.some((n) => n.id === retired)).toBe(true); // reached via the edge
+    getDb(id).prepare("UPDATE nodes SET valid_until = ? WHERE id = ?").run(Date.now() - 1, retired);
+    const after = await hybridRetrieve(id, "pelican", "s2", { ...DEFAULT_CONFIG, openrouterApiKey: "" } as never);
+    expect(after.some((n) => n.id === seed)).toBe(true);
+    expect(after.some((n) => n.id === retired)).toBe(false);
+    const boot = await bootstrapRetrieve(id, "s3", DEFAULT_CONFIG);
+    expect(boot.some((n) => n.id === retired)).toBe(false);
     closeDb(id);
   });
 });

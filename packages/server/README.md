@@ -42,6 +42,11 @@ CLI (`sharpwave-server`):
 | `backup keygen [--key-file f] [--force]` | write a new 256-bit backup key (default `~/.sharpwave/backup.key`); refuses to overwrite without `--force` (which renames the old key to `backup.key.old-<UTC>`) |
 | `backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest] [--json]` | verify + decrypt + `PRAGMA integrity_check`; prints node/edge/episode counts |
 | `brain adopt --agent <id> --from <brain.db\|dir> [--mode copy\|move] [--dry-run] [--force] [--backfill-writer legacy\|<id>] [--json]` | adopt an EXISTING brain.db (e.g. a legacy `~/.sharpwave/<agent>/brain.db`) as that agent's private brain. See below |
+| `noise scan --agent <id> [--out base] [--include-retired] [--json]` | read-only (safe while serving): list system-noise candidates (NO_REPLY / HEARTBEAT_OK triage, OpenClaw wake markers, nodes minted from such episodes, triage phrasing) to `<root>/noise-reports/<id>-<UTC>.csv` + `.json`. See [noise review](../../docs/noise-review-runbook.md) |
+| `noise check --agent <id> --query <text> [--limit 10] [--json]` | read-only FTS probe: top current nodes for a query, flagging candidates |
+| `noise retire --agent <id> --ids-file <reviewed.csv\|json\|txt> [--dry-run] [--json]` | service stopped: backup, then soft-retire ONLY rows left at `action=retire` (nodes `valid_until=now`, episodes `importance=0`); prior values kept in `meta_kv` for undo; audited; nothing deleted |
+| `noise unretire --agent <id> (--batch <id> \| --ids-file <f> \| --all) [--dry-run] [--json]` | service stopped: backup, then restore the recorded prior values exactly |
+| `noise status --agent <id> [--json]` | retired items by batch |
 
 ### Adopting an existing brain (`brain adopt`)
 
@@ -104,11 +109,16 @@ which keeps them distinguishable from rows written through the service
   - `brain_expand` / `brain_edges` look in private then shared; another agent's
     private brain is unreachable by any argument.
   - `brain_reset` is disabled unless `allowReset: true` **and** the token has `admin`.
-  - `brain_episode_append` (service-only, needs `write`) appends an episode to the caller's private brain (`visibility: "shared"` needs `shared-write`); the writer is stamped from the token and the service's sleep consolidates it like a local episode.
+  - `brain_episode_append` (service-only, needs `write`) appends an episode to the caller's private brain (`visibility: "shared"` needs `shared-write`); the writer is stamped from the token and the service's sleep consolidates it like a local episode. OpenClaw system-noise turns (heartbeat polls, exec/cron wakes, `NO_REPLY` / `HEARTBEAT_OK` replies; core `isSystemNoiseEpisode`) are answered `Skipped: system-noise turn not stored (...)` (not an error, audited) unless `skipSystemNoiseEpisodes: false`.
 - **Sleep.** Daily at `sleep.at` (default 03:30), one cycle walks all brains
   round-robin through their write queues with a single wall-clock budget
   (`sleep.budgetMs`, default 15 min). Brains not reached are deferred to the next
-  cycle. Off in tests.
+  cycle. Off in tests. `sleep.at` is local wall-clock time of the service
+  process (`Date#setHours`), re-armed after every run. Every directory under
+  `brains/` holding a `brain.db` (plus `shared`) is visited; core's gate
+  (`respectGate`, default true) skips a brain consolidated < 4 h ago or with
+  < 10 new episodes since its last run. Core sleep never extracts from
+  system-noise episodes and never prunes/downscales a retired node.
 - **Audit.** `audit/audit.jsonl`: `{time, agentId, tool, brain, nodeId, edgeId?, outcome, detail?}`
   for every write, every refused shared write, and every consolidation run.
 - **Backups.** Daily at `backup.at` (default 02:30): per brain, `VACUUM INTO` a
