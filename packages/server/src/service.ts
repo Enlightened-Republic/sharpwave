@@ -26,6 +26,7 @@ import { LOOPBACK, brainsDir, backupsDir, type ServiceConfig } from "./config.js
 import { createLogger, type Logger } from "./log.js";
 import { SleepRunner, type SleepReport } from "./sleep.js";
 import { snapshotAll } from "./backup.js";
+import { OffsiteBackup, type OffsiteResult } from "./offsite.js";
 import { scheduleDaily, type DailyJob } from "./schedule.js";
 import type { ToolContext } from "./tools.js";
 
@@ -41,6 +42,7 @@ export class BrainService {
   readonly tokens: TokenStore;
   readonly brainConfig: BrainConfig;
   readonly sleep: SleepRunner;
+  readonly offsite: OffsiteBackup;
   private readonly servers = new Map<string, Server>();
   private readonly bootId = randomUUID().slice(0, 8);
   private readonly abort = new AbortController();
@@ -61,6 +63,12 @@ export class BrainService {
     this.audit = new AuditLog(cfg.auditFile);
     this.tokens = new TokenStore(cfg.tokensFile);
     this.sleep = new SleepRunner(this.brains, this.brainConfig, cfg.sleep.budgetMs, cfg.sleep.respectGate, this.log, this.audit);
+    this.offsite = new OffsiteBackup(cfg.offsiteBackup, {
+      log: this.log,
+      audit: this.audit,
+      outboxDir: cfg.offsiteBackup.outboxDir!,
+      plaintextDirs: [brainsDir(cfg), backupsDir(cfg)],
+    });
   }
 
   get port(): number {
@@ -129,8 +137,13 @@ export class BrainService {
       this.log.info(`sleep/consolidation scheduled daily at ${this.cfg.sleep.at} (budget ${Math.round(this.cfg.sleep.budgetMs / 1000)}s)`);
     }
     if (this.cfg.backup.enabled) {
-      this.jobs.push(scheduleDaily(this.cfg.backup.at, () => this.backupNow(), onJobError("backup")));
+      this.jobs.push(scheduleDaily(this.cfg.backup.at, () => this.runBackup(), onJobError("backup")));
       this.log.info(`backups scheduled daily at ${this.cfg.backup.at} (keep ${this.cfg.backup.keep}) -> ${backupsDir(this.cfg)}`);
+      if (this.cfg.offsiteBackup.enabled) {
+        const o = this.cfg.offsiteBackup;
+        this.log.info(`offsite backup enabled: outbox ${o.outboxDir}` + (o.folder ? `, folder ${o.folder}` : "") +
+          (o.command?.length ? `, command ${o.command[0]}` : "") + ` (keep ${o.keepDaily} daily + ${o.keepWeekly} weekly)`);
+      }
     }
   }
 
@@ -169,11 +182,23 @@ export class BrainService {
     }
   }
 
+  /** Local snapshots only (synchronous). */
   backupNow(only?: string[]) {
     const r = snapshotAll(this.brains.brainsDir, backupsDir(this.cfg), this.cfg.backup.keep, only);
-    for (const f of r.failed) this.log.warn(`backup failed for brain ${f.brain}: ${f.error}`);
+    for (const s of r.ok) this.audit.append({ agentId: "system", tool: "backup.snapshot", brain: s.brain, nodeId: null, outcome: "ok", detail: `${s.path.split(/[\\/]/).pop()} bytes=${s.bytes}` });
+    for (const f of r.failed) {
+      this.log.warn(`backup failed for brain ${f.brain}: ${f.error}`);
+      this.audit.append({ agentId: "system", tool: "backup.snapshot", brain: f.brain, nodeId: null, outcome: "error", detail: f.error });
+    }
     this.log.info(`backup: ${r.ok.length} snapshot(s), ${r.failed.length} failure(s)`);
     return r;
+  }
+
+  /** Local snapshots, then (if enabled) encrypted off-PC copies. Off-PC failures never fail the local backup. */
+  async runBackup(only?: string[]): Promise<ReturnType<BrainService["backupNow"]> & { offsite: OffsiteResult[] }> {
+    const r = this.backupNow(only);
+    const offsite = await this.offsite.processAll(r.ok);
+    return { ...r, offsite };
   }
 
   runSleepNow(force = false): Promise<SleepReport> {
