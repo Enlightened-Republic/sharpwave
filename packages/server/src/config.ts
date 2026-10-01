@@ -7,6 +7,9 @@
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { defaultOffsiteConfig, type OffsiteConfig } from "./offsite.js";
+
+export type { OffsiteConfig } from "./offsite.js";
 
 export const DEFAULT_PORT = 18790;
 export const DEFAULT_TAILNET_IP = "100.121.136.3";
@@ -66,6 +69,8 @@ export interface ServiceConfig {
   allowedOrigins: string[];
   sleep: SleepConfig;
   backup: BackupConfig;
+  /** Encrypted off-PC copies of each snapshot (off by default). */
+  offsiteBackup: OffsiteConfig;
   /** Optional log file (append). When unset logs go to stderr. */
   logFile?: string;
 }
@@ -92,18 +97,30 @@ export function defaultConfig(root = defaultRoot()): ServiceConfig {
     allowedOrigins: [],
     sleep: { enabled: true, at: "03:30", budgetMs: 15 * 60_000, respectGate: true },
     backup: { enabled: true, at: "02:30", keep: 7 },
+    offsiteBackup: defaultOffsiteConfig(),
   };
 }
 
 export function expandHome(p: string): string {
+  // %USERPROFILE% / %APPDATA% style (Windows config files) — expanded on every OS.
+  p = p.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (m, k: string) => {
+    if (k.toUpperCase() === "USERPROFILE" || k.toUpperCase() === "HOME") return process.env[k] ?? homedir();
+    return process.env[k] ?? m;
+  });
   if (p === "~") return homedir();
   if (p.startsWith("~/") || p.startsWith("~\\")) return join(homedir(), p.slice(2));
   return p;
 }
 
-type Partialish = Partial<Omit<ServiceConfig, "sleep" | "backup">> & {
+/** Default key file: ~/.sharpwave/backup.key (i.e. %USERPROFILE%\\.sharpwave\\backup.key). */
+export function defaultKeyFile(): string {
+  return join(homedir(), ".sharpwave", "backup.key");
+}
+
+export type Partialish = Partial<Omit<ServiceConfig, "sleep" | "backup" | "offsiteBackup">> & {
   sleep?: Partial<SleepConfig>;
   backup?: Partial<BackupConfig>;
+  offsiteBackup?: Partial<OffsiteConfig>;
 };
 
 /**
@@ -119,10 +136,18 @@ export function resolveConfig(overrides: Partialish = {}): ServiceConfig {
     root,
     sleep: { ...base.sleep, ...stripUndefined(overrides.sleep ?? {}) },
     backup: { ...base.backup, ...stripUndefined(overrides.backup ?? {}) },
+    offsiteBackup: { ...base.offsiteBackup, ...stripUndefined(overrides.offsiteBackup ?? {}) },
   };
   cfg.tokensFile = resolve(expandHome(overrides.tokensFile ?? base.tokensFile));
   cfg.auditFile = resolve(expandHome(overrides.auditFile ?? base.auditFile));
   if (cfg.backup.dir) cfg.backup.dir = resolve(expandHome(cfg.backup.dir));
+  const o = cfg.offsiteBackup;
+  if (o.keyFile) o.keyFile = resolve(expandHome(o.keyFile));
+  if (o.folder) o.folder = resolve(expandHome(o.folder));
+  o.outboxDir = resolve(expandHome(o.outboxDir ?? join(root, "offsite-outbox")));
+  if (o.command !== undefined && (!Array.isArray(o.command) || o.command.some((a) => typeof a !== "string"))) {
+    throw new Error("offsiteBackup.command must be an array of strings (argv; no shell is used)");
+  }
   if (cfg.logFile) cfg.logFile = resolve(expandHome(cfg.logFile));
   return cfg;
 }

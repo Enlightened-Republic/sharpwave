@@ -11,9 +11,10 @@ export function tempRoot(prefix = "sw-server-test-"): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-type Overrides = Partial<Omit<ServiceConfig, "sleep" | "backup">> & {
+type Overrides = Partial<Omit<ServiceConfig, "sleep" | "backup" | "offsiteBackup">> & {
   sleep?: Partial<ServiceConfig["sleep"]>;
   backup?: Partial<ServiceConfig["backup"]>;
+  offsiteBackup?: Partial<ServiceConfig["offsiteBackup"]>;
 };
 
 /** Test config: temp root, ephemeral port, no tailnet, no schedulers, no embed drain. */

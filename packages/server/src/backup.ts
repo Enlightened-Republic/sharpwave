@@ -12,7 +12,7 @@
 // `sharpwave-server backup now` CLI runs in a separate process next to a live
 // service and must never open a write connection or run migrations.
 //
-// Off-PC encryption + upload is OUT OF SCOPE here (see README: next step).
+// Off-PC encryption + upload happens after this, in offsite.ts (see backup-job.ts).
 
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
