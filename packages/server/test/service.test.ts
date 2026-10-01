@@ -181,6 +181,7 @@ describe("auth + health", () => {
     expect(tools.map((t) => t.name)).toEqual([
       "brain_query", "brain_write", "brain_link", "brain_supersede", "brain_stats",
       "brain_history", "brain_expand", "brain_review", "brain_forget", "brain_edges", "brain_reset",
+      "brain_episode_append",
     ]);
     // writer_agent_id is not even advertised
     const w = tools.find((t) => t.name === "brain_write")!;
