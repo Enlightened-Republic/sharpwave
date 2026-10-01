@@ -15,7 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import type { TokenStore, Principal } from "./tokens.js";
-import { SERVICE_TOOLS, callTool, type ToolContext } from "./tools.js";
+import { callTool, toolsFor, type ToolContext } from "./tools.js";
 import type { Logger } from "./log.js";
 import { VERSION } from "./version.js";
 
@@ -102,7 +102,7 @@ export function createHandler(deps: HttpDeps) {
 
       const ctx = deps.makeContext(principal);
       const server = new Server({ name: "sharpwave-server", version: VERSION }, { capabilities: { tools: {} } });
-      server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: SERVICE_TOOLS }));
+      server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolsFor(principal) }));
       server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const r = await callTool(ctx, request.params.name, (request.params.arguments as Record<string, unknown>) ?? {});
         return { content: [{ type: "text" as const, text: r.text }], ...(r.isError ? { isError: true } : {}) };
