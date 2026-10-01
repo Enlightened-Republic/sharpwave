@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { getDb, closeDb, resolveBusyTimeoutMs, DEFAULT_BUSY_TIMEOUT_MS } from "../src/db.js";
@@ -132,38 +132,108 @@ describe("multiple processes, one brain file", () => {
     dir = "";
   });
 
+  // busy_timeout handed to every process in this test (children via env,
+  // parent via getDb option). Must comfortably exceed LOCK_HOLD_MS. Setting
+  // this to 0 MUST make the test fail (SQLITE_BUSY in the waiters) — that is
+  // the negative check that proves the test exercises busy_timeout at all.
+  const BUSY_TIMEOUT_MS = 5000;
+  // How long the holder keeps BEGIN IMMEDIATE open after signalling `held`.
+  const LOCK_HOLD_MS = 600;
+
   it("two child processes + parent interleave writes/reads: no SQLITE_BUSY, all rows land", async () => {
     dir = mkdtempSync(join(tmpdir(), "sw-bt-proc-"));
     const path = join(dir, "brain.db");
+    const lockDir = join(dir, "lock");
+    mkdirSync(lockDir);
     // Create + migrate once up front so children don't race schema init.
-    const parentDb = withEnv({ SHARPWAVE_DB_PATH: path }, () => getDb("bt-parent"));
+    const parentDb = withEnv({ SHARPWAVE_DB_PATH: path }, () => getDb("bt-parent", { busyTimeoutMs: BUSY_TIMEOUT_MS }));
+    expect(parentDb.pragma("busy_timeout", { simple: true })).toBe(BUSY_TIMEOUT_MS);
 
     const req = createRequire(import.meta.url);
     const viteNode = join(dirname(req.resolve("vite-node/package.json")), "vite-node.mjs");
-    const fixture = join(HERE, "fixtures", "busy-writer.ts");
+    const runChild = (fixtureName: string, env: Record<string, string>) =>
+      new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
+        const child = spawn(process.execPath, [viteNode, join(HERE, "fixtures", fixtureName)], {
+          env: { ...process.env, SHARPWAVE_DB_PATH: path, SHARPWAVE_BUSY_TIMEOUT_MS: String(BUSY_TIMEOUT_MS), ...env },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let out = ""; let err = "";
+        child.stdout.on("data", (d) => { out += d; });
+        child.stderr.on("data", (d) => { err += d; });
+        child.on("close", (code) => resolve({ code, out, err }));
+      });
+    const lastJson = <T,>(r: { code: number | null; out: string; err: string }): T => {
+      expect(r.code, r.err).toBe(0);
+      return JSON.parse(r.out.trim().split("\n").pop() ?? "{}") as T;
+    };
+
+    // ── Phase 1: deterministic contention ────────────────────────────────
+    // proc-a takes BEGIN IMMEDIATE and signals `held` (file) while holding it
+    // for LOCK_HOLD_MS. proc-b and the parent wait for `held`, then attempt
+    // their own BEGIN IMMEDIATE write. Neither can acquire the lock until
+    // proc-a commits, so both MUST wait — no timing luck involved.
+    const lockEnv = { LOCK_DIR: lockDir, LOCK_HOLD_MS: String(LOCK_HOLD_MS) };
+    const holder = runChild("lock-handshake.ts", { ...lockEnv, LOCK_TAG: "proc-a", LOCK_MODE: "hold", LOCK_WAITERS: "proc-b,bt-parent" });
+    const waiter = runChild("lock-handshake.ts", { ...lockEnv, LOCK_TAG: "proc-b", LOCK_MODE: "wait" });
+
+    writeFileSync(join(lockDir, "ready-bt-parent"), String(process.pid));
+    const handshakeDeadline = Date.now() + 20_000;
+    while (!existsSync(join(lockDir, "held"))) {
+      if (Date.now() > handshakeDeadline) throw new Error("lock holder never signalled `held`");
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    // The lock is held right now. This BEGIN IMMEDIATE blocks (synchronously,
+    // inside SQLite's busy handler) until proc-a commits.
+    const parentInsert = parentDb.prepare(
+      "INSERT INTO episodes (id, session_id, role, content, importance, tokens, ripple_count, created_at, meta, writer_agent_id) VALUES (?, ?, 'tool', ?, 0.3, 1, 0, ?, NULL, ?)",
+    );
+    const parentBeginAt = Date.now();
+    let parentAcquiredAt = 0;
+    let parentError = "";
+    try {
+      parentDb.transaction(() => {
+        parentAcquiredAt = Date.now();
+        parentInsert.run("bt-parent-after-lock", "lock:bt-parent", "lock waiter bt-parent", Date.now(), "bt-parent");
+      }).immediate();
+    } catch (e) {
+      parentError = String(e);
+    }
+
+    type HoldReport = { tag: string; busyTimeout: number; lockedAt: number; commitAt: number; errors: string[] };
+    type WaitReport = { tag: string; busyTimeout: number; beginAt: number; acquiredAt: number; waitedMs: number; busy: number; errors: string[] };
+    const [holdRes, waitRes] = await Promise.all([holder, waiter]);
+    const hold = lastJson<HoldReport>(holdRes);
+    const wait = lastJson<WaitReport>(waitRes);
+
+    expect(hold.errors, `proc-a: ${hold.errors.join(" | ")}`).toEqual([]);
+    expect(wait.errors, `proc-b: ${wait.errors.join(" | ")}`).toEqual([]);
+    expect(parentError, "parent BEGIN IMMEDIATE while proc-a held the lock").toBe("");
+    expect(hold.busyTimeout).toBe(BUSY_TIMEOUT_MS);
+    expect(wait.busyTimeout).toBe(BUSY_TIMEOUT_MS);
+    expect(wait.busy).toBe(0);
+    // Both waiters acquired the write lock only after proc-a released it
+    // (10ms slack for Date.now() granularity across processes)…
+    expect(hold.commitAt - hold.lockedAt).toBeGreaterThanOrEqual(LOCK_HOLD_MS - 10);
+    expect(wait.acquiredAt).toBeGreaterThanOrEqual(hold.commitAt - 10);
+    expect(parentAcquiredAt).toBeGreaterThanOrEqual(hold.commitAt - 10);
+    // …which means each of them genuinely waited on busy_timeout.
+    expect(wait.acquiredAt - wait.beginAt).toBeGreaterThan(0);
+    expect(parentAcquiredAt - parentBeginAt).toBeGreaterThan(0);
+
+    // ── Phase 2: interleaved stress (no-loss / no-BUSY under real churn) ──
+    // Contention here is opportunistic (scheduler-dependent), so we assert
+    // only outcomes that must hold regardless of interleaving; the
+    // "must actually have waited" proof lives in phase 1.
+    const fixture = "busy-writer.ts";
     const ITERS = 30;
     const startAt = Date.now() + 1200; // common barrier after child startup
-
-    const runChild = (tag: string) => new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
-      const child = spawn(process.execPath, [viteNode, fixture], {
-        env: {
-          ...process.env,
-          SHARPWAVE_DB_PATH: path,
-          SHARPWAVE_BUSY_TIMEOUT_MS: "5000",
-          BUSY_TAG: tag,
-          BUSY_ITERS: String(ITERS),
-          BUSY_START_AT: String(startAt),
-          BUSY_HOLD_MS: "10",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let out = ""; let err = "";
-      child.stdout.on("data", (d) => { out += d; });
-      child.stderr.on("data", (d) => { err += d; });
-      child.on("close", (code) => resolve({ code, out, err }));
+    const stressEnv = (tag: string) => ({
+      BUSY_TAG: tag,
+      BUSY_ITERS: String(ITERS),
+      BUSY_START_AT: String(startAt),
+      BUSY_HOLD_MS: "10",
     });
-
-    const children = [runChild("proc-a"), runChild("proc-b")];
+    const children = [runChild(fixture, stressEnv("proc-a")), runChild(fixture, stressEnv("proc-b"))];
 
     // Parent joins the fray from its own connection, yielding between steps so
     // it can also collect child output.
@@ -181,29 +251,20 @@ describe("multiple processes, one brain file", () => {
       await new Promise((r) => setImmediate(r));
     }
 
-    const results = await Promise.all(children);
-    const reports = results.map((r) => {
-      expect(r.code, r.err).toBe(0);
-      const line = r.out.trim().split("\n").pop() ?? "{}";
-      return JSON.parse(line) as {
-        tag: string; busyTimeout: number; nodes: number; episodes: number; busy: number; errors: string[];
-        waits: number; maxWaitMs: number; walRetries: number;
-      };
-    });
+    const reports = (await Promise.all(children)).map((r) => lastJson<{
+      tag: string; busyTimeout: number; nodes: number; episodes: number; busy: number; errors: string[];
+      waits: number; maxWaitMs: number; walRetries: number;
+    }>(r));
 
     for (const rep of reports) {
       expect(rep.errors, `${rep.tag}: ${rep.errors.join(" | ")}`).toEqual([]);
       expect(rep.busy).toBe(0);
-      expect(rep.busyTimeout).toBe(5000);
+      expect(rep.busyTimeout).toBe(BUSY_TIMEOUT_MS);
       expect(rep.nodes).toBe(ITERS);
       // busy_timeout absorbed every wait; the wal-retry backstop never fired.
       expect(rep.walRetries).toBe(0);
     }
     expect(parentBusy).toBe(0);
-    // The two children each hold the write lock ~10ms per iteration from a
-    // common start barrier, so they MUST have waited on each other at least
-    // once — otherwise this test would not be exercising contention at all.
-    expect(reports.reduce((s, r) => s + r.waits, 0)).toBeGreaterThan(0);
 
     const perWriter = parentDb.prepare(
       "SELECT writer_agent_id AS w, COUNT(*) AS n FROM nodes GROUP BY writer_agent_id ORDER BY w",
@@ -213,14 +274,16 @@ describe("multiple processes, one brain file", () => {
       { w: "proc-a", n: ITERS },
       { w: "proc-b", n: ITERS },
     ]);
-    const expectedEpisodesPerChild = ITERS * 6; // 1 appendEpisode + 5 raw rows per iteration
+    // phase 2: 1 appendEpisode + 5 raw rows per iteration; phase 1: 1 row each.
+    const expectedEpisodesPerChild = ITERS * 6 + 1;
     const epPerWriter = parentDb.prepare(
       "SELECT writer_agent_id AS w, COUNT(*) AS n FROM episodes GROUP BY writer_agent_id ORDER BY w",
     ).all();
     expect(epPerWriter).toEqual([
+      { w: "bt-parent", n: 1 },
       { w: "proc-a", n: expectedEpisodesPerChild },
       { w: "proc-b", n: expectedEpisodesPerChild },
     ]);
     expect(parentDb.pragma("integrity_check", { simple: true })).toBe("ok");
-  }, 15_000);
+  }, 30_000);
 });
