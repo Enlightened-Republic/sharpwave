@@ -85,6 +85,7 @@ export class BrainService {
     audit: this.audit,
     brainConfig: this.brainConfig,
     allowReset: this.cfg.allowReset,
+    skipSystemNoiseEpisodes: this.cfg.skipSystemNoiseEpisodes !== false,
     sessionId: (agentId) => `svc:${agentId}:${this.bootId}`,
   });
 

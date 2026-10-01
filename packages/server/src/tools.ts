@@ -44,6 +44,8 @@ export interface ToolContext {
   allowReset: boolean;
   /** Stable per-agent working-memory session id for this process. */
   sessionId: (agentId: string) => string;
+  /** brain_episode_append skips system-noise turns (ServiceConfig.skipSystemNoiseEpisodes). Default true. */
+  skipSystemNoiseEpisodes?: boolean;
 }
 
 export interface ToolOutput {

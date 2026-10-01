@@ -67,6 +67,12 @@ export interface ServiceConfig {
   maxBodyBytes: number;
   /** Browser Origins allowed to call /mcp. Default none (requests with an Origin header are refused). */
   allowedOrigins: string[];
+  /**
+   * brain_episode_append does not store OpenClaw system-noise turns (heartbeat
+   * polls, exec/cron wakes, NO_REPLY / HEARTBEAT_OK replies; sharpwave-core
+   * isSystemNoiseEpisode). Default true. Guards older clients (openwave <= 0.1.3).
+   */
+  skipSystemNoiseEpisodes: boolean;
   sleep: SleepConfig;
   backup: BackupConfig;
   /** Encrypted off-PC copies of each snapshot (off by default). */
@@ -95,6 +101,7 @@ export function defaultConfig(root = defaultRoot()): ServiceConfig {
     embedDrainIntervalMs: 30_000,
     maxBodyBytes: 1_000_000,
     allowedOrigins: [],
+    skipSystemNoiseEpisodes: true,
     sleep: { enabled: true, at: "03:30", budgetMs: 15 * 60_000, respectGate: true },
     backup: { enabled: true, at: "02:30", keep: 7 },
     offsiteBackup: defaultOffsiteConfig(),

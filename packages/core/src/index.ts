@@ -264,3 +264,14 @@ export {
 export type {
   BrainToolDef, BrainToolInputSchema, BrainToolResult,
 } from "./tools.js";
+
+// ---------------------------------------------------------------------------
+// system-noise — OpenClaw machinery-turn classifier + retire registry keys
+// ---------------------------------------------------------------------------
+export {
+  SILENT_REPLY_TOKEN, HEARTBEAT_TOKEN, INTERNAL_WAKE_MARKERS, SYSTEM_RUN_TRIGGERS,
+  isSilentReplyText, isInternalWakeText, isHeartbeatSessionKey, classifySystemTurn, isSystemNoiseTurn,
+  isSystemNoiseEpisode, compileSystemTurnPatterns, NoisePairTracker, resolveSystemNoiseSettings,
+  RETIRED_NODE_META_PREFIX, RETIRED_EPISODE_META_PREFIX,
+} from "./system-noise.js";
+export type { TurnSignals, NoiseVerdict, NoiseOptions, InputProvenanceLike, SystemNoiseSettings } from "./system-noise.js";
