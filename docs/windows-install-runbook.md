@@ -319,7 +319,7 @@ Rules:
   | agent | scopes | notes |
   |---|---|---|
   | `chief-of-staff` | `read,write,shared-write,admin` | `admin` is needed for seeding (`brain_seed`) and implies every other scope |
-  | `tripp` | `read,write` | add `shared-write` **only if CoS agrees** |
+  | `tripp` | `read,write` | smoke-test identity for section 6 only. **Tripp himself is OpenClaw agent `main`**; his token (`main`) is minted in section 10e after his brain is adopted |
   | writing team agents (one each) | `read,write` | same |
   | game dev team agents (one each) | `read,write` | same |
 
@@ -550,8 +550,8 @@ stop the service first. Restore then moves the old file aside instead of deletin
 
 1. openwave PR **Enlightened-Republic/openwave#2** (branch `engram/remote-brain-mode`) is **merged**.
    As of this writing it's a **draft**.
-2. OpenWave is **installed** in Hailey's OpenClaw. **It isn't installed today.** Installing it is out of scope for
-   this runbook; follow the install notes in that PR once it's merged.
+2. OpenWave is **installed** in Hailey's OpenClaw. **It isn't installed today.** Section 10g installs it (for `main`,
+   remote mode) with the method that works on OpenClaw 2026.9.7.
 3. Steps 1 to 6 above passed.
 
 Config keys, from the draft PR. Re-check them against the merged PR: the key is `brainTokenFile`, not `tokenFile`.
@@ -567,9 +567,11 @@ They go under `plugins.entries.openwave.config` in `openclaw.json`:
 
 - `{agentId}` is replaced per OpenClaw agent. That's why section 5 names token files after the exact OpenClaw agent id.
 - Don't use the inline `brainToken` key. It would put a token in `openclaw.json`.
-- **Don't switch the existing agents (`main`, `mila`, `algen`) to remote mode.** Their memories live in the legacy
-  `~/.sharpwave\<agent>\brain.db` files. In remote mode they'd start from a new, empty private brain in the service.
-  Remote mode is for the **new** agents (Tripp and the teams). Migrating the legacy brains is a separate, later task.
+- **Don't switch an existing agent (`main`, `mila`, `algen`) to remote mode by just flipping `brainMode`.** Their
+  memories live in the legacy `~/.sharpwave\<agent>\brain.db` files; in remote mode they'd start from a new, empty
+  private brain in the service. **Adopt the legacy brain first:** for `main` (Tripp; `main` *is* Tripp's OpenClaw agent
+  id) follow **section 10, "Adopting an existing agent brain (main/Tripp)"**, which also installs OpenWave. `mila` and
+  `algen` stay local until someone decides otherwise.
 - After changing `openclaw.json`, restart the gateway the way Hailey normally does. Don't touch the gateway task
   definition. Then check the service's audit log for writes from the new agents' ids.
 
@@ -642,6 +644,514 @@ Copy-Item -Path "$Bak\main\*" -Destination C:\Users\wubbu\.sharpwave\main -Recur
 | Firewall prompt for node.exe | Something tried to bind a non-loopback address. Click Cancel, then check `tailnetHosts` is `[]` in config.json. |
 | Need to change a token's scopes, or a token leaked | `node $Cli token list --config $Cfg`, then `node $Cli token revoke <tok_id> --config $Cfg`, then `Remove-Item (Join-Path $TokDir "<agent>.token")`, then re-run `New-BrainToken`. Revocation applies right away. |
 | On-demand backup | `node $Cli backup now --config $Cfg`. Snapshots land in `$SvcRoot\backups\<brain>\`. Safe while the service runs. |
+
+---
+
+## 10. Adopting an existing agent brain (main/Tripp)
+
+**What this does.** "Tripp" is the identity name of OpenClaw agent **`main`**. It's the only agent, and Telegram routes
+to it. His memories live in the legacy file `C:\Users\wubbu\.sharpwave\main\brain.db` (plus `-wal`/`-shm`): about
+533 nodes, 1380 edges and 248 episodes, at a schema below 18. This section:
+
+1. makes the brain service serve a **copy** of that file as `main`'s private brain (`brain adopt`), and
+2. installs OpenWave into OpenClaw 2026.9.7 for `main` in **remote** mode, pointed at the service.
+
+The legacy file is **copied, never moved**. It stays byte-identical, so switching OpenWave back to local mode is an
+instant rollback (10h). **Don't touch `mila` or `algen`.** Nothing here opens them.
+
+Do this only after sections 0 to 6 pass, with Hailey watching. The only time the OpenClaw gateway is touched is the
+restart in 10g.8, and that needs Hailey's OK.
+
+**Session variables.** Paste these after the ones at the top of this runbook:
+
+```powershell
+$Legacy  = "C:\Users\wubbu\.sharpwave\main"
+$MainTok = "C:\Users\wubbu\.sharpwave\tokens\main.token"
+$OwRepo  = "C:\Users\wubbu\src\openwave"
+$OwSha   = "7e328cde77096e42a4d59d8650317019e5a394c5"   # openwave main: merge of PR #2 (remote brain mode)
+$OcCfg   = "C:\Users\wubbu\.openclaw\openclaw.json"
+$Stamp   = Get-Date -Format "yyyyMMdd-HHmmss"
+```
+
+`$MainTok` is OpenWave's default token location (`~/.sharpwave/tokens/{agentId}.token`). Section 5 used
+`C:\Users\wubbu\.sharpwave-tokens` for the other agents. Either location works; what matters is that `brainTokenFile`
+in 10g.4 matches. If section 5 already minted a `main` token, **don't mint a second one**. Instead, set
+`$MainTok = Join-Path $TokDir "main.token"`, skip 10e, and use `C:/Users/wubbu/.sharpwave-tokens/{agentId}.token` in 10g.4.
+
+> **About the `tripp` token from section 5:** it isn't Tripp. It's a separate service identity named `tripp`, with
+> its own (empty) private brain `brains\tripp`. OpenWave looks tokens up by the **OpenClaw** agent id, which is `main`.
+> After section 6, CoS can revoke the `tripp` token (section 9, last rows). Park `brains\tripp` with
+> `Move-Item`; don't delete it.
+
+**10.0 Does this build have `brain adopt`?**
+
+```powershell
+node $Cli help | Select-String "brain adopt"
+```
+
+If this prints nothing, the checkout predates sharpwave PR #12. Update it **after** stopping the service in 10c.1.
+Windows locks the running service's native module, so `npm.cmd ci` fails while the service runs. Use the merge commit
+of PR #12 (or the SHA Engram gives):
+
+```powershell
+Set-Location $Repo
+git fetch origin
+git checkout --detach PASTE-THE-PR-12-MERGE-SHA
+npm.cmd ci
+npm.cmd run build
+node $Cli help | Select-String "brain adopt"
+```
+
+### 10a. Is anything holding main's brain.db open?
+
+OpenWave isn't installed, so OpenClaw itself shouldn't have the file open. In remote mode OpenWave never opens a local
+brain; this was checked on 2026.9.7, where the gateway process held no brain file. Still, check for other holders,
+especially an **old `sharpwave` MCP server** in `openclaw.json`. OpenClaw starts it as a child process, and it opens
+`~\.sharpwave\<agent>\brain.db`.
+
+```powershell
+openclaw plugins inspect openwave
+openclaw config get mcp.servers
+Select-String -Path $OcCfg -Pattern "sharpwave" -SimpleMatch
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match "sharpwave|openwave" -and $_.CommandLine -notlike "*\packages\server\dist\cli.js*serve*" } | Select-Object ProcessId, ParentProcessId, CommandLine
+```
+
+(If `openclaw` says running scripts is disabled, use `openclaw.cmd`, just as with `npm.cmd`.)
+
+Expected: `inspect` says openwave isn't found or installed. Note any `sharpwave` entry under `mcp.servers` for 10g.5.
+
+**Exclusive-open test.** It opens the file read-only, asks for no sharing, and closes it again. It changes nothing:
+
+```powershell
+foreach ($f in @("$Legacy\brain.db", "$Legacy\brain.db-wal")) {
+  if (-not (Test-Path $f)) { "$f : not present"; continue }
+  try { $h = [System.IO.File]::Open($f, 'Open', 'Read', 'None'); $h.Close(); "$f : nobody has it open" }
+  catch { "$f : OPEN in another process -> $($_.Exception.Message)" }
+}
+```
+
+- **Nobody has it open:** carry on. Don't stop the gateway.
+- **Open in another process:** find the holder (usually the `sharpwave` MCP child process listed above). Wait until
+  Tripp is idle and test again. If it stays open, stopping the gateway for the duration of 10b and 10c is **Hailey's call**.
+  Adopt only *reads* the source, and it aborts with `the source brain changed while it was being copied` if something
+  writes to it mid-copy. An idle holder is therefore safe, but a busy writer isn't.
+
+### 10b. Dated backup of `~\.sharpwave`
+
+This is the same pattern as 0.6, taken right before the adoption. It goes **outside** `.sharpwave`:
+
+```powershell
+$Bak = "C:\Users\wubbu\sharpwave-backup-preadopt-$Stamp"
+New-Item -ItemType Directory -Path $Bak | Out-Null
+Get-ChildItem C:\Users\wubbu\.sharpwave -Force | Where-Object { $_.Name -ne "service" } | Copy-Item -Destination $Bak -Recurse
+$src = Get-ChildItem C:\Users\wubbu\.sharpwave -Recurse -File | Where-Object { $_.FullName -notlike "*\.sharpwave\service\*" }
+$dst = Get-ChildItem $Bak -Recurse -File
+"source: {0} files, {1} bytes   backup: {2} files, {3} bytes" -f $src.Count, ($src | Measure-Object Length -Sum).Sum, $dst.Count, ($dst | Measure-Object Length -Sum).Sum
+Get-ChildItem $Legacy -File | Get-FileHash -Algorithm SHA256 | Select-Object Hash, Path | Export-Csv "$Bak.main-hashes.csv" -NoTypeInformation
+Import-Csv "$Bak.main-hashes.csv" | Format-Table -AutoSize
+$Bak
+```
+
+The service folder is excluded because it has its own backups (2 and 6B). **Write down `$Bak`.**
+
+**The 14 `_backup-pre-openwave-20260920-*` folders** in `.sharpwave` come from failed OpenWave installs. They're copied
+along with everything else. **Leave them where they are.** Don't move, rename or delete them during this install.
+Archiving them later is fine **with Hailey's OK**. To count them (read-only):
+
+```powershell
+Get-ChildItem C:\Users\wubbu\.sharpwave -Directory -Filter "_backup-pre-openwave-*" | Measure-Object | Select-Object Count
+```
+
+### 10c. Adopt: dry run first, then for real
+
+**10c.1 Stop the brain service.** Adopt refuses to run while anything answers on port 18790.
+
+```powershell
+Stop-ScheduledTask -TaskName $Task
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like "*\packages\server\dist\cli.js*serve*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Start-Sleep -Seconds 2
+Get-NetTCPConnection -LocalPort 18790 -State Listen -ErrorAction SilentlyContinue
+```
+
+The last line must print **nothing**. If you need the 10.0 update, do it now.
+
+**10c.2 Dry run.** It writes nothing: the source is byte-copied to a temp folder and inspected there.
+
+```powershell
+node $Cli brain adopt --config $Cfg --agent main --from $Legacy --dry-run
+```
+
+Expected output:
+
+```
+DRY RUN — nothing written: agent "main" (mode copy)
+  source   C:\Users\wubbu\.sharpwave\main\brain.db
+           brain.db sha256 …
+           brain.db-wal sha256 …            (only if a -wal exists)
+           533 nodes, 1380 edges, 248 episodes, schema 17, … embedded
+  target   C:\Users\wubbu\.sharpwave\service\brains\main\brain.db (absent)
+  would:
+    - pre-adopt backup (VACUUM INTO, WAL included) -> …\service\backups\main\pre-adopt\main-pre-adopt-<UTC>.db
+    - copy backup -> …\service\brains\main\brain.db
+    - open via sharpwave-core (migrate schema 17 -> 18)
+    - leave writer_agent_id NULL on existing rows
+    - verify integrity_check, counts, schema; checkpoint WAL
+    - leave the source untouched (rollback = keep using it locally)
+```
+
+The counts are the live file's, including anything still in the `-wal`, so they may be a little higher than 533/1380/248
+if Tripp has learned things since. What the target line can mean:
+
+- `(absent)`: normal.
+- `(empty: 0 nodes, 0 edges, 0 episodes)`: something opened `main` in the service before (for example a `main` token
+  used in a smoke test). Adopt moves the empty file aside as `brain.db.pre-adopt-<UTC>` without `--force`.
+- Refused with **`already exists with data`**: **STOP.** Something has written to `main`'s service brain. Find out what
+  before deciding on `--force`. `--force` renames the existing brain aside and never deletes it.
+- Refused with **`brain service port is in use`**: go back to 10c.1.
+
+**10c.3 For real:**
+
+```powershell
+node $Cli brain adopt --config $Cfg --agent main --from $Legacy
+$LASTEXITCODE
+```
+
+Expected: `ADOPTED`, `counts MATCH`, `after … schema 18, integrity ok`, `writer existing rows left NULL (no backfill)`,
+`source unchanged (sha256 re-checked)`, exit code `0`. It takes about 1 s for a brain this size. **[UNTESTED ON WINDOWS]**
+It was tested on Linux on a copy of this brain: 533/1380/248, schema 17 to 18, integrity ok, snapshot sha256 unchanged.
+
+*Writer provenance (optional, CoS decides):* the default leaves `writer_agent_id` empty (NULL) on the old rows. That's
+the honest answer, "written before provenance existed", and `brain_stats` shows them as `(none)`. Nothing in the service
+depends on it. To tag them as `legacy:main` instead, add `--backfill-writer legacy`. Do that only at adoption time;
+there's no separate backfill command. Don't stamp them as plain `main`, which would make them look as if they were
+written through the service.
+
+### 10d. Verify the counts
+
+```powershell
+Get-Content "$SvcRoot\audit\audit.jsonl" -Tail 1 | ConvertFrom-Json | Format-List time, agentId, tool, brain, outcome, detail
+$pre = Get-ChildItem "$SvcRoot\backups\main\pre-adopt" -Filter *.db | Sort-Object Name | Select-Object -Last 1
+(Get-FileHash $pre.FullName -Algorithm SHA256).Hash.ToLower()
+(Get-Content "$($pre.FullName).json" -Raw | ConvertFrom-Json) | Format-List backup, sha256, counts, schema
+$now = Get-ChildItem $Legacy -File | Get-FileHash -Algorithm SHA256 | Select-Object Hash, Path
+Compare-Object (Import-Csv "$Bak.main-hashes.csv") $now -Property Hash, Path
+```
+
+Expected:
+
+- the audit line reads `admin:cli brain_adopt main ok`, with `nodes=… edges=… episodes=… schema=17->18 integrity=ok`
+  (counts and hashes only, no memory text);
+- the backup's hash equals the manifest's `sha256`;
+- `Compare-Object` prints **nothing**, meaning the legacy files weren't modified. A `brain.db-shm` difference alone
+  is harmless; `-shm` is a SQLite index file, not data.
+
+**10d.2 Start the service again:**
+
+```powershell
+Start-ScheduledTask -TaskName $Task
+Start-Sleep -Seconds 5
+Invoke-RestMethod "$Url/health"
+```
+
+### 10e. Mint the `main` token
+
+Scopes are `read,write`. Add `shared-write` **only if CoS decides** Tripp may write to the shared brain. The token goes
+straight into the file and is never shown:
+
+```powershell
+$MainTokDir = Split-Path $MainTok
+New-Item -ItemType Directory -Force -Path $MainTokDir | Out-Null
+icacls $MainTokDir /inheritance:r /grant:r "${env:USERNAME}:(OI)(CI)F" "SYSTEM:(OI)(CI)F"
+if (Test-Path $MainTok) { throw "$MainTok already exists - revoke the old token first (section 9)" }
+$j = node $Cli token mint --config $Cfg --agent main --scopes read,write --label "main (Tripp) via OpenWave" --json | ConvertFrom-Json
+Set-Content -Path $MainTok -Value $j.token -NoNewline -Encoding ascii
+"{0}  agent={1}  scopes={2}  file={3}" -f $j.id, $j.agentId, ($j.scopes -join ","), $MainTok
+$j = $null
+(Get-Item $MainTok).Length
+```
+
+The file should be 47 bytes. `.sharpwave\tokens` has no `brain.db` in it, so neither the legacy tools nor the service
+treat it as a brain. Dated copies of `.sharpwave` made from now on contain this token file, so keep them local.
+
+### 10f. Smoke test with the client CLI (counts only, no memory text on screen)
+
+```powershell
+node $Client health
+node $Client stats --scope private --token-file $MainTok
+(node $Client search "openclaw" --scope private --token-file $MainTok --json | ConvertFrom-Json).results.Count
+node $Client stats --scope shared --token-file $MainTok
+```
+
+Expected: `[private] 533 nodes, 1380 edges, 248 episodes` (or the counts from 10c.3), a search count **greater than 0**,
+and the shared brain's stats (0 nodes before seeding is fine).
+
+**Shared read and isolation, using CoS's token from section 5:**
+
+```powershell
+$Cos = Join-Path $TokDir "chief-of-staff.token"
+$s = node $Client write "Adoption smoke shared note" --label "adopt-smoke-shared" --shared --token-file $Cos --json | ConvertFrom-Json
+(node $Client search "adoption smoke shared note" --scope shared --token-file $MainTok --json | ConvertFrom-Json).results.Count
+(node $Client search "openclaw" --scope private --token-file $Cos --json | ConvertFrom-Json).results.Count
+node $Client forget $s.id --shared --token-file $Cos
+```
+
+Expected: `main` finds the shared note (count ≥ 1); CoS finds **0** of main's private memories; the note is then removed.
+
+### 10g. Install OpenWave into OpenClaw 2026.9.7 for `main`, remote mode
+
+**Why this particular install method.** openwave isn't on npm at a usable version: npm has `sharpwave-core` 0.4.3,
+and openwave needs ^0.4.4, so `npm ci` fails with `ETARGET`. The workaround from openwave PR #2 is to build core from
+the sharpwave checkout and `npm install --no-save` it. That leaves `node_modules\sharpwave-core` as a link pointing
+**outside** the openwave folder, and OpenClaw 2026.9.7's install safety scan refuses a folder like that
+(`openclaw plugins install <folder>` and `--link` both fail with `dependency boundary scan found node_modules symlink
+target outside install root`). So: build, **`npm pack`**, and install the tarball with `npm-pack:`. OpenClaw then installs
+it into its own managed project, like a registry plugin. This exact flow was verified on Linux against OpenClaw
+2026.9.7. The gateway loaded OpenWave in remote mode, the health check passed, `auth_check` returned `serviceAgentId:
+main`, and episode append was enabled. **[UNTESTED ON WINDOWS]**
+
+**10g.1 Node.** OpenClaw 2026.9.7 requires Node **≥ 24.16** (`>=24.16.0 <25 || >=26.1.0`). The openwave build also
+installs `openclaw` as a dev dependency, which enforces the same requirement.
+
+```powershell
+node -v
+openclaw --version
+```
+
+**10g.2 Build openwave at the pinned commit.** Core comes from the sharpwave checkout built in 1.4:
+
+```powershell
+Test-Path "$Repo\packages\core\dist\index.js"
+Set-Location C:\Users\wubbu\src
+git clone https://github.com/Enlightened-Republic/openwave.git $OwRepo
+Set-Location $OwRepo
+git checkout --detach $OwSha
+git rev-parse HEAD
+npm.cmd install --no-save --no-audit --no-fund ..\sharpwave\packages\core
+npm.cmd run build
+Test-Path "$OwRepo\dist\index.js"
+npm.cmd pack --pack-destination C:\Users\wubbu\src
+Get-Item C:\Users\wubbu\src\openwave-0.1.2.tgz | Select-Object Name, Length
+git status --short
+```
+
+Expected: `True`, the pinned SHA, `True`, a ~270 KB `openwave-0.1.2.tgz`, and a clean `git status`. `--no-save` leaves
+`package.json` and the lockfile alone. Don't run `npm ci` in the openwave folder. `npm install` downloads the
+`openclaw` dev dependency, which is large; give it a few minutes.
+
+**10g.3 Look at the current OpenClaw config, and back it up:**
+
+```powershell
+Copy-Item $OcCfg "$OcCfg.pre-openwave-$Stamp"
+openclaw config get plugins.allow
+openclaw config get plugins.entries.openwave
+openclaw config get mcp.servers
+openclaw plugins list
+```
+
+Write down: the `plugins.allow` list (or "unset"), whether `memory-core` shows as enabled (it's OpenClaw's bundled
+memory plugin and is on by default), and whether `mcp.servers` has a `sharpwave` entry.
+
+**10g.4 Config FIRST, then install.** OpenWave's default is local mode for `agents: ["main"]`. If it were installed
+before its config exists, it would start in **local** mode on main's legacy `brain.db`. The install applies straight to
+the running gateway, and with no allowlist a new plugin is enabled by default. Writing the config first prevents that.
+Before the install, OpenClaw warns `plugin not found: openwave (stale config entry ignored ...)`. That's expected; the
+entry is kept and used once the plugin is installed.
+
+Build the patch. **If `plugins.allow` was unset**, leave the `allow` line out completely: adding it would turn on an
+exclusive allowlist and switch off every other plugin. **If it was set**, the list *replaces* the old one, so it must
+contain **every id it already had, plus `"openwave"`**:
+
+```powershell
+$Patch = "C:\Users\wubbu\src\openwave.patch.json5"
+$json = @'
+{
+  plugins: {
+    // allow: ["memory-core", "telegram", "...every id already in plugins.allow...", "openwave"],
+    entries: {
+      openwave: {
+        enabled: true,
+        hooks: { allowConversationAccess: true },
+        config: {
+          agents: ["main"],
+          brainMode: "remote",
+          brainUrl: "http://127.0.0.1:18790",
+          brainTokenFile: "~/.sharpwave/tokens/{agentId}.token",
+          sharedRecall: true,
+          remoteTimeoutMs: 2500,
+          curatedTierDedupe: true,
+        },
+      },
+    },
+  },
+}
+'@
+Set-Content -Path $Patch -Value $json -Encoding ascii
+notepad $Patch
+openclaw config patch --file $Patch --dry-run
+openclaw config patch --file $Patch
+```
+
+In Notepad, either delete the commented `allow` line or uncomment it and fill in the real list. Then save and close.
+The dry run must say `Dry run successful`.
+
+Notes on the snippet:
+
+- `hooks.allowConversationAccess: true` is **required**. Without it OpenClaw blocks OpenWave's conversation hooks:
+  no recall and no episodes. It belongs under `hooks`, not `config`.
+- `brainTokenFile` is expanded per agent (`{agentId}` → `main`) to `C:\Users\wubbu\.sharpwave\tokens\main.token`. Never
+  use the inline `brainToken` key.
+- **Graft A / no double injection:** `memory-core` is active by default. When main's workspace has a non-empty
+  `MEMORY.md`/`USER.md`, `curatedTierDedupe: true` (the default, stated explicitly here) makes OpenWave pass
+  `externalMemoryActive` and drop identity/goal memories from its `[BRAIN: …]` recall block. memory-core already injects
+  those, so this stops Tripp getting identity and goals twice. **Don't set it to `false`.** It only removes
+  identity/goal nodes, so ordinary facts from memory-core's search and OpenWave's recall can still overlap. Watch the
+  first few turns.
+- Remote mode turns off OpenWave's local sleep timers and its `openwave:consolidation` cron; the service owns sleep.
+
+**10g.5 Old `sharpwave` MCP server (only if 10g.3 showed one).** Once OpenWave is on, Tripp would see two sets of
+`brain_*` tools. The MCP set keeps writing to the **legacy** file, which the service no longer reads. With Hailey's OK,
+save the entry, then remove it:
+
+```powershell
+openclaw config get mcp.servers.sharpwave --json | Set-Content "C:\Users\wubbu\src\mcp-sharpwave-entry-$Stamp.json" -Encoding ascii
+openclaw config unset mcp.servers.sharpwave
+```
+
+(The full config backup from 10g.3 also has it.)
+
+**10g.6 Install from the tarball, then build the native module:**
+
+```powershell
+Set-Location C:\Users\wubbu\src
+openclaw plugins install "npm-pack:.\openwave-0.1.2.tgz" --force --accept-capabilities --no-enable
+Set-Location "C:\Users\wubbu\.openclaw\npm\projects\openwave"
+npm.cmd rebuild better-sqlite3
+```
+
+- `--force` confirms a non-ClawHub source (it's our own tarball). `--accept-capabilities` records consent.
+  `--no-enable` leaves `plugins.allow`/`deny` exactly as 10g.4 set them, and the entry from 10g.4 stays as written.
+- OpenClaw installs plugin dependencies with `--ignore-scripts`, so `better-sqlite3`'s native binary isn't fetched.
+  Remote mode never opens SQLite, but **local-mode rollback (10h) needs it**, so rebuild now. If the rebuild fails
+  because the GitHub download is blocked (Norton/VPN), remote mode still works; note it and continue.
+
+**10g.7 Check before restarting:**
+
+```powershell
+openclaw config validate
+openclaw plugins inspect openwave
+openclaw config get plugins.entries.openwave.config.brainMode
+```
+
+Expected: `Config valid`; `Status: enabled`, `Source: …\.openclaw\npm\projects\openwave\node_modules\openwave\dist\index.js`,
+`Version: 0.1.2`; `remote`.
+
+**10g.8 Restart the gateway (Hailey's OK).** **Hot-reload caveat:** in 2026.9.7, changes under `plugins.*` hot-reload,
+the install applies through the running gateway, and entry config changes swap the plugin instance in place. Even so,
+OpenWave's `gateway_start` work (health check, token check, episode-append detection, cleanup of a stale cron) is only
+reliable after a **full restart**, and OpenWave's README requires one. Use the safe restart, which waits up to 5 minutes
+for active work to finish:
+
+```powershell
+openclaw gateway restart --safe
+```
+
+**10g.9 Check the gateway logs:**
+
+```powershell
+openclaw logs --plain --limit 500 | Select-String "openwave|BAD BRAIN"
+```
+
+If `openclaw logs` can't connect, read the newest log file directly. On Windows it's under `%TEMP%`:
+
+```powershell
+$log = Get-ChildItem $env:TEMP -Recurse -Filter "openclaw-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+Select-String -Path $log.FullName -Pattern "openwave|BAD BRAIN" | Select-Object -Last 20
+```
+
+Expected, in this order (these lines are from the 2026.9.7 test run):
+
+```
+[openwave] {"op":"register","outcome":"ok","brainMode":"remote","url":"http://127.0.0.1:18790","agents":1,"tools":11,"sharedRecall":true,"timeoutMs":2500,"tokenSources":"main:file",...}
+[openwave] {"op":"gateway_start","outcome":"ready","brainMode":"remote","localSleep":false,"consolidationCron":false}
+[openwave] {"op":"remote.health","outcome":"ok","url":"http://127.0.0.1:18790","version":"0.1.0","attempt":1}
+[openwave] {"agentId":"main","op":"remote.episode_append","outcome":"enabled"}
+[openwave] {"agentId":"main","op":"remote.auth_check","outcome":"ok","serviceAgentId":"main"}
+```
+
+**There must be no `BAD BRAIN TOKEN`, `unauthorized`, `misconfigured` or `brainMode":"local"`.** If you see a bad token,
+the file or path is wrong: re-check 10e and `brainTokenFile`. If `remote.health` keeps retrying, the service is down
+(10d.2). Then run the 10a exclusive-open test once more. The legacy `brain.db` must say **nobody has it open**, which
+proves OpenWave isn't in local mode.
+
+**10g.10 Talk to Tripp.** Hailey sends Tripp a normal Telegram message about something he already knows, with one unusual
+word in it so it's easy to find (for example "*Quick check, pineapple: what do you remember about how the OpenClaw gateway
+is set up?*"). Then:
+
+```powershell
+node $Client history "pineapple" --token-file $MainTok
+node $Client stats --scope private --token-file $MainTok
+Get-Content "$SvcRoot\audit\audit.jsonl" -Tail 5 | ConvertFrom-Json | Format-Table time, agentId, tool, brain, outcome -AutoSize
+```
+
+Expected:
+
+- Tripp's reply draws on his old memories. That's the recall, coming from the adopted brain through the service.
+- `history` shows the `user:` turn (and soon the `assistant:` turn) with `writer=main`.
+- `episodes` is higher than in 10f.
+- The audit log has `main brain_episode_append main ok` lines.
+
+If episodes don't show up, check the log for `remote.episode_append … unsupported`. That would mean the service
+build lacks `brain_episode_append` (sharpwave PR #11).
+
+### 10h. Rollback
+
+**Turn OpenWave off** (back to how things were before 10g):
+
+```powershell
+openclaw plugins disable openwave
+openclaw gateway restart --safe
+```
+
+**Back to local mode on the legacy file:** the source was *copied*, not moved, so this works immediately:
+
+```powershell
+openclaw config set plugins.entries.openwave.config.brainMode local
+openclaw gateway restart --safe
+```
+
+OpenWave then opens `C:\Users\wubbu\.sharpwave\main\brain.db` exactly as adoption left it. Its first open runs core's
+additive migration on that file. Local mode needs the native module from 10g.6. To also restore the old MCP entry and
+everything else, copy back the 10g.3 backup, then restart:
+
+```powershell
+$cfgBak = Get-ChildItem "$OcCfg.pre-openwave-*" | Sort-Object Name | Select-Object -Last 1
+Copy-Item $cfgBak.FullName $OcCfg -Force
+openclaw gateway restart --safe
+```
+
+**Divergence.** Everything Tripp learns in remote mode (episodes, `brain_write`, extracted facts) goes **only** to the
+service brain `…\service\brains\main\brain.db`. None of it reaches the legacy file, and nothing merges it back
+automatically. If that matters when going back to local mode:
+
+- *Small amounts:* accept the loss, or re-write the few important facts with `brain_write` once in local mode.
+- *Everything:* after adoption nothing writes to the legacy file (provided the old MCP entry was removed), so the service
+  brain is a superset of it. Use the service brain *as* the local brain. Stop the gateway (Hailey's OK) and stop the
+  service (10c.1), then run:
+
+  ```powershell
+  node $Cli backup now --config $Cfg --brain main --no-offsite
+  $snap = Get-ChildItem "$SvcRoot\backups\main" -Filter "main-*.db" | Sort-Object Name | Select-Object -Last 1
+  Get-ChildItem $Legacy -File | ForEach-Object { Rename-Item $_.FullName "$($_.Name).pre-rollback-$Stamp" }
+  Copy-Item $snap.FullName "$Legacy\brain.db"
+  ```
+
+  Then set `brainMode local`, start the service again, and restart the gateway. The renamed legacy files stay as a
+  further fallback. Never delete them.
+
+**Undo the adoption on the service side** (rarely needed): stop the service (10c.1), then
+`Rename-Item "$SvcRoot\brains\main\brain.db" "brain.db.parked-$Stamp"` (also rename any `-wal`/`-shm`), and start it
+again. The pre-adopt backup in `…\service\backups\main\pre-adopt\` is a verified copy of the legacy brain as it was at
+adoption time.
 
 ---
 

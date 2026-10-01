@@ -10,6 +10,7 @@
 //   node sharpwave-client.mjs write  <content...> --label "Short name" [--type semantic] [--importance 0.6] [--shared]
 //   node sharpwave-client.mjs stats  [--scope all|private|shared]
 //   node sharpwave-client.mjs forget <nodeId>   [--shared] [--force]
+//   node sharpwave-client.mjs history <query...> [--limit 10] [--shared]   (episode log full-text search)
 //   node sharpwave-client.mjs health
 //   node sharpwave-client.mjs seed   <dir> [--target shared|private|skip] [--map file=shared|private|skip ...]
 //                                    [--type file=nodeType ...] [--tag t ...] [--importance 0.6] [--max-chars 1800]
@@ -56,6 +57,7 @@ Usage:
   sharpwave-client write <content...> --label "name" [--type semantic] [--importance 0.5] [--shared] [--json]
   sharpwave-client stats [--scope all|private|shared] [--json]
   sharpwave-client forget <nodeId> [--shared] [--force]   (delete one node; needs write / shared-write)
+  sharpwave-client history <query...> [--limit N] [--shared]   (search the episode log via brain_history)
   sharpwave-client health [--json]
   sharpwave-client seed <dir> [--target shared|private|skip] [--map file=shared|private|skip ...]
                    [--type file=nodeType ...] [--tag t ...] [--importance 0.6] [--max-chars 1800]
@@ -339,6 +341,13 @@ async function main() {
       if (!rest[0]) usage("forget needs a node id");
       name = "brain_forget";
       args = { node_id: rest[0], ...(f.force ? { force: true } : {}), ...(f.shared ? { visibility: "shared" } : {}) };
+      break;
+    }
+    case "history": {
+      const query = rest.join(" ").trim();
+      if (!query) usage("history needs a query");
+      name = "brain_history";
+      args = { query, ...(f.limit ? { limit: Number(f.limit) } : {}), ...(f.shared ? { visibility: "shared" } : {}) };
       break;
     }
     case "stats": {
