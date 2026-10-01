@@ -101,7 +101,7 @@ export function loadKey(opts: { keyFile?: string; keyEnv?: string; env?: NodeJS.
   return parseKeyText(readFileSync(opts.keyFile, "utf8"), `file ${opts.keyFile}`);
 }
 
-/** Write a fresh random key with owner-only permissions. Refuses to overwrite unless `force`. */
+/** Write a fresh random key with owner-only permissions. Refuses to overwrite unless `force`; with `force` the old key is renamed to `<path>.old-<UTC>`, never deleted. */
 export function generateKeyFile(path: string, force = false): BackupKey {
   if (existsSync(path) && !force) throw new Error(`${path} already exists — refusing to overwrite a backup key (backups made with it would become unreadable). Pass --force to replace it.`);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -115,6 +115,8 @@ export function generateKeyFile(path: string, force = false): BackupKey {
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, text, { mode: 0o600, flag: "w" });
   try { chmodSync(tmp, 0o600); } catch { /* windows: use icacls (README) */ }
+  // --force: keep the previous key next to it (old artifacts still need it).
+  if (existsSync(path)) renameSync(path, `${path}.old-${new Date().toISOString().replace(/[:.]/g, "-")}`);
   renameSync(tmp, path);
   bytes.fill(0);
   return key;

@@ -132,6 +132,13 @@ describe("artifact format + crypto", () => {
     if (process.platform !== "win32") expect(statSync(kf).mode & 0o777).toBe(0o600);
     expect(() => generateKeyFile(kf)).toThrow(/already exists/);
     expect(loadKey({ keyFile: kf, env: {} }).id).toBe(gen.id);
+    const kf2 = join(root, "k2", "backup.key");
+    const first = generateKeyFile(kf2);
+    const second = generateKeyFile(kf2, true);
+    expect(second.id).not.toBe(first.id);
+    const old = readdirSync(join(root, "k2")).filter((f) => f.startsWith("backup.key.old-"));
+    expect(old).toHaveLength(1);
+    expect(loadKey({ keyFile: join(root, "k2", old[0]!), env: {} }).id).toBe(first.id);
     expect(loadKey({ keyFile: kf, env: { SHARPWAVE_BACKUP_KEY: b64 } }).id).toBe(key.id);
     expect(() => loadKey({ keyFile: join(root, "nope"), env: {} })).toThrow(/does not exist/);
     const shown = `${key} ${JSON.stringify({ key })} ${inspect(key)} ${inspect({ key })}`;

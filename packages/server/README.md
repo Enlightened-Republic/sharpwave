@@ -39,7 +39,7 @@ CLI (`sharpwave-server`):
 | `token mint --agent <id> [--scopes read,write,shared-write,admin] [--label txt] [--json]` | mint a token; prints it **once**, stores only its sha256 |
 | `token list [--json]` / `token revoke <tokenId>` | manage tokens (takes effect without restart) |
 | `backup now [--keep N] [--brain name ...] [--no-offsite]` | snapshot every brain now (safe next to a live service), then encrypt + ship off-PC if enabled. Exit 0 ok, 1 local snapshot failed, 3 local ok but an off-PC step failed |
-| `backup keygen [--key-file f] [--force]` | write a new 256-bit backup key (default `~/.sharpwave/backup.key`); refuses to overwrite without `--force` |
+| `backup keygen [--key-file f] [--force]` | write a new 256-bit backup key (default `~/.sharpwave/backup.key`); refuses to overwrite without `--force` (which renames the old key to `backup.key.old-<UTC>`) |
 | `backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest] [--json]` | verify + decrypt + `PRAGMA integrity_check`; prints node/edge/episode counts |
 
 ## Design
