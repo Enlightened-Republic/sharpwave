@@ -128,7 +128,9 @@ export function resolveConfig(overrides: Partialish = {}): ServiceConfig {
 }
 
 export function loadConfigFile(path: string): Partialish {
-  const raw = readFileSync(expandHome(path), "utf8");
+  // Strip a UTF-8 BOM: Windows PowerShell 5.1's `Set-Content -Encoding UTF8`
+  // and Notepad's "UTF-8 with BOM" both write one, and JSON.parse rejects it.
+  const raw = readFileSync(expandHome(path), "utf8").replace(/^\uFEFF/, "");
   const parsed = JSON.parse(raw) as Partialish;
   if (!parsed || typeof parsed !== "object") throw new Error(`config ${path}: not a JSON object`);
   return parsed;
