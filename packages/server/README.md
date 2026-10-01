@@ -122,6 +122,8 @@ node sharpwave-client.mjs write "Weekly sync moved to Thursdays" --label "Weekly
 node sharpwave-client.mjs write "..." --label "..." --shared      # needs shared-write
 node sharpwave-client.mjs stats --json
 node sharpwave-client.mjs health                                    # no token needed
+node sharpwave-client.mjs forget 3f2a...-uuid [--shared]            # delete one node
+node sharpwave-client.mjs seed <dir> --map a.md=shared --map b.md=private --dry-run   # admin token; see docs/seeding.md
 ```
 
 `--url` defaults to `$SHARPWAVE_URL` or `http://127.0.0.1:18790`. `--json` prints
@@ -133,15 +135,21 @@ machine-readable output. Exit codes: 0 ok, 1 tool error (e.g. forbidden), 2 usag
 `scripts/windows/` ships:
 
 - `sharpwave-service.vbs` — windowless launcher: `WScript.Shell.Run cmd, 0, True`
-  (window style 0 = hidden, wait = true so the task tracks node's exit code). Same
-  pattern as OpenClaw's `gateway.vbs` hidden launcher for the gateway task.
+  (window style 0 = hidden, wait = true). Same pattern as OpenClaw's `gateway.vbs`
+  hidden launcher for the gateway task. It also **supervises** node: Task
+  Scheduler's restart-on-failure only fires when a task fails to *start*, so the
+  wrapper itself restarts node 30 s after any non-zero exit (up to 1000x); exit 0 ends it.
 - `install-task.ps1` — registers **"SharpWave Brain Service"**: at-logon trigger
   for the current user, limited run level, restart every 1 min on failure (999x),
   no execution time limit, `IgnoreNew` for multiple instances. Action:
   `wscript.exe //B //Nologo sharpwave-service.vbs "<node>" "<dist\cli.js>" "<config>" "<log>"`.
   Registers only; pass `-StartNow` to start, `-WhatIf` to preview.
 - `sharpwave-service.task.xml` — the same task as importable XML (`schtasks /Create /XML`).
-- `uninstall-task.ps1` — stops + unregisters the task (data is left in place).
+- `uninstall-task.ps1` — stops + unregisters the task, then ends any node.exe still
+  running this checkout's `dist\cli.js serve` (`-KeepProcess` to skip); data is left in place.
+
+**Step-by-step Windows install (untested on Windows): `docs/windows-install-runbook.md`.**
+Seeding (idempotent `sharpwave-client seed` + admin-only `brain_seed` tool): `docs/seeding.md`.
 
 Install steps (on the Windows host, normal PowerShell, NOT run by this PR):
 

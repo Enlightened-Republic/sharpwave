@@ -24,7 +24,9 @@ import {
   dispatchBrainTool, BRAIN_TOOL_DEFS,
   validateBrainQuery, validateBrainWrite, validateBrainLink, validateBrainSupersede,
   validateBrainHistory, validateBrainExpand, validateBrainEdges, formatValidationErrors,
+  getDb, forgetNodeById,
 } from "sharpwave-core";
+import { createHash } from "node:crypto";
 import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "sharpwave-core";
 
 import { SHARED_BRAIN, type BrainManager } from "./brains.js";
@@ -98,10 +100,179 @@ export const SERVICE_TOOLS = [
   withProps("brain_edges", { visibility: { ...VIS_PROP, description: "Which brain holds the node. Default: your private brain, then shared." } }),
   withProps("brain_reset", { visibility: VIS_PROP }, [],
     "ADMIN ONLY, disabled unless the service sets allowReset. Wipes one brain (backup taken first). confirm must equal the brain name (your agent id, or \"shared\")."),
+  {
+    name: "brain_seed",
+    description:
+      "ADMIN ONLY (operator tooling, normally driven by `sharpwave-client seed`). Idempotent bulk import of pre-chunked " +
+      "notes from one source file into your private brain (default) or the shared brain. Every node gets " +
+      "source=\"seed:<source>#<content-hash>\", so re-importing the same chunk is a no-op. " +
+      "mode: import | dry-run (count new vs existing, write nothing) | remove (delete every node from this source) | " +
+      "list (count nodes per seed source; source \"*\" = all).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        mode: { type: "string", enum: ["import", "dry-run", "remove", "list"] },
+        source: { type: "string", description: "Source file name, e.g. 01-overview.md (letters, digits, . _ -). \"*\" only with mode=list." },
+        visibility: VIS_PROP,
+        prune: { type: "boolean", description: "import only: also delete nodes from this source whose hash is not in this batch (the batch must be the whole file)." },
+        chunks: {
+          type: "array",
+          description: "import / dry-run: the chunks of this source file.",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string" },
+              content: { type: "string" },
+              type: { type: "string", description: "Node type (default semantic). identity/goal are refused (they cannot be rolled back)." },
+              importance: { type: "number" },
+              tags: { type: "array", items: { type: "string" } },
+            },
+            required: ["label", "content"],
+          },
+        },
+      },
+      required: ["mode", "source"],
+    },
+  },
   EPISODE_TOOL_DEF,
 ];
 
 const TOOL_NAMES = new Set(SERVICE_TOOLS.map((t) => t.name));
+
+/** Tools listed to a principal: brain_seed only shows up for admin tokens. */
+export function toolsFor(p: Principal) {
+  return SERVICE_TOOLS.filter((t) => t.name !== "brain_seed" || p.scopes.has("admin"));
+}
+
+// ─── seeding ────────────────────────────────────────────────────────────────
+
+export const SEED_SOURCE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const SEED_TAG_RE = /^[A-Za-z0-9][A-Za-z0-9 _.:\/-]{0,63}$/;
+const SEED_MAX_CHUNKS = 1000;
+const SEED_UNROLLABLE = new Set(["identity", "goal"]);
+
+/** Node `source` for a seeded chunk: seed:<file>#<first 16 hex of sha256(type, label, content)>. */
+export function seedSourceFor(source: string, type: string, label: string, content: string): string {
+  const h = createHash("sha256").update(`${type}\n${label}\n${content}`, "utf8").digest("hex").slice(0, 16);
+  return `seed:${source}#${h}`;
+}
+
+interface SeedChunk { type: NodeType; label: string; content: string; importance?: number; src: string }
+
+function prepareSeedChunks(source: string, raw: unknown): { chunks: SeedChunk[] } | { error: string } {
+  if (!Array.isArray(raw)) return { error: "chunks must be an array" };
+  if (raw.length > SEED_MAX_CHUNKS) return { error: `too many chunks (${raw.length} > ${SEED_MAX_CHUNKS}); split the file` };
+  const out: SeedChunk[] = [];
+  const problems: string[] = [];
+  raw.forEach((c, i) => {
+    if (!c || typeof c !== "object") { problems.push(`chunk ${i}: not an object`); return; }
+    const o = c as Record<string, unknown>;
+    const type = typeof o["type"] === "string" && o["type"] ? o["type"] : "semantic";
+    if (SEED_UNROLLABLE.has(type)) { problems.push(`chunk ${i}: type "${type}" is protected from deletion, so it can't be seeded (no rollback)`); return; }
+    const tags = o["tags"] === undefined ? [] : o["tags"];
+    if (!Array.isArray(tags) || tags.length > 20 || !tags.every((t) => typeof t === "string" && SEED_TAG_RE.test(t))) {
+      problems.push(`chunk ${i}: tags must be up to 20 short strings (letters, digits, space _ . : / -)`); return;
+    }
+    const content = typeof o["content"] === "string" && tags.length ? `${o["content"]}\n\nTags: ${tags.join(", ")}` : o["content"];
+    const v = validateBrainWrite({ type, label: o["label"], content, importance: o["importance"] });
+    if (!v.ok) { problems.push(`chunk ${i}: ${formatValidationErrors(v.errors!).replace(/\n/g, "; ")}`); return; }
+    const d = v.data!;
+    out.push({ type: d.type as NodeType, label: d.label, content: d.content, importance: d.importance, src: seedSourceFor(source, d.type, d.label, d.content) });
+  });
+  if (problems.length) return { error: `Invalid chunks:\n${problems.slice(0, 20).join("\n")}${problems.length > 20 ? `\n(+${problems.length - 20} more)` : ""}` };
+  return { chunks: out };
+}
+
+/** Node ids whose source starts with `seed:<source>#` (or any seed when source is "*"). */
+function seededRows(brain: string, source: string): Array<{ id: string; source: string }> {
+  const prefix = source === "*" ? "seed:" : `seed:${source}#`;
+  return getDb(brain)
+    .prepare("SELECT id, source FROM nodes WHERE substr(source, 1, ?) = ? ORDER BY created_at")
+    .all(prefix.length, prefix) as Array<{ id: string; source: string }>;
+}
+
+async function brainSeed(ctx: ToolContext, args: Record<string, unknown>): Promise<ToolOutput> {
+  const p = ctx.principal;
+  if (!p.scopes.has("admin")) return err("forbidden — brain_seed needs the admin scope");
+  const mode = args["mode"];
+  if (mode !== "import" && mode !== "dry-run" && mode !== "remove" && mode !== "list") return err("mode must be import, dry-run, remove, or list");
+  const source = args["source"];
+  if (typeof source !== "string" || !(SEED_SOURCE_RE.test(source) || (source === "*" && mode === "list"))) {
+    return err(`source must be a file name (letters, digits, . _ -; max 128)${mode === "list" ? ' or "*"' : ""}`);
+  }
+  const vis = visibilityOf(args);
+  if (vis === "invalid") return err(`visibility must be "private" or "shared"`);
+  const brain = vis === "shared" ? SHARED_BRAIN : ctx.brains.privateBrain(p.agentId);
+  const where = label(ctx, brain);
+
+  if (mode === "list") {
+    const rows = await ctx.brains.write(brain, () => seededRows(brain, source));
+    const bySource: Record<string, number> = {};
+    for (const r of rows) {
+      const f = r.source.slice("seed:".length).split("#")[0]!;
+      bySource[f] = (bySource[f] ?? 0) + 1;
+    }
+    return ok(JSON.stringify({ mode, brain: where, total: rows.length, sources: bySource }, null, 2));
+  }
+
+  if (mode === "remove") {
+    const removed = await ctx.brains.write(brain, () => {
+      const noop = { info: () => {}, warn: () => {}, error: () => {} };
+      const ids: string[] = [];
+      for (const r of seededRows(brain, source)) {
+        if (forgetNodeById(brain, r.id, noop, { force: true }).ok) ids.push(r.id);
+      }
+      return ids;
+    });
+    for (const id of removed) ctx.audit.append({ agentId: p.agentId, tool: "brain_seed", brain, nodeId: id, outcome: "ok", detail: `remove seed:${source}` });
+    return ok(JSON.stringify({ mode, brain: where, source, removed: removed.length }, null, 2));
+  }
+
+  const prep = prepareSeedChunks(source, args["chunks"]);
+  if ("error" in prep) return err(prep.error);
+  const prune = args["prune"] === true;
+  const res = await ctx.brains.write(brain, () => {
+    const existing = new Map(seededRows(brain, source).map((r) => [r.source, r.id]));
+    const seen = new Set<string>();
+    const created: string[] = [];
+    let already = 0;
+    let duplicateInBatch = 0;
+    for (const c of prep.chunks) {
+      if (seen.has(c.src)) { duplicateInBatch++; continue; }
+      seen.add(c.src);
+      if (existing.has(c.src)) { already++; continue; }
+      if (mode === "import") {
+        const id = writeNode(brain, c.type, c.label, c.content, {
+          importance: c.importance ?? 0.6, source: c.src, writerAgentId: p.agentId, deduplicate: false,
+        });
+        queueEmbedding(brain, id);
+        created.push(id);
+      } else {
+        created.push("");
+      }
+    }
+    const stale = [...existing.entries()].filter(([src]) => !seen.has(src)).map(([, id]) => id);
+    const pruned: string[] = [];
+    if (mode === "import" && prune) {
+      const noop = { info: () => {}, warn: () => {}, error: () => {} };
+      for (const id of stale) if (forgetNodeById(brain, id, noop, { force: true }).ok) pruned.push(id);
+    }
+    return { created, already, duplicateInBatch, stale: stale.length, pruned };
+  });
+  if (mode === "import") {
+    for (const id of res.created) ctx.audit.append({ agentId: p.agentId, tool: "brain_seed", brain, nodeId: id, outcome: "ok", detail: `seed:${source}` });
+    for (const id of res.pruned) ctx.audit.append({ agentId: p.agentId, tool: "brain_seed", brain, nodeId: id, outcome: "ok", detail: `prune seed:${source}` });
+  }
+  return ok(JSON.stringify({
+    mode, brain: where, source, writer: p.agentId,
+    chunks: prep.chunks.length,
+    [mode === "import" ? "created" : "wouldCreate"]: res.created.length,
+    existing: res.already,
+    duplicateInBatch: res.duplicateInBatch,
+    staleFromEarlierVersions: res.stale,
+    ...(mode === "import" ? { pruned: res.pruned.length } : {}),
+  }, null, 2));
+}
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -263,6 +434,9 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
   const cfg = ctx.brainConfig;
   try {
     switch (name) {
+      case "brain_seed":
+        return await brainSeed(ctx, args);
+
       case "brain_query": {
         if (!has(p, "read")) return err("forbidden — this token has no read scope");
         const v = validateBrainQuery(stripClientFields(args));
