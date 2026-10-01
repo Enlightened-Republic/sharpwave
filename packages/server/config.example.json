@@ -9,5 +9,12 @@
   "allowReset": false,
   "embedDrainIntervalMs": 30000,
   "sleep":  { "enabled": true, "at": "03:30", "budgetMs": 900000, "respectGate": true },
-  "backup": { "enabled": true, "at": "02:30", "keep": 7 }
+  "backup": { "enabled": true, "at": "02:30", "keep": 7 },
+  "offsiteBackup": {
+    "enabled": false,
+    "keyFile": "%USERPROFILE%\\.sharpwave\\backup.key",
+    "folder": "G:\\My Drive\\SharpWave",
+    "keepDaily": 7,
+    "keepWeekly": 8
+  }
 }
