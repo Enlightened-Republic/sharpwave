@@ -113,11 +113,11 @@ The file counts and byte totals must match. **Write down the `$Bak` path** for r
 `sharpwave-server` is a private workspace package. It's **not on npm**, so `npm install sharpwave-server` won't work.
 Install it from the public GitHub repo at a **pinned commit**.
 
-Which commit: the SHA Engram gave in PR #10's description ("Pinned commit for install"). Once PR #10 is merged,
-use the merge commit on `main` instead. It must contain this runbook and `brain_seed`. 1.3 checks that.
+Which commit: pinned to the PR #12 merge commit on `main` (contains this runbook, `brain_seed`, `brain_episode_append` and `brain adopt`). To pin a newer main,
+replace the SHA below. It must contain this runbook and `brain_seed`. 1.3 checks that.
 
 ```powershell
-$Sha = "PASTE-THE-40-CHARACTER-SHA-HERE"
+$Sha = "1fe8e6e17e78569e753037decdaeffcf3671955c"
 New-Item -ItemType Directory -Force -Path C:\Users\wubbu\src | Out-Null
 ```
 
