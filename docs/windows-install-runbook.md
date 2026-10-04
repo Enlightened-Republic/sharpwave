@@ -25,7 +25,7 @@ Service: `sharpwave-server` 0.1.0 (`packages/server`), local-only on `127.0.0.1:
 ## Session variables: paste these into every new PowerShell window first
 
 ```powershell
-$Repo    = "C:\Users\wubbu\src\sharpwave"
+$Repo    = "C:\Users\wubbu\src\sharpwave"   # path can vary: Hailey's live checkouts are in C:\Users\wubbu\Desktop\Projects\{sharpwave,openwave}. Adjust $Repo/$Srv/$Cli/$Client (and $OwRepo in section 10) to match.
 $Srv     = "C:\Users\wubbu\src\sharpwave\packages\server"
 $Cli     = "C:\Users\wubbu\src\sharpwave\packages\server\dist\cli.js"
 $Client  = "C:\Users\wubbu\src\sharpwave\packages\server\bin\sharpwave-client.mjs"
@@ -667,8 +667,9 @@ restart in 10g.8, and that needs Hailey's OK.
 ```powershell
 $Legacy  = "C:\Users\wubbu\.sharpwave\main"
 $MainTok = "C:\Users\wubbu\.sharpwave\tokens\main.token"
-$OwRepo  = "C:\Users\wubbu\src\openwave"
-$OwSha   = "7e328cde77096e42a4d59d8650317019e5a394c5"   # openwave main: merge of PR #2 (remote brain mode)
+$OwRepo  = "C:\Users\wubbu\src\openwave"                  # path can vary, e.g. C:\Users\wubbu\Desktop\Projects\openwave
+$OwRoot  = Split-Path $OwRepo                               # folder the openwave tarball is packed into
+$OwSha   = "bd9e45b4a9189ba616aa18b6294fb430854da7a6"   # openwave main: merge of PR #3 (0.1.3, tool results fix, sharpwave-core ^0.4.5)
 $OcCfg   = "C:\Users\wubbu\.openclaw\openclaw.json"
 $Stamp   = Get-Date -Format "yyyyMMdd-HHmmss"
 ```
@@ -899,15 +900,12 @@ Expected: `main` finds the shared note (count ≥ 1); CoS finds **0** of main's 
 
 ### 10g. Install OpenWave into OpenClaw 2026.9.7 for `main`, remote mode
 
-**Why this particular install method.** openwave isn't on npm at a usable version: npm has `sharpwave-core` 0.4.3,
-and openwave needs ^0.4.4, so `npm ci` fails with `ETARGET`. The workaround from openwave PR #2 is to build core from
-the sharpwave checkout and `npm install --no-save` it. That leaves `node_modules\sharpwave-core` as a link pointing
-**outside** the openwave folder, and OpenClaw 2026.9.7's install safety scan refuses a folder like that
-(`openclaw plugins install <folder>` and `--link` both fail with `dependency boundary scan found node_modules symlink
-target outside install root`). So: build, **`npm pack`**, and install the tarball with `npm-pack:`. OpenClaw then installs
-it into its own managed project, like a registry plugin. This exact flow was verified on Linux against OpenClaw
-2026.9.7. The gateway loaded OpenWave in remote mode, the health check passed, `auth_check` returned `serviceAgentId:
-main`, and episode append was enabled. **[UNTESTED ON WINDOWS]**
+**Why this particular install method.** openwave isn't published to npm, so build it from the pinned commit and install
+the tarball. Since openwave 0.1.3 (PR #3), `sharpwave-core` ^0.4.5 comes from npm, so plain `npm ci` works and the old
+`npm install --no-save ..\sharpwave\packages\core` workaround is gone. Still install via **`npm pack`** + `npm-pack:`:
+OpenClaw 2026.9.7's install safety scan is strict about what's inside a plugin folder, and the tarball path installs into
+OpenClaw's own managed project like a registry plugin. Verified on Hailey's PC on 2026-10-01: 0.1.3 built from `bd9e45b`
+with plain `npm ci`, gateway restarted, `remote.auth_check` ok with `serviceAgentId: main`, no errors.
 
 **10g.1 Node.** OpenClaw 2026.9.7 requires Node **≥ 24.16** (`>=24.16.0 <25 || >=26.1.0`). The openwave build also
 installs `openclaw` as a dev dependency, which enforces the same requirement.
@@ -917,26 +915,27 @@ node -v
 openclaw --version
 ```
 
-**10g.2 Build openwave at the pinned commit.** Core comes from the sharpwave checkout built in 1.4:
+**10g.2 Build openwave at the pinned commit.**
 
 ```powershell
-Test-Path "$Repo\packages\core\dist\index.js"
-Set-Location C:\Users\wubbu\src
-git clone https://github.com/Enlightened-Republic/openwave.git $OwRepo
+Set-Location $OwRoot
+if (-not (Test-Path $OwRepo)) { git clone https://github.com/Enlightened-Republic/openwave.git $OwRepo }
 Set-Location $OwRepo
+git fetch origin
 git checkout --detach $OwSha
 git rev-parse HEAD
-npm.cmd install --no-save --no-audit --no-fund ..\sharpwave\packages\core
+npm.cmd ci --no-audit --no-fund
 npm.cmd run build
 Test-Path "$OwRepo\dist\index.js"
-npm.cmd pack --pack-destination C:\Users\wubbu\src
-Get-Item C:\Users\wubbu\src\openwave-0.1.2.tgz | Select-Object Name, Length
+npm.cmd pack --pack-destination $OwRoot
+Get-Item "$OwRoot\openwave-0.1.3.tgz" | Select-Object Name, Length
 git status --short
 ```
 
-Expected: `True`, the pinned SHA, `True`, a ~270 KB `openwave-0.1.2.tgz`, and a clean `git status`. `--no-save` leaves
-`package.json` and the lockfile alone. Don't run `npm ci` in the openwave folder. `npm install` downloads the
-`openclaw` dev dependency, which is large; give it a few minutes.
+Expected: the pinned SHA, `True`, an `openwave-0.1.3.tgz`, and a clean `git status`. If `$OwRepo` is an existing checkout
+with uncommitted work (Hailey's Desktop checkout may have some), **don't** discard it: clone a fresh copy into another
+folder instead and point `$OwRepo` there. `npm ci` downloads the `openclaw` dev dependency, which is large; give it a few
+minutes.
 
 **10g.3 Look at the current OpenClaw config, and back it up:**
 
@@ -1022,8 +1021,8 @@ openclaw config unset mcp.servers.sharpwave
 **10g.6 Install from the tarball, then build the native module:**
 
 ```powershell
-Set-Location C:\Users\wubbu\src
-openclaw plugins install "npm-pack:.\openwave-0.1.2.tgz" --force --accept-capabilities --no-enable
+Set-Location $OwRoot
+openclaw plugins install "npm-pack:.\openwave-0.1.3.tgz" --force --accept-capabilities --no-enable
 Set-Location "C:\Users\wubbu\.openclaw\npm\projects\openwave"
 npm.cmd rebuild better-sqlite3
 ```
@@ -1043,7 +1042,7 @@ openclaw config get plugins.entries.openwave.config.brainMode
 ```
 
 Expected: `Config valid`; `Status: enabled`, `Source: …\.openclaw\npm\projects\openwave\node_modules\openwave\dist\index.js`,
-`Version: 0.1.2`; `remote`.
+`Version: 0.1.3`; `remote`.
 
 **10g.8 Restart the gateway (Hailey's OK).** **Hot-reload caveat:** in 2026.9.7, changes under `plugins.*` hot-reload,
 the install applies through the running gateway, and entry config changes swap the plugin instance in place. Even so,
