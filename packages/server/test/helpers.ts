@@ -11,7 +11,8 @@ export function tempRoot(prefix = "sw-server-test-"): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-type Overrides = Partial<Omit<ServiceConfig, "sleep" | "backup" | "offsiteBackup">> & {
+type Overrides = Partial<Omit<ServiceConfig, "sleep" | "backup" | "offsiteBackup" | "provisioning">> & {
+  provisioning?: Partial<ServiceConfig["provisioning"]>;
   sleep?: Partial<ServiceConfig["sleep"]>;
   backup?: Partial<ServiceConfig["backup"]>;
   offsiteBackup?: Partial<ServiceConfig["offsiteBackup"]>;

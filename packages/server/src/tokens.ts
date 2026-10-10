@@ -14,7 +14,11 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const SCOPES = ["read", "write", "shared-write", "admin"] as const;
+/**
+ * `provision` is deliberately narrow: it only unlocks brain_provision_agent
+ * (loopback only) and grants no read/write on any brain.
+ */
+export const SCOPES = ["read", "write", "shared-write", "admin", "provision"] as const;
 export type Scope = (typeof SCOPES)[number];
 
 /** Agent ids double as private-brain directory names. */

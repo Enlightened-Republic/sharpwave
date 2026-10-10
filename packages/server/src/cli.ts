@@ -99,7 +99,7 @@ const HELP = `sharpwave-server ${VERSION} — SharpWave brain service
 
 Usage:
   sharpwave-server serve [--config file] [--root dir] [--port 18790] [--tailnet-ip 100.x.y.z|none] [--log-file f] [--no-sleep] [--no-backup]
-  sharpwave-server token mint --agent <id> [--scopes read,write[,shared-write][,admin]] [--label text] [--json]
+  sharpwave-server token mint --agent <id> [--scopes read,write[,shared-write][,admin|provision]] [--label text] [--json]
   sharpwave-server token list [--json]
   sharpwave-server token revoke <tokenId>
   sharpwave-server backup now [--keep N] [--brain name ...] [--no-offsite]

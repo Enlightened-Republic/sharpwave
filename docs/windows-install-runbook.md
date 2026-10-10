@@ -1191,3 +1191,227 @@ at `http://100.121.136.3:18790/health` answers. Tokens are still required for `/
 
 **T.4 Undo:** set `"tailnetHosts": []` again, restart as in T.3, then run (admin):
 `Remove-NetFirewallRule -DisplayName "SharpWave brain service (tailnet only)"`.
+
+---
+
+## 11. Auto-provisioning: new OpenClaw agents get a brain with zero manual steps
+
+**CONDITIONAL** on sharpwave PR "server: auto-provision agent brains" (`brain_provision_agent` + the `provision`
+scope) **and** openwave PR "auto-provision brains for new OpenClaw agents" (openwave **0.2.0**) both being merged.
+Do this with Hailey present. Nothing here touches any existing brain; the 8 agents that already have token files
+are left exactly as they are (provisioning is a no-op for them).
+
+What changes: before, adding an agent (e.g. `gano`) needed 4 hand steps (mint a token, write the token file, add
+the id to `agents`, restart the gateway). After this section, OpenWave serves **every** OpenClaw agent
+(`agents: "*"`). When it sees an agent with no token file it asks the brain service to create that agent's brain
+and mint its token (`read,write,shared-write`, set by the service, never by the request), writes
+`C:\Users\wubbu\.sharpwave\tokens\<agentId>.token`, and turns memory on for that agent. No gateway restart: the
+agent list is read from OpenClaw's live config, and the OpenClaw 2026.9.8 sandbox test showed `openclaw agents add`
+hot-applies (it re-registers the plugin in place, with the same gateway process).
+
+Paths on Hailey's PC (they differ from sections 1-10, which used `C:\Users\wubbu\src` and `.sharpwave-tokens`):
+
+```powershell
+$SwRepo  = "C:\Users\wubbu\Desktop\Projects\sharpwave"
+$OwRepo  = "C:\Users\wubbu\Desktop\Projects\openwave"
+$Cli     = "$SwRepo\packages\server\dist\cli.js"
+$Client  = "$SwRepo\packages\server\bin\sharpwave-client.mjs"
+$SvcRoot = "C:\Users\wubbu\.sharpwave\service"
+$Cfg     = "C:\Users\wubbu\.sharpwave\service\config.json"
+$TokDir  = "C:\Users\wubbu\.sharpwave\tokens"
+$Url     = "http://127.0.0.1:18790"
+$Task    = "SharpWave Brain Service"
+$Stamp   = Get-Date -Format "yyyyMMdd-HHmmss"
+```
+
+> The checkouts are Hailey's working folders. **Never** run `git reset --hard`, `git clean`, or `git checkout -- .`
+> there. If `git status` shows uncommitted changes, stop and ask her.
+
+**11.1 Confirm the scheduled task runs from this checkout** (so the rebuild below is what it runs):
+
+```powershell
+(Get-ScheduledTask -TaskName $Task).Actions | Select-Object Execute, Arguments
+```
+
+The arguments (or the `.vbs` they point to) must reference `$SwRepo\packages\server\dist\cli.js`. If they point at
+another checkout, do 11.2 in *that* folder instead.
+
+**11.2 Update and build the sharpwave server** (pin the merge commit of the sharpwave PR):
+
+```powershell
+$SwSha = "<sharpwave merge SHA>"
+Set-Location $SwRepo
+git status --short          # must be empty; otherwise stop
+git fetch origin
+git checkout --detach $SwSha
+git rev-parse HEAD
+npm.cmd ci
+npm.cmd run build
+Select-String -Path "$SwRepo\packages\server\src\provision.ts" -Pattern "brain_provision_agent" -SimpleMatch | Select-Object -First 1
+npm.cmd run test:server     # optional, ~10 s, hermetic
+```
+
+Expected: the SHA, one match, and (if run) every test file passing.
+
+**11.3 Restart the brain service task** (it's a hidden scheduled task; this is a ~2 s blip, OpenWave retries):
+
+```powershell
+Stop-ScheduledTask -TaskName $Task
+Start-Sleep -Seconds 2
+Start-ScheduledTask -TaskName $Task
+Start-Sleep -Seconds 3
+Get-ScheduledTaskInfo -TaskName $Task | Select-Object LastRunTime, LastTaskResult
+Invoke-RestMethod "$Url/health"
+```
+
+Expected: `status ok`. If `/health` fails, check the service log, and roll back with `git checkout --detach <old SHA>`,
+`npm.cmd run build`, then restart the task again.
+
+**11.4 Lock the tokens folder** (new token files inherit this ACL; OpenWave 0.2.0 also runs `icacls` on each token
+file it writes, so both layers apply):
+
+```powershell
+New-Item -ItemType Directory -Force -Path $TokDir | Out-Null
+icacls $TokDir /inheritance:r /grant:r "${env:USERNAME}:(OI)(CI)F" "SYSTEM:(OI)(CI)F"
+icacls $TokDir
+```
+
+Expected: only `wubbu` and `NT AUTHORITY\SYSTEM`, both with `(OI)(CI)(F)`.
+
+**11.5 Mint the provisioner token** straight into its file. Its only scope is `provision`: it can create a brain and
+mint an agent token over 127.0.0.1, and it **cannot read or write any brain** (it's not the CoS admin token, so a
+leak can't read anyone's memory or seed or reset anything). It's refused over the tailnet address even when Tailscale
+is back.
+
+```powershell
+$ProvFile = Join-Path $TokDir "_provisioner.token"
+if (Test-Path $ProvFile) { throw "$ProvFile already exists - revoke the old one first (token list / token revoke)" }
+$j = node $Cli token mint --config $Cfg --agent openwave-provisioner --scopes provision --label "OpenWave auto-provisioner" --json | ConvertFrom-Json
+[System.IO.File]::WriteAllText($ProvFile, $j.token)
+Remove-Variable j
+node $Cli token list --config $Cfg | Select-String "openwave-provisioner"
+```
+
+Expected: one line `agent=openwave-provisioner scopes=provision`. The token is never shown on screen.
+
+**11.6 Build and install openwave 0.2.0** (pin the openwave merge SHA; plain `npm ci` works since 0.1.3):
+
+```powershell
+$OwSha = "<openwave merge SHA>"
+Set-Location $OwRepo
+git status --short          # must be empty; otherwise stop
+git fetch origin
+git checkout --detach $OwSha
+npm.cmd ci
+npm.cmd run build
+npm.cmd pack
+Get-Item .\openwave-0.2.0.tgz
+openclaw config get plugins.entries.openwave --json | Set-Content "C:\Users\wubbu\.sharpwave\openwave-entry-$Stamp.json" -Encoding ascii
+openclaw plugins install "npm-pack:$OwRepo\openwave-0.2.0.tgz" --force --accept-capabilities --no-enable
+openclaw plugins inspect openwave
+```
+
+Expected: `Installed plugin: openwave`, version 0.2.0, Status enabled (the existing entry keeps it enabled). If the
+gateway log later shows a `better-sqlite3` `NODE_MODULE_VERSION` error, run
+`Set-Location "C:\Users\wubbu\.openclaw\npm\projects\openwave"; npm.cmd rebuild better-sqlite3` as in 10g.
+
+**11.7 Config patch: serve every agent and auto-provision.** The explicit `agents: [...]` list is replaced by `"*"`.
+Keep `brainMode`, `brainUrl` and `brainTokenFile` as they are (the patch merges objects).
+
+```powershell
+$Patch = "C:\Users\wubbu\.sharpwave\openwave-autoprovision-$Stamp.json5"
+@'
+{
+  plugins: { entries: { openwave: { config: {
+    agents: "*",
+    excludeAgents: [],
+    autoProvision: true,
+    provisionTokenFile: "C:\\Users\\wubbu\\.sharpwave\\tokens\\_provisioner.token",
+    rosterPollMs: 30000,
+  } } } },
+}
+'@ | Set-Content $Patch -Encoding ascii
+openclaw config patch --file $Patch --dry-run
+openclaw config patch --file $Patch
+openclaw config get plugins.entries.openwave.config
+```
+
+Check: `brainTokenFile` is still `C:\Users\wubbu\.sharpwave\tokens\{agentId}.token` (it **must** contain
+`{agentId}`), `brainMode` is `remote`, and `hooks.allowConversationAccess` is still `true`. To keep an agent off
+the brain service entirely, list its id in `excludeAgents`.
+
+**11.8 Restart the gateway** (Hailey's OK). Not strictly required, since the config change hot-reloads, but it
+gives a clean `gateway_start` with the health and token checks in the log:
+
+```powershell
+openclaw gateway restart --safe
+```
+
+**Known failure on this PC:** `openclaw gateway restart` once failed with `port 18789 is still busy`. The
+old gateway is still shutting down (draining runs). Don't kill node processes. Recover with:
+
+```powershell
+openclaw gateway start
+Start-Sleep -Seconds 120          # recovery took ~2 minutes last time
+openclaw gateway status
+Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue | Select-Object OwningProcess
+```
+
+If it still isn't listening after ~3 minutes, run `openclaw gateway start` once more, then stop and look at the gateway log.
+
+**11.9 Check the gateway log:**
+
+```text
+[openwave] {"op":"register","outcome":"ok","brainMode":"remote",...,"agents":"* (8)",...}
+[openwave] {"op":"agents.roster","outcome":"dynamic","agents":"main,gion,algen,wren,gray,cade,neva,gano","excluded":"","autoProvision":true,"pollMs":30000}
+[openwave] {"agentId":"main","op":"remote.auth_check","outcome":"ok","serviceAgentId":"main"}   (one per agent)
+```
+
+There must be **no** `"op":"provision"` lines for the 8 existing agents (their token files exist), and no
+`BAD BRAIN TOKEN`, `unauthorized` or `misconfigured`.
+
+**11.10 Smoke test with a throwaway agent** (optional, ~1 min, creates and then deletes agent `provtest`):
+
+```powershell
+openclaw agents add provtest --workspace "C:\Users\wubbu\.openclaw\workspace-provtest" --non-interactive
+Start-Sleep -Seconds 40
+Test-Path (Join-Path $TokDir "provtest.token")
+icacls (Join-Path $TokDir "provtest.token")
+node $Client stats --url $Url --token-file (Join-Path $TokDir "provtest.token")
+```
+
+Expected: `True`; the ACL shows only `wubbu` and `SYSTEM` (inherited); stats answer for agent `provtest` with 0 nodes.
+The log shows `"op":"provision","outcome":"provisioned"` then `"op":"agent.activated"`, with no gateway restart.
+Clean up:
+
+```powershell
+openclaw agents delete provtest
+$id = (node $Cli token list --config $Cfg | Select-String "agent=provtest " | ForEach-Object { ($_ -split '\s+')[0] })
+node $Cli token revoke --config $Cfg $id
+Remove-Item (Join-Path $TokDir "provtest.token")
+```
+
+(The empty `brains\provtest` folder can stay. It's harmless and gets backed up like any brain.)
+
+**11.11 Troubleshooting**
+
+| Log line | Meaning / fix |
+|---|---|
+| `"op":"provision","outcome":"unreachable"... "will retry with backoff"` | Brain service down. The turn still runs without memory; OpenWave retries (2 s up to 5 min). Fix the service (11.3). |
+| `"op":"provision","outcome":"misconfigured"` | `provisionTokenFile` missing/unreadable, or `brainTokenFile` lacks `{agentId}`. |
+| `"op":"provision","outcome":"refused"... "provision scope"` / `"127.0.0.1"` | Wrong token in `_provisioner.token`, or `brainUrl` is not 127.0.0.1. |
+| `"outcome":"token_file_missing"` | The service already has a token for that agent but its `.token` file is gone. The plaintext can't be recovered: `token revoke` the listed id(s), delete nothing else; OpenWave re-provisions on its next retry (at most ~5 minutes later). |
+| `"outcome":"token_write_failed"` | A token was minted but `icacls`/the write failed, so no file was left. Fix the tokens folder (11.4), `token revoke` the id in the message; OpenWave re-provisions within ~5 minutes. |
+| `max agents reached` / `rate limit` | Service guards (`provisioning.maxAgents` default 64, `provisioning.maxPerHour` default 20). Raise them in `config.json` under `"provisioning"` and restart the task. |
+
+**11.12 Rollback:** put the explicit list back and turn provisioning off. Nothing else changes, and the token files
+it wrote keep working:
+
+```powershell
+@'
+{ plugins: { entries: { openwave: { config: { agents: ["main","gion","algen","wren","gray","cade","neva","gano"], autoProvision: false } } } } }
+'@ | openclaw config patch --stdin
+node $Cli token revoke --config $Cfg <openwave-provisioner token id>   # optional
+```
+
+To disable provisioning server-side as well, add `"provisioning": { "enabled": false }` to `config.json` and restart the task.

@@ -32,6 +32,7 @@ import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "
 import { SHARED_BRAIN, type BrainManager } from "./brains.js";
 import type { AuditLog } from "./audit.js";
 import type { Principal, Scope } from "./tokens.js";
+import { PROVISION_TOOL_DEF, PROVISION_TOOL_NAME, provisionAgent, type ProvisionRateLimiter, type ProvisioningConfig } from "./provision.js";
 import { EPISODE_TOOL_DEF, EPISODE_TOOL_NAME, callEpisodeAppend } from "./episode-tool.js";
 
 export const WRITE_SOURCE = "sharpwave-server";
@@ -46,6 +47,10 @@ export interface ToolContext {
   sessionId: (agentId: string) => string;
   /** brain_episode_append skips system-noise turns (ServiceConfig.skipSystemNoiseEpisodes). Default true. */
   skipSystemNoiseEpisodes?: boolean;
+  /** Provisioning (brain_provision_agent). Absent = tool refuses. */
+  provisioning?: { tokensFile: string; config: ProvisioningConfig; limiter: ProvisionRateLimiter };
+  /** True when the request arrived on a loopback listener from a loopback peer. */
+  loopback?: boolean;
 }
 
 export interface ToolOutput {
@@ -137,13 +142,20 @@ export const SERVICE_TOOLS = [
     },
   },
   EPISODE_TOOL_DEF,
+  PROVISION_TOOL_DEF,
 ];
 
 const TOOL_NAMES = new Set(SERVICE_TOOLS.map((t) => t.name));
 
 /** Tools listed to a principal: brain_seed only shows up for admin tokens. */
 export function toolsFor(p: Principal) {
-  return SERVICE_TOOLS.filter((t) => t.name !== "brain_seed" || p.scopes.has("admin"));
+  return SERVICE_TOOLS.filter((t) => {
+    if (t.name === "brain_seed") return p.scopes.has("admin");
+    if (t.name === PROVISION_TOOL_NAME) return p.scopes.has("admin") || p.scopes.has("provision");
+    // A provision-only token sees just the provisioning tool.
+    if (p.scopes.size === 1 && p.scopes.has("provision")) return false;
+    return true;
+  });
 }
 
 // ─── seeding ────────────────────────────────────────────────────────────────
@@ -427,8 +439,22 @@ function statsFor(db: Database.Database, which: "private" | "shared"): BrainStat
 // ─── dispatcher ─────────────────────────────────────────────────────────────
 
 export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<string, unknown>): Promise<ToolOutput> {
+  if (name === EPISODE_TOOL_NAME && ![...ctx.principal.scopes].some((s) => s !== "provision")) {
+    return err(`forbidden — this token only has the provision scope and may call only ${PROVISION_TOOL_NAME}`);
+  }
   if (name === EPISODE_TOOL_NAME) {
     try { return await callEpisodeAppend(ctx, rawArgs ?? {}); } catch (e) { return err(String(e instanceof Error ? e.message : e)); }
+  }
+  if (name === PROVISION_TOOL_NAME) {
+    if (!ctx.provisioning) return err("provisioning is not configured on this service");
+    try {
+      return provisionAgent({ principal: ctx.principal, brains: ctx.brains, audit: ctx.audit, loopback: ctx.loopback === true, ...ctx.provisioning }, rawArgs ?? {});
+    } catch (e) { return err(String(e instanceof Error ? e.message : e)); }
+  }
+  // Defense in depth: a provision-only token (openwave-provisioner) may call
+  // nothing but brain_provision_agent, regardless of each tool's own checks.
+  if (![...ctx.principal.scopes].some((s) => s !== "provision")) {
+    return err(`forbidden — this token only has the provision scope and may call only ${PROVISION_TOOL_NAME}`);
   }
   if (!TOOL_NAMES.has(name)) return err(`unknown tool: ${name}`);
   const args = rawArgs ?? {};
