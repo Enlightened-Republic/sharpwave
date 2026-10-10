@@ -439,6 +439,9 @@ function statsFor(db: Database.Database, which: "private" | "shared"): BrainStat
 // ─── dispatcher ─────────────────────────────────────────────────────────────
 
 export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<string, unknown>): Promise<ToolOutput> {
+  if (name === EPISODE_TOOL_NAME && ![...ctx.principal.scopes].some((s) => s !== "provision")) {
+    return err(`forbidden — this token only has the provision scope and may call only ${PROVISION_TOOL_NAME}`);
+  }
   if (name === EPISODE_TOOL_NAME) {
     try { return await callEpisodeAppend(ctx, rawArgs ?? {}); } catch (e) { return err(String(e instanceof Error ? e.message : e)); }
   }
@@ -447,6 +450,11 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
     try {
       return provisionAgent({ principal: ctx.principal, brains: ctx.brains, audit: ctx.audit, loopback: ctx.loopback === true, ...ctx.provisioning }, rawArgs ?? {});
     } catch (e) { return err(String(e instanceof Error ? e.message : e)); }
+  }
+  // Defense in depth: a provision-only token (openwave-provisioner) may call
+  // nothing but brain_provision_agent, regardless of each tool's own checks.
+  if (![...ctx.principal.scopes].some((s) => s !== "provision")) {
+    return err(`forbidden — this token only has the provision scope and may call only ${PROVISION_TOOL_NAME}`);
   }
   if (!TOOL_NAMES.has(name)) return err(`unknown tool: ${name}`);
   const args = rawArgs ?? {};

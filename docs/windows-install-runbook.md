@@ -1267,8 +1267,8 @@ Invoke-RestMethod "$Url/health"
 Expected: `status ok`. If `/health` fails, check the service log, and roll back with `git checkout --detach <old SHA>`,
 `npm.cmd run build`, then restart the task again.
 
-**11.4 Lock the tokens folder** (new token files inherit this ACL; on Windows OpenWave relies on the inheritance
-rather than spawning `icacls` per file):
+**11.4 Lock the tokens folder** (new token files inherit this ACL; OpenWave 0.2.0 also runs `icacls` on each token
+file it writes, so both layers apply):
 
 ```powershell
 New-Item -ItemType Directory -Force -Path $TokDir | Out-Null
@@ -1400,7 +1400,8 @@ Remove-Item (Join-Path $TokDir "provtest.token")
 | `"op":"provision","outcome":"unreachable"... "will retry with backoff"` | Brain service down. The turn still runs without memory; OpenWave retries (2 s up to 5 min). Fix the service (11.3). |
 | `"op":"provision","outcome":"misconfigured"` | `provisionTokenFile` missing/unreadable, or `brainTokenFile` lacks `{agentId}`. |
 | `"op":"provision","outcome":"refused"... "provision scope"` / `"127.0.0.1"` | Wrong token in `_provisioner.token`, or `brainUrl` is not 127.0.0.1. |
-| `"outcome":"token_file_missing"` | The service already has a token for that agent but its `.token` file is gone. The plaintext can't be recovered: `token revoke` the listed id(s), delete nothing else; OpenWave re-provisions within `rosterPollMs`. |
+| `"outcome":"token_file_missing"` | The service already has a token for that agent but its `.token` file is gone. The plaintext can't be recovered: `token revoke` the listed id(s), delete nothing else; OpenWave re-provisions on its next retry (at most ~5 minutes later). |
+| `"outcome":"token_write_failed"` | A token was minted but `icacls`/the write failed, so no file was left. Fix the tokens folder (11.4), `token revoke` the id in the message; OpenWave re-provisions within ~5 minutes. |
 | `max agents reached` / `rate limit` | Service guards (`provisioning.maxAgents` default 64, `provisioning.maxPerHour` default 20). Raise them in `config.json` under `"provisioning"` and restart the task. |
 
 **11.12 Rollback:** put the explicit list back and turn provisioning off. Nothing else changes, and the token files

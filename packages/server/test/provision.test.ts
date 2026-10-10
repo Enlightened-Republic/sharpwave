@@ -134,4 +134,28 @@ describe("brain_provision_agent", () => {
     expect(existsSync(h.svc.brains.dbPath("x"))).toBe(false);
     expect(parse((await tool(h.url, prov, "brain_provision_agent", { agentId: "x" })).text).status).toBe("provisioned");
   });
+
+  it("provision-only token is refused by EVERY non-provisioning tool (allowlist, not per-tool checks)", async () => {
+    h = await startService();
+    const prov = h.mint("openwave-provisioner", ["provision"]);
+    const { SERVICE_TOOLS } = await import("../src/tools.js");
+    for (const t of SERVICE_TOOLS) {
+      if (t.name === "brain_provision_agent") continue;
+      const r = await tool(h.url, prov, t.name, {});
+      expect(r.isError, t.name).toBe(true);
+      expect(r.text, t.name).toMatch(/forbidden/);
+    }
+    expect(h.svc.brains.listBrains()).not.toContain("openwave-provisioner");
+  });
+
+  it("is idempotent under concurrent requests: one new agent, 8 parallel calls, exactly one token minted", async () => {
+    h = await startService();
+    const prov = h.mint("openwave-provisioner", ["provision"]);
+    const rs = await Promise.all(Array.from({ length: 8 }, () => tool(h!.url, prov, "brain_provision_agent", { agentId: "wren" })));
+    const st = rs.map((r) => parse(r.text).status);
+    expect(st.filter((s) => s === "provisioned")).toHaveLength(1);
+    expect(st.filter((s) => s === "already-provisioned")).toHaveLength(7);
+    expect(rs.filter((r) => r.text.includes("swt_"))).toHaveLength(1);
+    expect(readTokenFile(h.cfg.tokensFile).tokens.filter((t) => t.agentId === "wren" && !t.revoked)).toHaveLength(1);
+  });
 });
