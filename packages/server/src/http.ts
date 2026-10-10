@@ -17,11 +17,12 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import type { TokenStore, Principal } from "./tokens.js";
 import { callTool, toolsFor, type ToolContext } from "./tools.js";
 import type { Logger } from "./log.js";
+import { isLoopbackAddress } from "./provision.js";
 import { VERSION } from "./version.js";
 
 export interface HttpDeps {
   tokens: TokenStore;
-  makeContext: (p: Principal) => ToolContext;
+  makeContext: (p: Principal, conn: { loopback: boolean }) => ToolContext;
   addresses: () => string[];
   maxBodyBytes: number;
   allowedOrigins: string[];
@@ -100,7 +101,9 @@ export function createHandler(deps: HttpDeps) {
         return rpcError(res, status, -32700, status === 413 ? "Payload too large" : "Parse error");
       }
 
-      const ctx = deps.makeContext(principal);
+      // Loopback = arrived on the 127.0.0.1 listener AND from a loopback peer (tailnet listener → false).
+      const loopback = isLoopbackAddress(req.socket.localAddress) && isLoopbackAddress(req.socket.remoteAddress);
+      const ctx = deps.makeContext(principal, { loopback });
       const server = new Server({ name: "sharpwave-server", version: VERSION }, { capabilities: { tools: {} } });
       server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolsFor(principal) }));
       server.setRequestHandler(CallToolRequestSchema, async (request) => {

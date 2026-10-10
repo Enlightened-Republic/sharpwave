@@ -8,6 +8,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { defaultOffsiteConfig, type OffsiteConfig } from "./offsite.js";
+import { defaultProvisioningConfig, type ProvisioningConfig } from "./provision.js";
 
 export type { OffsiteConfig } from "./offsite.js";
 
@@ -77,6 +78,8 @@ export interface ServiceConfig {
   backup: BackupConfig;
   /** Encrypted off-PC copies of each snapshot (off by default). */
   offsiteBackup: OffsiteConfig;
+  /** brain_provision_agent settings (scopes are server-side only). */
+  provisioning: ProvisioningConfig;
   /** Optional log file (append). When unset logs go to stderr. */
   logFile?: string;
 }
@@ -105,6 +108,7 @@ export function defaultConfig(root = defaultRoot()): ServiceConfig {
     sleep: { enabled: true, at: "03:30", budgetMs: 15 * 60_000, respectGate: true },
     backup: { enabled: true, at: "02:30", keep: 7 },
     offsiteBackup: defaultOffsiteConfig(),
+    provisioning: defaultProvisioningConfig(),
   };
 }
 
@@ -124,7 +128,8 @@ export function defaultKeyFile(): string {
   return join(homedir(), ".sharpwave", "backup.key");
 }
 
-export type Partialish = Partial<Omit<ServiceConfig, "sleep" | "backup" | "offsiteBackup">> & {
+export type Partialish = Partial<Omit<ServiceConfig, "sleep" | "backup" | "offsiteBackup" | "provisioning">> & {
+  provisioning?: Partial<ProvisioningConfig>;
   sleep?: Partial<SleepConfig>;
   backup?: Partial<BackupConfig>;
   offsiteBackup?: Partial<OffsiteConfig>;
@@ -144,6 +149,7 @@ export function resolveConfig(overrides: Partialish = {}): ServiceConfig {
     sleep: { ...base.sleep, ...stripUndefined(overrides.sleep ?? {}) },
     backup: { ...base.backup, ...stripUndefined(overrides.backup ?? {}) },
     offsiteBackup: { ...base.offsiteBackup, ...stripUndefined(overrides.offsiteBackup ?? {}) },
+    provisioning: { ...base.provisioning, ...stripUndefined(overrides.provisioning ?? {}) },
   };
   cfg.tokensFile = resolve(expandHome(overrides.tokensFile ?? base.tokensFile));
   cfg.auditFile = resolve(expandHome(overrides.auditFile ?? base.auditFile));

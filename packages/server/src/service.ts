@@ -29,6 +29,7 @@ import { makeOffsite, snapshotAndAudit, type BackupRun } from "./backup-job.js";
 import type { OffsiteBackup } from "./offsite.js";
 import { scheduleDaily, type DailyJob } from "./schedule.js";
 import type { ToolContext } from "./tools.js";
+import { ProvisionRateLimiter, assertSafeProvisionScopes } from "./provision.js";
 
 export interface ServiceOptions {
   log?: Logger;
@@ -64,6 +65,9 @@ export class BrainService {
     this.tokens = new TokenStore(cfg.tokensFile);
     this.sleep = new SleepRunner(this.brains, this.brainConfig, cfg.sleep.budgetMs, cfg.sleep.respectGate, this.log, this.audit);
     this.offsite = makeOffsite(cfg, this.log, this.audit);
+    // Refuse to start with escalating provisioning scopes.
+    assertSafeProvisionScopes(cfg.provisioning.scopes);
+    this.provisionLimiter = new ProvisionRateLimiter(cfg.provisioning.maxPerHour);
   }
 
   get port(): number {
@@ -79,7 +83,11 @@ export class BrainService {
     return `http://${host}:${this._port}`;
   }
 
-  private makeContext = (principal: Principal): ToolContext => ({
+  private readonly provisionLimiter: ProvisionRateLimiter;
+
+  private makeContext = (principal: Principal, conn: { loopback: boolean } = { loopback: false }): ToolContext => ({
+    loopback: conn.loopback,
+    provisioning: { tokensFile: this.cfg.tokensFile, config: this.cfg.provisioning, limiter: this.provisionLimiter },
     principal,
     brains: this.brains,
     audit: this.audit,
