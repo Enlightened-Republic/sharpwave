@@ -314,9 +314,9 @@ describe("fork + three-way merge", () => {
 });
 
 describe("tools + performance", () => {
-  it("brain_export_soul is self-only; brain_review accept/reject and brain_import_soul need admin", () => {
+  it("brain_export_soul is self-only; brain_review accept/reject and brain_import_soul need admin", async () => {
     const a = fresh(); seedSoul(a);
-    expect(SOUL_TOOL_NAMES).toEqual(["brain_export_soul", "brain_review", "brain_import_soul"]);
+    expect(SOUL_TOOL_NAMES).toEqual(["brain_export_soul", "brain_import_soul", "brain_review"]);
     const sum = dispatchSoulTool("brain_export_soul", a, {}, cfg, { admin: false, by: a })!;
     expect(sum.text).toMatch(/xanima-soul\/1, compact/);
     const js = dispatchSoulTool("brain_export_soul", a, { format: "json" }, cfg, { admin: false, by: a })!;
@@ -330,6 +330,13 @@ describe("tools + performance", () => {
     expect(dispatchSoulTool("brain_review", b, { action: "accept", id }, cfg, { admin: false, by: b })!.isError).toBe(true);
     expect(dispatchSoulTool("brain_review", b, { action: "show", id }, cfg, { admin: false, by: b })!.text).toContain(id);
     expect(dispatchSoulTool("brain_review", b, { action: "accept", id }, cfg, { admin: true, by: "admin" })!.text).toMatch(/^accepted/);
+    // through the generic brain tool dispatcher: brain_review with action = queue (never admin), without = FSRS review
+    const { dispatchBrainTool } = await import("../src/tools.js");
+    expect((await dispatchBrainTool("brain_review", b, { action: "list", status: "all" }, cfg as never)).text).toMatch(/accepted/);
+    const id2 = listReviews(getDb(b))[0]!.id;
+    expect((await dispatchBrainTool("brain_review", b, { action: "accept", id: id2 }, cfg as never)).isError).toBe(true);
+    expect((await dispatchBrainTool("brain_export_soul", a, {}, cfg as never)).text).toMatch(/xanima-soul\/1/);
+    expect((await dispatchBrainTool("brain_import_soul", b, { package: js.text }, cfg as never)).text).toMatch(/needs an admin/);
   });
 
   it("the agent's injection after import + accept shows the imported identity and goals", async () => {

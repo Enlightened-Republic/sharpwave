@@ -28,15 +28,6 @@ export const SOUL_TOOL_DEFS: Record<string, SoulToolDef> = {
       format: { type: "string", enum: ["summary", "json"] },
     } },
   },
-  brain_review: {
-    description: "Pending-review queue: identity / value / goal changes from soul imports and three-way merge conflicts (with conflict markers). list (status pending|accepted|rejected|all), show (id). accept / reject need an admin (a human decides what reaches your identity and goals).",
-    inputSchema: { type: "object", properties: {
-      action: { type: "string", enum: ["list", "show", "accept", "reject"] },
-      id: { type: "string", description: "Review item id (or a unique prefix)." },
-      status: { type: "string", enum: ["pending", "accepted", "rejected", "all"] },
-      reason: { type: "string" },
-    }, required: ["action"] },
-  },
   brain_import_soul: {
     description: "ADMIN ONLY. Import a Soul Package into this brain (mode new | merge, dry_run). Validates schema and hash; identity, values and goals go to review; differences never overwrite.",
     inputSchema: { type: "object", properties: {
@@ -45,9 +36,18 @@ export const SOUL_TOOL_DEFS: Record<string, SoulToolDef> = {
     }, required: ["package"] },
   },
 };
-export const SOUL_TOOL_NAMES = Object.keys(SOUL_TOOL_DEFS);
+/** brain_review already exists (FSRS review of one node); the pending-review queue is its `action` mode. */
+export const REVIEW_QUEUE_PROPS: Record<string, unknown> = {
+  action: { type: "string", enum: ["list", "show", "accept", "reject"], description: "Pending-review queue mode (Xanima 0.4.0): identity / value / goal changes from soul imports and three-way merge conflicts. list (status), show (id); accept / reject need an admin." },
+  id: { type: "string", description: "Review item id (or a unique prefix) for show / accept / reject." },
+  status: { type: "string", enum: ["pending", "accepted", "rejected", "all"], description: "list filter (default pending)." },
+  reason: { type: "string", description: "Why (accept note / reject reason)." },
+};
+export const SOUL_TOOL_NAMES = [...Object.keys(SOUL_TOOL_DEFS), "brain_review"];
 /** The subset an agent may call on its own brain (plugin remote proxy offers these). */
 export const SOUL_AGENT_TOOLS = ["brain_export_soul", "brain_review"];
+/** True when a brain_review call is a review-queue call (has `action`), not an FSRS node review. */
+export function isReviewQueueCall(name: string, args: Record<string, unknown>): boolean { return name === "brain_review" && typeof args["action"] === "string"; }
 /** Calls that only read (scope read): export, review list/show. */
 export function soulToolNeedsAdmin(name: string, args: Record<string, unknown>): boolean {
   if (name === "brain_import_soul") return true;

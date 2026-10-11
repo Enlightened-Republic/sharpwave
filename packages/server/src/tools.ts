@@ -28,7 +28,10 @@ import {
   retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
   parseAsOf, relativeTime, beliefTag, parseConfidence, parseBeliefArgs,
   CONTINUITY_TOOL_NAMES, CONTINUITY_READ_ONLY_TOOLS, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost,
+  SOUL_TOOL_DEFS, dispatchSoulTool, soulToolNeedsAdmin,
 } from "xanima-core";
+import { join as joinPath } from "node:path";
+import { mkdirSync as mkdirSyncFs } from "node:fs";
 import { createHash } from "node:crypto";
 import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "xanima-core";
 
@@ -115,6 +118,9 @@ export const SERVICE_TOOLS = [
     "ADMIN ONLY, disabled unless the service sets allowReset. Wipes one brain (backup taken first). confirm must equal the brain name (your agent id, or \"shared\")."),
   withProps("brain_retract", { visibility: VIS_PROP }),
   withProps("brain_status", { visibility: { type: "string", enum: ["all", "private", "shared"], description: "Which brain(s) to report (default all)." } }),
+  // Xanima 0.4.0 Soul Package: export of self (read scope); import is admin-only (listed to admin tokens only).
+  withProps("brain_export_soul", {}),
+  { name: "brain_import_soul", description: SOUL_TOOL_DEFS["brain_import_soul"]!.description + " Targets the admin token's own agent brain; a backup is taken first. Prefer `xanima-server soul import` (service stopped).", inputSchema: SOUL_TOOL_DEFS["brain_import_soul"]!.inputSchema },
   // Xanima 0.2.0 decision ledger + goals, 0.3.0 reflection / open items / plans / meta-tools — always on the caller's PRIVATE brain.
   ...CONTINUITY_TOOL_NAMES.map((n) => withProps(n, {})),
   {
@@ -169,7 +175,7 @@ const TOOL_NAMES = new Set(SERVICE_TOOLS.map((t) => t.name));
 /** Tools listed to a principal: brain_seed only shows up for admin tokens. */
 export function toolsFor(p: Principal) {
   return SERVICE_TOOLS.filter((t) => {
-    if (t.name === "brain_seed") return p.scopes.has("admin");
+    if (t.name === "brain_seed" || t.name === "brain_import_soul") return p.scopes.has("admin");
     if (t.name === PROVISION_TOOL_NAME) return p.scopes.has("admin") || p.scopes.has("provision");
     // A provision-only token sees just the provisioning tool.
     if (p.scopes.size === 1 && p.scopes.has("provision")) return false;
@@ -480,6 +486,31 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
   const p = ctx.principal;
   const cfg = ctx.brainConfig;
   try {
+    if (name === "brain_export_soul" || name === "brain_import_soul" || (name === "brain_review" && typeof args["action"] === "string")) {
+      // Soul Package tools — always the caller's PRIVATE brain. Export / review list|show: read scope.
+      // Import / review accept|reject: admin scope (identity and goal changes are a human/admin decision).
+      const admin = p.scopes.has("admin");
+      const needsAdmin = soulToolNeedsAdmin(name, args);
+      if (needsAdmin && !admin) {
+        ctx.audit.append({ agentId: p.agentId, tool: name, brain: p.agentId, nodeId: null, outcome: "denied", detail: `needs admin${args["action"] ? ` (${String(args["action"])})` : ""}` });
+        return err(`forbidden — ${name}${args["action"] ? ` ${String(args["action"])}` : ""} needs the admin scope (or run xanima-server soul … on the brain host)`);
+      }
+      if (!needsAdmin && !has(p, "read")) return err(`forbidden — ${name} needs the read scope`);
+      if (args["visibility"] === "shared") return err(`${name} works on your private brain only`);
+      const brain = ctx.brains.privateBrain(p.agentId);
+      const { visibility: _v, writer_agent_id: _w, agent: _a, ...rest } = args;
+      const backup = () => {
+        const dir = joinPath(ctx.brains.brainsDir, "..", "backups", brain, "soul");
+        mkdirSyncFs(dir, { recursive: true });
+        const f = joinPath(dir, `pre-soul-import-${new Date().toISOString().replace(/[:.]/g, "-")}.db`);
+        getDb(brain).exec(`VACUUM INTO '${f.replace(/'/g, "''")}'`);
+        return f;
+      };
+      const r = await ctx.brains.write(brain, () => dispatchSoulTool(name, brain, rest, cfg, { admin, by: `${p.agentId}${admin ? ":admin" : ""}`, backup }));
+      if (!r) return err(`unknown tool: ${name}`);
+      if (needsAdmin || name === "brain_export_soul") ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: r.isError ? "error" : "ok", detail: String(args["action"] ?? args["profile"] ?? args["mode"] ?? "") });
+      return r.isError ? { text: r.text, isError: true } : ok(r.text);
+    }
     if (CONTINUITY_TOOL_NAMES.includes(name) || name === TURN_CONTEXT_TOOL) {
       const needs: Scope = CONTINUITY_READ_ONLY.has(name) ? "read" : "write";
       if (!has(p, needs)) return err(`forbidden — ${name} needs the ${needs} scope`);

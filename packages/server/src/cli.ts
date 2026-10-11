@@ -15,12 +15,26 @@
 //   xanima-server noise retire   --agent <id> --ids-file <reviewed.csv|json|txt> [--dry-run] [--json]
 //   xanima-server noise unretire --agent <id> (--batch <id> | --ids-file <f> | --all) [--dry-run] [--json]
 //   xanima-server noise status   --agent <id> [--json]
+//   xanima-server soul export  --agent <id> [--out f] [--profile compact|full] [--include-sensitive] [--include-shared] [--include-open-items] [--sign --key-file f] [--sqlite f] [--parent id|none]
+//   xanima-server soul fork    --agent <id> --out f [...export flags]
+//   xanima-server soul import  --agent <id> --from f [--mode new|merge] [--dry-run] [--trust-key id]... [--require-signature]
+//   xanima-server soul diff    <a.json> <b.json> [--json]
+//   xanima-server soul merge   --base f --theirs f --into <id> [--dry-run] [--force]
+//   xanima-server soul review  list|show|accept|reject --agent <id> [--id x | --all] [--reason txt] [--status s]
+//   xanima-server soul validate --from f [--trust-key id]... [--require-signature]
+//   xanima-server soul keygen  --key-file f [--force]
 //   xanima-server version
 //
 // Common: --config <file> (default <root>/config.json if present), --root <dir>
 // (default ~/.xanima/service, or ~/.sharpwave/service before migrating), --tokens-file <file>.
 
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import Database from "better-sqlite3";
+import { snapshotBrain } from "./backup.js";
+import {
+  exportSoul, serializeSoul, signSoul, generateSoulKeyPair, parseSoul, validateSoul, diffSoul, formatSoulDiff, importSoul, mergeSoul,
+  formatImportReport, listReviews, getReview, formatReview, acceptReview, rejectReview, writeSoulSqlite, soulSummary, getDb,
+} from "xanima-core";
 import { dirname, join } from "node:path";
 import { brainsDir, backupsDir, defaultConfigPath, defaultRoot, expandHome, loadConfigFile, resolveConfig, type ServiceConfig } from "./config.js";
 import { mintToken, parseScopes, readTokenFile, revokeToken } from "./tokens.js";
@@ -46,7 +60,7 @@ interface Parsed {
   flags: Map<string, string[]>;
 }
 
-const BOOL_FLAGS = new Set(["include-backups", "skip-port-check", "json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
+const BOOL_FLAGS = new Set(["include-sensitive", "include-shared", "include-open-items", "sign", "require-signature", "include-backups", "skip-port-check", "json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
 
 function parse(argv: string[]): Parsed {
   const out: Parsed = { _: [], flags: new Map() };
@@ -136,6 +150,20 @@ Usage:
   xanima-server noise unretire --agent <id> (--batch <noise-...> | --ids-file <f> | --all) [--dry-run] [--json]
       Service must be stopped. Backup first, then restore the recorded prior values exactly.
   xanima-server noise status --agent <id> [--json]
+  xanima-server soul export --agent <id> [--out f] [--profile compact|full] [--include-sensitive] [--include-shared]
+                           [--include-open-items] [--sign --key-file f] [--sqlite f] [--parent <id>|none]
+      Write the agent's Soul Package (xanima-soul/1, deterministic JSON + sha256). Read-only: safe while the service runs.
+  xanima-server soul fork --agent <id> --out f   Full-profile export marked as a fork (the base for a later three-way merge).
+  xanima-server soul import --agent <id> --from f [--mode new|merge] [--dry-run] [--trust-key <key id>]... [--require-signature]
+      Service must be stopped. Validates schema + hash (+ signature), backs up, imports with provenance
+      (source_type import, imported_from edges). Identity, values and goals go to the review queue; differences never overwrite.
+  xanima-server soul diff <a.json> <b.json> [--json]
+  xanima-server soul merge --base <parent pkg> --theirs <fork pkg> --into <id> [--dry-run] [--force]
+      Service must be stopped. Three-way merge per item; conflicts become review items with markers.
+  xanima-server soul review list|show|accept|reject --agent <id> [--id <rv-…> | --all] [--reason text] [--status pending|all]
+      accept / reject need the service stopped (they write the brain file).
+  xanima-server soul validate --from f [--trust-key id]... [--require-signature]
+  xanima-server soul keygen --key-file f [--force]   ed25519 signing key (keep it out of any repo).
   xanima-server version
 
 Binds 127.0.0.1 always, plus the tailnet IP (default 100.121.136.3). Never 0.0.0.0/::.
@@ -401,7 +429,145 @@ async function main(argv: string[]): Promise<number> {
     throw new Error(`unknown noise subcommand "${sub ?? ""}" (scan | check | retire | unretire | status)`);
   }
 
+  if (cmd === "soul") return soulCommand(p, sub, cfg);
+
   throw new Error(`unknown command "${cmd}" — run xanima-server help`);
+}
+
+async function soulCommand(p: Parsed, sub: string | undefined, cfg: ServiceConfig): Promise<number> {
+  const json = bool(p, "json");
+  const out = (o: unknown, text: string) => process.stdout.write((json ? JSON.stringify(o, null, 2) : text) + "\n");
+  const brainCfg = { ...DEFAULT_CONFIG, ...(cfg.brain ?? {}) };
+  const readPkg = (f: string | undefined, what: string) => { if (!f) throw new Error(`soul ${sub} needs ${what}`); return parseSoul(readFileSync(expandHome(f), "utf8")); };
+  const trust = { trustedKeyIds: many(p, "trust-key"), requireSignature: bool(p, "require-signature") };
+  const agentDb = (agent: string | undefined) => {
+    if (!agent) throw new Error(`soul ${sub} needs --agent <id>`);
+    const bad = validateAgentId(agent); if (bad) throw new Error(bad);
+    const f = join(brainsDir(cfg), agent, "brain.db");
+    if (!existsSync(f)) throw new Error(`no brain for "${agent}" at ${f}`);
+    return { agent, path: f };
+  };
+  const mustBeStopped = async () => {
+    if (await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first (soul ${sub} writes the brain file directly)`);
+  };
+  /** Run fn on the agent's brain through core (write path), with a pre-write backup + audit. */
+  const withBrain = async <T>(agent: string, fn: (backup: () => string) => T): Promise<T> => {
+    const mgr = new BrainManager(brainsDir(cfg), 1);
+    mgr.init();
+    try {
+      const backup = () => snapshotBrain(join(brainsDir(cfg), agent, "brain.db"), join(backupsDir(cfg), agent), "soul", 1_000_000).path;
+      return await mgr.write(agent, () => fn(backup));
+    } finally { await mgr.close(); }
+  };
+  const audit = new AuditLog(cfg.auditFile);
+
+  if (sub === "keygen") {
+    const f = one(p, "key-file"); if (!f) throw new Error("soul keygen needs --key-file <path>");
+    const path = expandHome(f);
+    if (existsSync(path) && !bool(p, "force")) throw new Error(`${path} exists (use --force to replace it)`);
+    const k = generateSoulKeyPair();
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, k.privateKeyPem, { mode: 0o600 });
+    writeFileSync(path + ".pub", k.publicKeyPem, { mode: 0o644 });
+    out({ keyId: k.keyId, keyFile: path, publicKey: path + ".pub" }, `wrote ed25519 key ${k.keyId}\n  private ${path} (keep it secret; never commit it)\n  public  ${path}.pub`);
+    return 0;
+  }
+  if (sub === "export" || sub === "fork") {
+    const { agent, path } = agentDb(one(p, "agent"));
+    const db = new Database(path, { readonly: true, fileMustExist: true });
+    let sdb: InstanceType<typeof Database> | undefined;
+    try {
+      if (bool(p, "include-shared")) { const sf = join(brainsDir(cfg), "shared", "brain.db"); if (existsSync(sf)) sdb = new Database(sf, { readonly: true, fileMustExist: true }); }
+      const parent = one(p, "parent");
+      let pkg = exportSoul(db, { agentId: agent, profile: sub === "fork" ? "full" : (one(p, "profile") === "full" ? "full" : one(p, "profile") === "compact" ? "compact" : brainCfg.soulExportProfile), fork: sub === "fork",
+        includeSensitive: bool(p, "include-sensitive"), ...(bool(p, "include-open-items") ? { includeOpenItems: true } : {}), ...(sdb ? { sharedDb: sdb } : {}),
+        ...(parent ? { parentId: parent === "none" ? null : parent } : {}), config: brainCfg });
+      if (bool(p, "sign")) { const kf = one(p, "key-file"); if (!kf) throw new Error("--sign needs --key-file <ed25519 private key PEM>"); pkg = signSoul(pkg, readFileSync(expandHome(kf), "utf8")); }
+      const text = serializeSoul(pkg);
+      const dest = one(p, "out");
+      if (dest) { const f = expandHome(dest); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, text); }
+      else if (!json) process.stdout.write(text);
+      let sq: { nodes: number; edges: number } | null = null;
+      if (one(p, "sqlite")) {
+        const f = expandHome(one(p, "sqlite")!);
+        if (existsSync(f)) throw new Error(`${f} exists; refusing to overwrite`);
+        const o = new Database(f); try { sq = writeSoulSqlite(db, pkg, o); } finally { o.close(); }
+      }
+      audit.append({ agentId: "admin:cli", tool: `soul ${sub}`, brain: agent, nodeId: null, outcome: "ok", detail: `${pkg.package_id} ${pkg.profile}${pkg.signature ? " signed" : ""}` });
+      if (dest || json) out({ packageId: pkg.package_id, profile: pkg.profile, bytes: Buffer.byteLength(text), approxTokens: pkg.stats.approx_tokens, counts: pkg.stats.counts, out: dest ?? null, sqlite: sq },
+        `${soulSummary(pkg, Buffer.byteLength(text))}${dest ? `\nwrote ${expandHome(dest)}` : ""}${sq ? `\nsqlite subset: ${sq.nodes} nodes, ${sq.edges} edges` : ""}`);
+      return 0;
+    } finally { db.close(); sdb?.close(); }
+  }
+  if (sub === "validate") {
+    const pkg = readPkg(one(p, "from"), "--from <package.json>");
+    const v = validateSoul(pkg, trust);
+    out(v, v.ok ? `ok  ${pkg.package_id} (${v.signed ? `signed, key ${v.keyId}` : "unsigned"})` : `INVALID\n${v.errors.map((e) => `  - ${e}`).join("\n")}`);
+    return v.ok ? 0 : 1;
+  }
+  if (sub === "diff") {
+    const [, , a, b] = p._;
+    const d = diffSoul(readPkg(a, "<a.json> <b.json>"), readPkg(b, "<a.json> <b.json>"));
+    out(d, formatSoulDiff(d));
+    return 0;
+  }
+  if (sub === "import") {
+    const { agent } = agentDb(one(p, "agent"));
+    const pkg = readPkg(one(p, "from"), "--from <package.json>");
+    const dryRun = bool(p, "dry-run");
+    if (!dryRun) await mustBeStopped();
+    const mode = one(p, "mode") === "merge" ? "merge" : "new";
+    try {
+      const r = await withBrain(agent, (backup) => importSoul(agent, pkg, { mode, dryRun, by: "admin:cli", config: brainCfg, ...trust, backup }));
+      audit.append({ agentId: "admin:cli", tool: "soul import", brain: agent, nodeId: null, outcome: "ok", detail: `${pkg.package_id} mode=${mode}${dryRun ? " dry-run" : ""} created=${r.created.length} review=${r.review.length} backup=${r.backup ?? "-"}` });
+      out(r, formatImportReport(r));
+      return 0;
+    } catch (e) {
+      audit.append({ agentId: "admin:cli", tool: "soul import", brain: agent, nodeId: null, outcome: "error", detail: String(e instanceof Error ? e.message : e).slice(0, 300) });
+      throw e;
+    }
+  }
+  if (sub === "merge") {
+    const { agent } = agentDb(one(p, "into"));
+    const base = readPkg(one(p, "base"), "--base <parent package>");
+    const theirs = readPkg(one(p, "theirs"), "--theirs <fork package>");
+    const dryRun = bool(p, "dry-run");
+    if (!dryRun) await mustBeStopped();
+    const r = await withBrain(agent, (backup) => mergeSoul(agent, base, theirs, { dryRun, by: "admin:cli", config: brainCfg, force: bool(p, "force"), ...trust, backup }));
+    audit.append({ agentId: "admin:cli", tool: "soul merge", brain: agent, nodeId: null, outcome: "ok", detail: `base=${base.package_id} theirs=${theirs.package_id}${dryRun ? " dry-run" : ""} conflicts=${r.conflicts} review=${r.review.length} backup=${r.backup ?? "-"}` });
+    out(r, formatImportReport(r));
+    return 0;
+  }
+  if (sub === "review") {
+    const action = p._[2] ?? "list";
+    const { agent, path } = agentDb(one(p, "agent"));
+    if (action === "list" || action === "show") {
+      const db = new Database(path, { readonly: true, fileMustExist: true });
+      try {
+        if (action === "list") {
+          const st = (one(p, "status") ?? "pending") as "pending";
+          const rows = listReviews(db, { status: st });
+          out(rows, rows.length ? rows.map((r) => formatReview(r)).join("\n") : `no ${st} review items`);
+        } else {
+          const id = one(p, "id") ?? p._[3]; if (!id) throw new Error("soul review show needs --id <rv-…>");
+          const r = getReview(db, id); if (!r) throw new Error(`review item ${id} not found (or ambiguous)`);
+          out(r, formatReview(r, true));
+        }
+      } finally { db.close(); }
+      return 0;
+    }
+    if (action !== "accept" && action !== "reject") throw new Error(`unknown soul review action "${action}" (list | show | accept | reject)`);
+    await mustBeStopped();
+    const res = await withBrain(agent, () => {
+      const ids = bool(p, "all") ? listReviews(getDb(agent)).map((r) => r.id) : [one(p, "id") ?? p._[3]].filter((x): x is string => !!x);
+      if (!ids.length) throw new Error(`soul review ${action} needs --id <rv-…> or --all`);
+      return ids.map((id) => ({ id, ...(action === "accept" ? acceptReview(agent, id, { by: "admin:cli", config: brainCfg, ...(one(p, "reason") ? { note: one(p, "reason") } : {}) }) : rejectReview(agent, id, { by: "admin:cli", ...(one(p, "reason") ? { reason: one(p, "reason") } : {}) })) }));
+    });
+    for (const r of res) audit.append({ agentId: "admin:cli", tool: `soul review ${action}`, brain: agent, nodeId: null, outcome: r.ok ? "ok" : "error", detail: `${r.id} ${"applied" in r && r.applied ? r.applied : r.error ?? ""}`.slice(0, 300) });
+    out(res, res.map((r) => (r.ok ? `${action}ed ${r.id}${"applied" in r && r.applied ? `: ${r.applied}` : ""}` : `FAILED ${r.id}: ${r.error}`)).join("\n"));
+    return res.every((r) => r.ok) ? 0 : 1;
+  }
+  throw new Error(`unknown soul subcommand "${sub ?? ""}" (export | fork | import | diff | merge | review | validate | keygen)`);
 }
 
 main(process.argv.slice(2)).then(

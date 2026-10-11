@@ -24,6 +24,7 @@
 
 import { randomUUID } from "node:crypto";
 import { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } from "./continuity-tools.js";
+import { SOUL_TOOL_DEFS, REVIEW_QUEUE_PROPS, dispatchSoulTool, isReviewQueueCall } from "./soul-tools.js";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -202,7 +203,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
   },
   brain_review: {
     description:
-      "Apply an FSRS-6 spaced-repetition review to a node. Updates stability, retrievability, and SIGMA calibration.",
+      "Apply an FSRS-6 spaced-repetition review to a node (node_id + quality): updates stability, retrievability, and SIGMA calibration. Or, with action, use the pending-review queue: action list | show (id) shows identity / value / goal changes from soul imports and merge conflicts; accept / reject need an admin.",
     inputSchema: {
       type: "object",
       properties: {
@@ -213,8 +214,9 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
           maximum: 5,
           description: "Recall quality: 0=blackout, 1=incorrect, 2=incorrect+familiar, 3=hard, 4=correct, 5=perfect",
         },
+        ...REVIEW_QUEUE_PROPS,
       },
-      required: ["node_id", "quality"],
+      required: [],
     },
   },
   brain_forget: {
@@ -329,6 +331,8 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
 
 // Xanima 0.2.0 decision ledger + goals (appended; order of the older tools unchanged).
 Object.assign(BRAIN_TOOL_DEFS, CONTINUITY_TOOL_DEFS);
+// Xanima 0.4.0: the agent-safe soul tool (export of self). brain_import_soul is admin-only (xanima-server / CLI).
+BRAIN_TOOL_DEFS["brain_export_soul"] = SOUL_TOOL_DEFS["brain_export_soul"]!;
 
 /**
  * The 11 tools `packages/mcp` publishes, in the exact order its `TOOLS` array
@@ -349,6 +353,7 @@ export const MCP_TOOL_NAMES: string[] = [
   "brain_retract",
   "brain_status",
   ...CONTINUITY_TOOL_NAMES,
+  "brain_export_soul",
 ];
 
 /** Everything the openwave plugin exposes: all 16. */
@@ -672,6 +677,7 @@ export async function dispatchBrainTool(
 
     // ── brain_review ──────────────────────────────────────────────────────
     case "brain_review": {
+      if (isReviewQueueCall(name, args)) return dispatchSoulTool(name, agentId, args, config, { admin: false, by: agentId })!;
       const validation = validateBrainReview(args);
       if (!validation.ok) {
         return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
@@ -915,6 +921,8 @@ export async function dispatchBrainTool(
     default: {
       const c = dispatchContinuityTool(name, agentId, args, config);
       if (c) return c;
+      const sr = dispatchSoulTool(name, agentId, args, config, { admin: false, by: agentId });
+      if (sr) return sr;
     }
       // Text matches base sharpwave@0.4.0 (77bc427:src/index.ts), which returned
       // err("unknown tool: <name>") = "Error: unknown tool: <name>".
