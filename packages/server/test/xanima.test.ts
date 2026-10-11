@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { nodeIdFrom, startService, tempRoot, tool } from "./helpers.js";
 import { mintToken } from "../src/tokens.js";
+import { retireItems, unretireItems } from "../src/noise.js";
 
 const run = promisify(execFile);
 const SERVER_CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
@@ -262,5 +263,23 @@ describe("sleep now + defaults + env aliases", () => {
       expect(b.stdout).toMatch(/\[private\] \d+ nodes/);
       expect(b.stderr).toMatch(/DEPRECATED: SHARPWAVE_TOKEN/);
     } finally { await h.stop(); }
+  });
+});
+
+describe("noise retire/unretire keeps v19 status in step", () => {
+  it("retired noise is archived; unretired is active again", async () => {
+    const h = await startService();
+    const tok = h.mint("n");
+    const id = nodeIdFrom((await tool(h.url, tok, "brain_write", { type: "semantic", label: "NO_REPLY triage", content: "NO_REPLY nothing to do" })).text);
+    await h.stop(false);
+    try {
+      const dbPath = join(h.root, "brains", "n", "brain.db");
+      const o = { dbPath, brain: "n", backupsDir: join(h.root, "backups") };
+      const r = retireItems({ nodes: [id], episodes: [], bare: [], ignored: 0 }, o);
+      const st = () => new Database(dbPath, { readonly: true }).prepare("SELECT status, valid_until FROM nodes WHERE id = ?").get(id) as { status: string; valid_until: number | null };
+      expect(st().status).toBe("archived");
+      unretireItems({ ...o, batch: r.batch });
+      expect(st()).toEqual({ status: "active", valid_until: null });
+    } finally { rmSync(h.root, { recursive: true, force: true }); }
   });
 });
