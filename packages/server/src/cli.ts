@@ -20,9 +20,13 @@
 //   xanima-server soul import  --agent <id> --from f [--mode new|merge] [--dry-run] [--trust-key id]... [--require-signature]
 //   xanima-server soul diff    <a.json> <b.json> [--json]
 //   xanima-server soul merge   --base f --theirs f --into <id> [--dry-run] [--force]
-//   xanima-server soul review  list|show|accept|reject --agent <id> [--id x | --all] [--reason txt] [--status s]
+//   xanima-server soul review  list|show|accept|reject --agent <id> [--id x | --all] [--reason txt] [--status pending|logged|accepted|rejected|all] [--kind quarantine|identity|goal|conflict…]
 //   xanima-server soul validate --from f [--trust-key id]... [--require-signature]
 //   xanima-server soul keygen  --key-file f [--force]
+//   xanima-server room create  <name> --owner <agent> [--description txt]
+//   xanima-server room invite  <name> --agent <id> --role read|write|admin
+//   xanima-server room revoke  <name> --agent <id> [--withdraw]      (--withdraw: service stopped)
+//   xanima-server room list | members <name> | conflicts <name> [--json]
 //   xanima-server version
 //
 // Common: --config <file> (default <root>/config.json if present), --root <dir>
@@ -34,6 +38,7 @@ import { snapshotBrain } from "./backup.js";
 import {
   exportSoul, serializeSoul, signSoul, generateSoulKeyPair, parseSoul, validateSoul, diffSoul, formatSoulDiff, importSoul, mergeSoul,
   formatImportReport, listReviews, getReview, formatReview, acceptReview, rejectReview, writeSoulSqlite, soulSummary, getDb,
+  openRoomRegistry, allRooms, listMembers, createRoom, setMember, revokeMember, withdrawAll, roomConflicts, formatRoomConflict, roomBrainName, type RoomRole,
 } from "xanima-core";
 import { dirname, join } from "node:path";
 import { brainsDir, backupsDir, defaultConfigPath, defaultRoot, expandHome, loadConfigFile, resolveConfig, type ServiceConfig } from "./config.js";
@@ -60,7 +65,7 @@ interface Parsed {
   flags: Map<string, string[]>;
 }
 
-const BOOL_FLAGS = new Set(["include-sensitive", "include-shared", "include-open-items", "sign", "require-signature", "include-backups", "skip-port-check", "json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
+const BOOL_FLAGS = new Set(["withdraw", "include-sensitive", "include-shared", "include-open-items", "sign", "require-signature", "include-backups", "skip-port-check", "json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
 
 function parse(argv: string[]): Parsed {
   const out: Parsed = { _: [], flags: new Map() };
@@ -430,8 +435,75 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (cmd === "soul") return soulCommand(p, sub, cfg);
+  if (cmd === "room") return roomCommand(p, sub, cfg);
 
   throw new Error(`unknown command "${cmd}" — run xanima-server help`);
+}
+
+async function roomCommand(p: Parsed, sub: string | undefined, cfg: ServiceConfig): Promise<number> {
+  const json = bool(p, "json");
+  const out = (o: unknown, text: string) => process.stdout.write((json ? JSON.stringify(o, null, 2) : text) + "\n");
+  const reg = openRoomRegistry(join(brainsDir(cfg), "..", "rooms", "registry.db"));
+  const audit = new AuditLog(cfg.auditFile);
+  const by = "admin:cli";
+  try {
+    if (sub === "list") {
+      const rooms = allRooms(reg).map((r) => ({ ...r, members: listMembers(reg, r.name) }));
+      out(rooms, rooms.length ? rooms.map((r) => `${r.name} (owner ${r.owner}): ${r.members.map((m) => `${m.agent_id}=${m.role}`).join(", ")}${r.description ? ` — ${r.description}` : ""}`).join("\n") : "no rooms");
+      return 0;
+    }
+    const name = p._[2];
+    if (!name) throw new Error(`room ${sub ?? ""} needs a room name`);
+    if (sub === "create") {
+      const owner = one(p, "owner"); if (!owner) throw new Error("room create needs --owner <agent>");
+      const bad = validateAgentId(owner); if (bad) throw new Error(bad);
+      const r = createRoom(reg, { name, owner, description: one(p, "description") });
+      if (!r.ok) throw new Error(r.error);
+      audit.append({ agentId: by, tool: "room.create", brain: roomBrainName(name), nodeId: null, outcome: "ok", detail: `owner=${owner}` });
+      out({ ok: true, room: name, owner }, `created room ${name} (owner ${owner})`);
+      return 0;
+    }
+    if (sub === "invite" || sub === "revoke") {
+      const agent = one(p, "agent"); if (!agent) throw new Error(`room ${sub} needs --agent <id>`);
+      const bad = validateAgentId(agent); if (bad) throw new Error(bad);
+      if (sub === "invite") {
+        const role = (one(p, "role") ?? "read") as RoomRole;
+        const r = setMember(reg, { room: name, agent, role, by });
+        if (!r.ok) throw new Error(r.error);
+        audit.append({ agentId: by, tool: "room.invite", brain: roomBrainName(name), nodeId: null, outcome: "ok", detail: `${agent}=${role}` });
+        out({ ok: true, room: name, agent, role, previous: r.previous ?? null }, `${agent} is ${role} in ${name}${r.previous ? ` (was ${r.previous})` : ""}`);
+        return 0;
+      }
+      const withdraw = bool(p, "withdraw");
+      if (withdraw && await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first for --withdraw, or use brain_room {"action":"revoke","withdraw":true} through the service`);
+      const r = revokeMember(reg, { room: name, agent, by });
+      if (!r.ok) throw new Error(r.error);
+      let withdrawn = 0;
+      if (withdraw) {
+        const mgr = new BrainManager(brainsDir(cfg), 1); mgr.init();
+        try { withdrawn = await mgr.write(roomBrainName(name), () => withdrawAll(name, agent, `withdrawn: ${agent} was revoked from ${name} by ${by}`)); } finally { await mgr.close(); }
+      }
+      audit.append({ agentId: by, tool: "room.revoke", brain: roomBrainName(name), nodeId: null, outcome: "ok", detail: `${agent}${withdraw ? ` withdraw=${withdrawn}` : ""}` });
+      out({ ok: true, room: name, agent, withdrawn }, `revoked ${agent} from ${name}${withdraw ? `; withdrew ${withdrawn} item(s)` : ""}`);
+      return 0;
+    }
+    if (sub === "members") {
+      const m = listMembers(reg, name, true);
+      out(m, m.map((x) => `${x.agent_id} ${x.role}${x.revoked_at ? " (revoked)" : ""}`).join("\n") || "no members");
+      return 0;
+    }
+    if (sub === "conflicts") {
+      const f = join(brainsDir(cfg), roomBrainName(name), "brain.db");
+      if (!existsSync(f)) { out([], "no conflicts (room brain not created yet)"); return 0; }
+      const db = new Database(f, { readonly: true });
+      try {
+        const cs = roomConflicts(name, { status: "all" }, db);
+        out(cs, cs.map((c) => formatRoomConflict(c, (t) => new Date(t).toISOString())).join("\n") || "no conflicts");
+      } finally { db.close(); }
+      return 0;
+    }
+    throw new Error(`unknown room subcommand "${sub ?? ""}" (create | invite | revoke | list | members | conflicts)`);
+  } finally { reg.close(); }
 }
 
 async function soulCommand(p: Parsed, sub: string | undefined, cfg: ServiceConfig): Promise<number> {
@@ -546,7 +618,8 @@ async function soulCommand(p: Parsed, sub: string | undefined, cfg: ServiceConfi
       try {
         if (action === "list") {
           const st = (one(p, "status") ?? "pending") as "pending";
-          const rows = listReviews(db, { status: st });
+          const kind = one(p, "kind");
+          const rows = listReviews(db, { status: st, ...(kind ? { kind } : {}) });
           out(rows, rows.length ? rows.map((r) => formatReview(r)).join("\n") : `no ${st} review items`);
         } else {
           const id = one(p, "id") ?? p._[3]; if (!id) throw new Error("soul review show needs --id <rv-…>");

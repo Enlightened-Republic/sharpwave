@@ -21,7 +21,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { getDb, closeDb, clearStaleWorkingMemory, resolveBusyTimeoutMs, envSet, envDelete } from "xanima-core";
+import { getDb, closeDb, clearStaleWorkingMemory, resolveBusyTimeoutMs, envSet, envDelete, isRoomBrain, openRoomRegistry } from "xanima-core";
 
 import { validateAgentId } from "./tokens.js";
 
@@ -93,11 +93,26 @@ export class BrainManager {
   open(brain: string): void {
     if (this.closed) throw new Error("brain manager is closed");
     if (this.opened.has(brain)) return;
-    if (brain !== SHARED_BRAIN) this.privateBrain(brain);
+    if (brain !== SHARED_BRAIN && !isRoomBrain(brain)) this.privateBrain(brain);
     getDb(brain);
     this.opened.add(brain);
     // Working-memory rows from a previous process belong to dead sessions.
     try { clearStaleWorkingMemory(brain); } catch { /* never block */ }
+  }
+
+  private registry: Database.Database | null = null;
+  /** Xanima 0.5.0 room registry (<root>/rooms/registry.db), opened on first use. */
+  roomRegistry(): Database.Database {
+    if (this.closed) throw new Error("brain manager is closed");
+    if (!this.registry) this.registry = openRoomRegistry(join(this.brainsDir, "..", "rooms", "registry.db"));
+    return this.registry!;
+  }
+
+  /** Room brains on disk (`_room.<name>`), for backups. */
+  listRoomBrains(): string[] {
+    if (!existsSync(this.brainsDir)) return [];
+    return readdirSync(this.brainsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && isRoomBrain(e.name) && existsSync(join(this.brainsDir, e.name, "brain.db"))).map((e) => e.name);
   }
 
   isOpen(brain: string): boolean {
@@ -160,6 +175,7 @@ export class BrainManager {
     for (const { conns } of this.readers.values()) for (const c of conns) { try { c.close(); } catch { /* */ } }
     this.readers.clear();
     for (const b of this.opened) { try { closeDb(b); } catch { /* */ } }
+    if (this.registry) { try { this.registry.close(); } catch { /* */ } this.registry = null; }
     this.opened.clear();
     if (activeManager === this) activeManager = null;
   }
