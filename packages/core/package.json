@@ -1,6 +1,6 @@
 {
-  "name": "sharpwave-core",
-  "version": "0.4.5",
+  "name": "xanima-core",
+  "version": "0.2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -23,7 +23,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13"
   },
-  "description": "The memory engine behind sharpwave (MCP server) and openwave (OpenClaw plugin): graph store, FSRS-6 forgetting curve, spreading activation, sleep-style consolidation, LLM extraction.",
+  "description": "Xanima core: the agent continuity engine behind the xanima MCP server, xanima-server and the xanima-openclaw plugin. Graph store with belief metadata (confidence, provenance, supersession, as-of time travel), FSRS-6 forgetting curve, spreading activation, sleep-style consolidation.",
   "license": "MIT",
   "repository": {
     "type": "git",

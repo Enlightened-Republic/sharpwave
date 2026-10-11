@@ -21,18 +21,23 @@ import { tmpdir } from "node:os";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(HERE, "..", "dist", "index.js");
-const DATA = mkdtempSync(join(tmpdir(), "sharpwave-smoke-"));
+const DATA = mkdtempSync(join(tmpdir(), "xanima-smoke-"));
 
-function client(envOverride = { SHARPWAVE_AGENT_ID: "smoke" }) {
+let lastStderr = "";
+function client(envOverride = { XANIMA_AGENT_ID: "smoke" }) {
   const proc = spawn(process.execPath, [SERVER], {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
-      SHARPWAVE_DATA_DIR: DATA,
+      XANIMA_DATA_DIR: DATA,
+      SHARPWAVE_DATA_DIR: "",
       OLLAMA_BASE_URL: "http://127.0.0.1:59999",
       OPENROUTER_API_KEY: "",
+      XANIMA_OPENROUTER_API_KEY: "",
       SHARPWAVE_OPENROUTER_API_KEY: "",
+      XANIMA_AGENT_ID: "",
       SHARPWAVE_AGENT_ID: "",
+      XANIMA_NO_UPDATE_CHECK: "1",
       ...envOverride,
     },
   });
@@ -46,7 +51,7 @@ function client(envOverride = { SHARPWAVE_AGENT_ID: "smoke" }) {
       if (m.id != null && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
     }
   });
-  proc.stderr.on("data", () => {});
+  proc.stderr.on("data", (d) => { lastStderr += d.toString(); });
   const rpc = (method, params) => {
     const rid = id++;
     return new Promise((res) => {
@@ -97,6 +102,44 @@ const leaked = (t) => /postgres|jwt|thursday/i.test(t);
   const after = text(await call(a, "brain_query", { query: UNRELATED }));
   check("unrelated query misses with WARM working memory", !leaked(after), leaked(after) ? `LEAKED: ${after.slice(0, 120)}` : "");
 
+  // Xanima 0.1.0 belief tools over MCP: retract, supersede with reason, as_of, status.
+  const toolNames = (tools?.result?.tools ?? []).map((t) => t.name);
+  check("tools/list has brain_retract + brain_status", toolNames.includes("brain_retract") && toolNames.includes("brain_status"), toolNames.join(","));
+  const w1 = text(await call(a, "brain_write", { type: "semantic", label: "Office city", content: "The team office is in Lisbon near the river.", confidence: "low", source_type: "user" }));
+  const oid = /node (\S+)/.exec(w1)?.[1] ?? "";
+  const lowHit = text(await call(a, "brain_query", { query: "where is the team office" }));
+  check("brain_query shows confidence + source + relative time", /conf=low src=user \(just now\)/.test(lowHit), lowHit.slice(0, 200));
+  const tBefore = Date.now();
+  await new Promise((r) => setTimeout(r, 20));
+  const sup = text(await call(a, "brain_supersede", { old_node_id: oid, new_content: "The team office moved to Porto in 2026.", reason: "user said the office moved" }));
+  check("brain_supersede with reason", /Superseded:/.test(sup) && /Reason: user said the office moved/.test(sup), sup.slice(0, 160));
+  const now = text(await call(a, "brain_query", { query: "team office" }));
+  check("superseded version no longer recalled", /Porto/.test(now) && !/Lisbon/.test(now), now.slice(0, 200));
+  const then = text(await call(a, "brain_query", { query: "team office", as_of: tBefore }));
+  check("as_of finds what was believed then", /Lisbon/.test(then) && /since then: superseded/.test(then), then.slice(0, 240));
+  const newId = /new node (\S+)/.exec(sup)?.[1] ?? "";
+  const q2 = text(await call(a, "brain_query", { query: "Porto office" }));
+  const fullNew = /\[([0-9a-f]{8})\]/.exec(q2)?.[1];
+  check("superseded node id prefix present", !!fullNew && newId.startsWith(fullNew), `${newId} vs ${fullNew}`);
+  const statusTxt = text(await call(a, "brain_status", {}));
+  check("brain_status reports superseded + injection estimate", /superseded 1/.test(statusTxt) && /injection: ~\d+ tokens/.test(statusTxt), statusTxt.slice(0, 240));
+  // Xanima 0.2.0: decision ledger + goals over MCP
+  check("tools/list has the 0.2.0 decision + goal tools", ["brain_record_decision", "brain_update_decision_outcome", "brain_query_decisions", "brain_set_goal", "brain_update_goal", "brain_list_goals"].every((n) => toolNames.includes(n)), toolNames.join(","));
+  const goalTxt = text(await call(a, "brain_set_goal", { title: "Ship the smoke test", priority: "high" }));
+  const goalId = /Goal set: (\S+)/.exec(goalTxt)?.[1] ?? "";
+  check("brain_set_goal", /P2 \[active\] Ship the smoke test/.test(goalTxt), goalTxt.slice(0, 160));
+  const decTxt = text(await call(a, "brain_record_decision", { context: "smoke runner", chosen: "node --test", options: ["vitest"], goal_id: goalId }));
+  const decId = /decision ([0-9a-f-]{36})/.exec(decTxt)?.[1] ?? "";
+  check("brain_record_decision linked to the goal", !!decId && /advances goal "Ship the smoke test"/.test(decTxt), decTxt.slice(0, 160));
+  const outTxt = text(await call(a, "brain_update_decision_outcome", { decision_id: decId, outcome: "ran in 2s", outcome_status: "matched", lesson: "keep smoke tests dependency-free" }));
+  check("brain_update_decision_outcome logs goal progress", /Progress logged on goal/.test(outTxt), outTxt.slice(0, 160));
+  const supTxt = text(await call(a, "brain_update_goal", { goal_id: goalId, action: "supersede", title: "Ship the smoke test v2", reason: "scope grew" }));
+  check("brain_update_goal supersede keeps history", /v1 → v2/.test(supTxt), supTxt.slice(0, 160));
+  const qd = text(await call(a, "brain_query_decisions", { query: "smoke" }));
+  check("brain_query_decisions", /chose: node --test/.test(qd) && /lesson: keep smoke tests dependency-free/.test(qd), qd.slice(0, 200));
+  const badRetract = text(await call(a, "brain_retract", { node_id: "nope", reason: "x" }));
+  check("brain_retract unknown id errors", /not found/.test(badRetract), badRetract.slice(0, 80));
+
   // brain_reset — refuses without the exact agent id, then wipes everything.
   const refused = text(await call(a, "brain_reset", { confirm: "wrong" }));
   check("brain_reset refuses a bad confirm", /refused/i.test(refused), refused.slice(0, 80));
@@ -124,8 +167,18 @@ const leaked = (t) => /postgres|jwt|thursday/i.test(t);
   check("unrelated query misses in a fresh process", !leaked(fresh), leaked(fresh) ? `LEAKED: ${fresh.slice(0, 120)}` : "");
   b.proc.kill();
 
-  // ── Multi-agent mode: SHARPWAVE_AGENT_ID unset, `agent` arg routes per call ──
-  const m = client({ SHARPWAVE_AGENT_ID: "" });
+  // ── Deprecated alias: SHARPWAVE_AGENT_ID still pins the agent (0.1.x), with a warning ──
+  lastStderr = "";
+  const legacy = client({ XANIMA_AGENT_ID: "", SHARPWAVE_AGENT_ID: "legacy-alias" });
+  await legacy.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } });
+  legacy.notify("notifications/initialized", {});
+  const lw = text(await call(legacy, "brain_write", { type: "semantic", label: "alias", content: "Written through the deprecated SHARPWAVE_AGENT_ID alias." }));
+  check("alias: SHARPWAVE_AGENT_ID pins the agent", /writer=legacy-alias/.test(lw), lw.slice(0, 120));
+  check("alias: deprecation warning on stderr", /DEPRECATED: SHARPWAVE_AGENT_ID/.test(lastStderr), lastStderr.slice(0, 160));
+  legacy.proc.kill();
+
+  // ── Multi-agent mode: XANIMA_AGENT_ID unset, `agent` arg routes per call ──
+  const m = client({ XANIMA_AGENT_ID: "" });
   const mi = await m.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } });
   check("multi: initialize", !!mi.result, `agentId=${mi?.result?.serverInfo?.name}`);
   m.notify("notifications/initialized", {});

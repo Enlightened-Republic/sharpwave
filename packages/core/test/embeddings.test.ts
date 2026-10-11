@@ -177,7 +177,7 @@ describe("sweepMissingEmbeddings — orphan recovery", () => {
     expect(requeued2).toBeGreaterThanOrEqual(2);
 
     // NOTE (Task 3): clawbrain-v4's "Fable-5 F-3" broadening made the sweep
-    // type-agnostic (identity nodes swept too). sharpwave-core's
+    // type-agnostic (identity nodes swept too). xanima-core's
     // sweepMissingEmbeddings is still scoped to type IN ('semantic','episodic')
     // — verified in src/embeddings.ts. So an identity node is NOT requeued, and
     // a fresh sweep sees exactly the semantic + episodic pair.
@@ -195,7 +195,7 @@ describe("sweepMissingEmbeddings — orphan recovery", () => {
     const id = fresh();
     for (let i = 0; i < 10; i++) {
       // deduplicate:false — near-identical content would otherwise be collapsed
-      // by sharpwave-core's write-time dedupe (trigram Jaccard >= 0.85).
+      // by xanima-core's write-time dedupe (trigram Jaccard >= 0.85).
       writeNode(id, "semantic", `bulk node ${i}`, `no embedding for bulk node ${i}`, { deduplicate: false });
     }
     const requeued = sweepMissingEmbeddings(id, 3);
@@ -212,7 +212,7 @@ describe("drainEmbeddingQueue — recovery after failed batch", () => {
     const id = fresh();
     const ids: string[] = [];
     for (let i = 0; i < 5; i++) {
-      // Unique content — sharpwave-core's writeNode dedupes identical content.
+      // Unique content — xanima-core's writeNode dedupes identical content.
       const nid = writeNode(id, "semantic", `pre-batch node ${i}`, `pre-batch node ${i} ready to embed`);
       ids.push(nid);
       queueEmbedding(id, nid);

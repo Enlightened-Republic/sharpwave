@@ -30,6 +30,7 @@
 // Nothing in this module ever logs, prints or embeds the key in an error.
 
 import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes } from "node:crypto";
+import { deprecationWarnOnce } from "xanima-core";
 import { chmodSync, closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -88,7 +89,9 @@ export function parseKeyText(text: string, source: string): BackupKey {
   return new BackupKey(bytes, source);
 }
 
-export const DEFAULT_KEY_ENV = "SHARPWAVE_BACKUP_KEY";
+export const DEFAULT_KEY_ENV = "XANIMA_BACKUP_KEY";
+/** Deprecated 0.1.x alias, honoured when the configured env var is the default and unset. */
+export const LEGACY_KEY_ENV = "SHARPWAVE_BACKUP_KEY";
 
 /** Env var wins when set and non-empty; otherwise the key file. */
 export function loadKey(opts: { keyFile?: string; keyEnv?: string; env?: NodeJS.ProcessEnv }): BackupKey {
@@ -96,8 +99,15 @@ export function loadKey(opts: { keyFile?: string; keyEnv?: string; env?: NodeJS.
   const envName = opts.keyEnv ?? DEFAULT_KEY_ENV;
   const fromEnv = env[envName];
   if (fromEnv && fromEnv.trim()) return parseKeyText(fromEnv, `env ${envName}`);
-  if (!opts.keyFile) throw new Error(`no backup key: set offsiteBackup.keyFile or the ${envName} env var (create one with: sharpwave-server backup keygen)`);
-  if (!existsSync(opts.keyFile)) throw new Error(`backup key file ${opts.keyFile} does not exist (create it with: sharpwave-server backup keygen)`);
+  if (envName === DEFAULT_KEY_ENV) {
+    const legacy = env[LEGACY_KEY_ENV];
+    if (legacy && legacy.trim()) {
+      deprecationWarnOnce(`env:${LEGACY_KEY_ENV}`, `${LEGACY_KEY_ENV} is deprecated; set ${DEFAULT_KEY_ENV} instead (the old name stops working in 0.3.0).`);
+      return parseKeyText(legacy, `env ${LEGACY_KEY_ENV}`);
+    }
+  }
+  if (!opts.keyFile) throw new Error(`no backup key: set offsiteBackup.keyFile or the ${envName} env var (create one with: xanima-server backup keygen)`);
+  if (!existsSync(opts.keyFile)) throw new Error(`backup key file ${opts.keyFile} does not exist (create it with: xanima-server backup keygen)`);
   return parseKeyText(readFileSync(opts.keyFile, "utf8"), `file ${opts.keyFile}`);
 }
 
@@ -108,7 +118,7 @@ export function generateKeyFile(path: string, force = false): BackupKey {
   const bytes = randomBytes(KEY_BYTES);
   const key = new BackupKey(bytes, `file ${path}`);
   const text =
-    `# SharpWave off-PC backup key — AES-256-GCM, key id ${key.id}\n` +
+    `# Xanima off-PC backup key — AES-256-GCM, key id ${key.id}\n` +
     `# Anyone holding this file can decrypt your backups. Without it they are unrecoverable.\n` +
     `# Keep a copy in your password manager; never put it in the synced backup folder or the repo.\n` +
     `${bytes.toString("base64")}\n`;
@@ -220,12 +230,12 @@ export function isArtifact(path: string): boolean {
 
 export function readHeader(path: string): ArtifactHeader {
   const size = statSync(path).size;
-  if (size < HEADER_BYTES + TAG_BYTES) throw new Error(`${path}: too short to be a SharpWave backup artifact`);
+  if (size < HEADER_BYTES + TAG_BYTES) throw new Error(`${path}: too short to be a Xanima backup artifact`);
   const fd = openSync(path, "r");
   try {
     const h = Buffer.alloc(HEADER_BYTES);
     readSync(fd, h, 0, HEADER_BYTES, 0);
-    if (!h.subarray(0, 4).equals(MAGIC)) throw new Error(`${path}: not a SharpWave backup artifact (bad magic)`);
+    if (!h.subarray(0, 4).equals(MAGIC)) throw new Error(`${path}: not a Xanima backup artifact (bad magic)`);
     const version = h[4]!;
     if (version !== FORMAT_VERSION) throw new Error(`${path}: unsupported artifact version ${version}`);
     return { version, keyId: h.subarray(5, 13).toString("hex"), nonce: Buffer.from(h.subarray(13, 25)), size };
@@ -241,7 +251,7 @@ export async function sha256File(path: string): Promise<string> {
 export function readManifest(path: string): Manifest | undefined {
   if (!existsSync(path)) return undefined;
   const m = JSON.parse(readFileSync(path, "utf8")) as Manifest;
-  if (m.format !== "sharpwave-backup") throw new Error(`${path}: not a SharpWave backup manifest`);
+  if (m.format !== "sharpwave-backup") throw new Error(`${path}: not a Xanima backup manifest`);
   return m;
 }
 

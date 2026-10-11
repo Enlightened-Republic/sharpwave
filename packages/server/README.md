@@ -1,4 +1,4 @@
-# sharpwave-server — the SharpWave brain service
+# xanima-server — the Xanima brain service
 
 One long-running process that **owns every brain** it serves and exposes the
 brain tools over **MCP Streamable HTTP** (official `@modelcontextprotocol/sdk`
@@ -25,13 +25,13 @@ nightly `VACUUM INTO` backups.
 ## Run it
 
 ```bash
-npm run build --workspace sharpwave-server          # -> packages/server/dist/cli.js
+npm run build --workspace xanima-server          # -> packages/server/dist/cli.js
 node packages/server/dist/cli.js token mint --agent chief-of-staff --scopes read,write
 node packages/server/dist/cli.js serve               # 127.0.0.1:18790 + 100.121.136.3:18790
 curl http://127.0.0.1:18790/health                   # {"status":"ok","version":"0.1.0","addresses":[...]}
 ```
 
-CLI (`sharpwave-server`):
+CLI (`xanima-server`):
 
 | command | what it does |
 |---|---|
@@ -65,7 +65,7 @@ file with no rollback). `brain adopt` copies instead:
 3. checkpoints the staged WAL, takes a pre-adopt backup with `VACUUM INTO`
    (`<backups>/<id>/pre-adopt/<id>-pre-adopt-<UTC>.db` + `.json` manifest with
    sha256 and counts), and copies that verified backup into the brain path;
-4. opens it through sharpwave-core, which runs the additive migrations to
+4. opens it through xanima-core, which runs the additive migrations to
    schema 18 (`writer_agent_id`, NULL on existing rows);
 5. verifies `integrity_check = ok`, node/edge/episode counts equal, schema ≥ 18;
    on failure the adopted copy is renamed `brain.db.failed-adopt-<UTC>` and any
@@ -85,7 +85,7 @@ which keeps them distinguishable from rows written through the service
 ## Design
 
 - **One owner, serialized writes.** Each brain has exactly one write connection
-  (sharpwave-core's cached connection) and a `SerialQueue`: every mutation
+  (xanima-core's cached connection) and a `SerialQueue`: every mutation
   (write, link, supersede, review, forget, reset, recall reinforcement,
   consolidation) runs through it, one at a time, in order. Pure reads (expand,
   edges, history, stats) and backups use separate **read-only WAL connections**
@@ -123,7 +123,7 @@ which keeps them distinguishable from rows written through the service
   for every write, every refused shared write, and every consolidation run.
 - **Backups.** Daily at `backup.at` (default 02:30): per brain, `VACUUM INTO` a
   `.tmp` on a read-only connection, `PRAGMA quick_check`, rename, rotate to
-  `backup.keep` (default 7). `sharpwave-server backup now` does the same on demand.
+  `backup.keep` (default 7). `xanima-server backup now` does the same on demand.
   Every snapshot is audited (`tool: "backup.snapshot"`, `agentId: "system"`).
   When `offsiteBackup.enabled`, each fresh snapshot is then encrypted and shipped
   off-PC — see below.
@@ -151,25 +151,25 @@ which keeps them distinguishable from rows written through the service
 - Windows Firewall: the first listen on the tailnet IP may raise a firewall
   prompt for node.exe. Pre-create an inbound rule limited to the Tailscale range if
   you want zero prompts, e.g. (admin PowerShell):
-  `New-NetFirewallRule -DisplayName "SharpWave (tailnet)" -Direction Inbound -Protocol TCP -LocalPort 18790 -RemoteAddress 100.64.0.0/10 -Action Allow`
+  `New-NetFirewallRule -DisplayName "Xanima (tailnet)" -Direction Inbound -Protocol TCP -LocalPort 18790 -RemoteAddress 100.64.0.0/10 -Action Allow`
 
-## Chief of Staff: `sharpwave-client`
+## Chief of Staff: `xanima-client`
 
 Chief of Staff reaches the service only through the host PC on
 `127.0.0.1:18790`. The client is one dependency-free file,
-`bin/sharpwave-client.mjs` — plain `node` (>= 18), no build, no `npm install`;
+`bin/xanima-client.mjs` — plain `node` (>= 18), no build, no `npm install`;
 it can be copied anywhere.
 
 ```powershell
 $env:SHARPWAVE_TOKEN = "swt_..."          # or --token, or --token-file, or ~/.sharpwave/token
-node sharpwave-client.mjs search "gateway scheduled task"
-node sharpwave-client.mjs read 3f2a...-uuid
-node sharpwave-client.mjs write "Weekly sync moved to Thursdays" --label "Weekly sync day"
-node sharpwave-client.mjs write "..." --label "..." --shared      # needs shared-write
-node sharpwave-client.mjs stats --json
-node sharpwave-client.mjs health                                    # no token needed
-node sharpwave-client.mjs forget 3f2a...-uuid [--shared]            # delete one node
-node sharpwave-client.mjs seed <dir> --map a.md=shared --map b.md=private --dry-run   # admin token; see docs/seeding.md
+node xanima-client.mjs search "gateway scheduled task"
+node xanima-client.mjs read 3f2a...-uuid
+node xanima-client.mjs write "Weekly sync moved to Thursdays" --label "Weekly sync day"
+node xanima-client.mjs write "..." --label "..." --shared      # needs shared-write
+node xanima-client.mjs stats --json
+node xanima-client.mjs health                                    # no token needed
+node xanima-client.mjs forget 3f2a...-uuid [--shared]            # delete one node
+node xanima-client.mjs seed <dir> --map a.md=shared --map b.md=private --dry-run   # admin token; see docs/seeding.md
 ```
 
 `--url` defaults to `$SHARPWAVE_URL` or `http://127.0.0.1:18790`. `--json` prints
@@ -185,7 +185,7 @@ machine-readable output. Exit codes: 0 ok, 1 tool error (e.g. forbidden), 2 usag
   hidden launcher for the gateway task. It also **supervises** node: Task
   Scheduler's restart-on-failure only fires when a task fails to *start*, so the
   wrapper itself restarts node 30 s after any non-zero exit (up to 1000x); exit 0 ends it.
-- `install-task.ps1` — registers **"SharpWave Brain Service"**: at-logon trigger
+- `install-task.ps1` — registers **"Xanima Brain Service"**: at-logon trigger
   for the current user, limited run level, restart every 1 min on failure (999x),
   no execution time limit, `IgnoreNew` for multiple instances. Action:
   `wscript.exe //B //Nologo sharpwave-service.vbs "<node>" "<dist\cli.js>" "<config>" "<log>"`.
@@ -195,7 +195,7 @@ machine-readable output. Exit codes: 0 ok, 1 tool error (e.g. forbidden), 2 usag
   running this checkout's `dist\cli.js serve` (`-KeepProcess` to skip); data is left in place.
 
 **Step-by-step Windows install (untested on Windows): `docs/windows-install-runbook.md`.**
-Seeding (idempotent `sharpwave-client seed` + admin-only `brain_seed` tool): `docs/seeding.md`.
+Seeding (idempotent `xanima-client seed` + admin-only `brain_seed` tool): `docs/seeding.md`.
 
 Install steps (on the Windows host, normal PowerShell, NOT run by this PR):
 
@@ -206,7 +206,7 @@ node dist\cli.js token mint --agent chief-of-staff --scopes read,write
 # optional: copy config.example.json to $HOME\.sharpwave\service\config.json and edit
 powershell -ExecutionPolicy Bypass -File scripts\windows\install-task.ps1 -WhatIf
 powershell -ExecutionPolicy Bypass -File scripts\windows\install-task.ps1          # register
-Start-ScheduledTask -TaskName "SharpWave Brain Service"                            # or log off/on
+Start-ScheduledTask -TaskName "Xanima Brain Service"                            # or log off/on
 Invoke-RestMethod http://127.0.0.1:18790/health
 ```
 
@@ -214,7 +214,7 @@ Uninstall:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\windows\uninstall-task.ps1
-# or: Unregister-ScheduledTask -TaskName "SharpWave Brain Service" -Confirm:$false
+# or: Unregister-ScheduledTask -TaskName "Xanima Brain Service" -Confirm:$false
 # brains/backups/tokens under $HOME\.sharpwave\service are untouched; delete manually if wanted
 ```
 
@@ -228,7 +228,7 @@ After each local snapshot (nightly job and `backup now`) the service can write a
 "offsiteBackup": {
   "enabled": true,
   "keyFile": "%USERPROFILE%\\.sharpwave\\backup.key",   // or env SHARPWAVE_BACKUP_KEY (wins when set)
-  "folder": "G:\\My Drive\\SharpWave",                  // (a) e.g. Google Drive for Desktop synced folder
+  "folder": "G:\\My Drive\\Xanima",                  // (a) e.g. Google Drive for Desktop synced folder
   "command": ["C:\\Tools\\rclone.exe", "sync", "{outbox}", "remote:sharpwave"], // (b) optional, no shell
   "commandTimeoutMs": 600000,
   "keepDaily": 7,                                         // off-PC retention: newest per day for 7 days
@@ -280,14 +280,14 @@ icacls "$env:USERPROFILE\.sharpwave\backup.key" /inheritance:r /grant:r "${env:U
 ```
 
 1. **Copy the key into your password manager now** (open the file in Notepad,
-   copy the last line, save it as a secure note titled e.g. "SharpWave backup key
+   copy the last line, save it as a secure note titled e.g. "Xanima backup key
    <key id>"). Without the key every off-PC backup is unrecoverable; with it,
    anyone can read them.
 2. **Where the key lives:** `%USERPROFILE%\.sharpwave\backup.key` on the PC +
    the password manager. **Never** inside the Google Drive folder, OneDrive, the
    repo, or `config.json`.
 3. Install Google Drive for Desktop, pick a folder inside it (e.g.
-   `G:\My Drive\SharpWave` — mirror or stream mode both work), and set
+   `G:\My Drive\Xanima` — mirror or stream mode both work), and set
    `offsiteBackup.folder` to it in `%USERPROFILE%\.sharpwave\service\config.json`
    with `"enabled": true` and `"keyFile"`.
 4. Test it: `node dist\cli.js backup now` → each brain prints `ok` and an
@@ -301,16 +301,16 @@ icacls "$env:USERPROFILE\.sharpwave\backup.key" /inheritance:r /grant:r "${env:U
 
 ```powershell
 # 1. Restore the newest artifact from the Drive folder to a scratch path (never the live brain):
-node dist\cli.js backup restore "G:\My Drive\SharpWave\main\main-<UTC>.swbk" --out "$env:TEMP\drill\drill.db" --require-manifest
+node dist\cli.js backup restore "G:\My Drive\Xanima\main\main-<UTC>.swbk" --out "$env:TEMP\drill\drill.db" --require-manifest
 #    -> verified GCM tag ok, manifest sha256 + plaintext HMAC ok; integrity ok; counts nodes=… edges=… episodes=…
-# 2. Compare the counts with the live brain (e.g. sharpwave-client stats --json).
+# 2. Compare the counts with the live brain (e.g. xanima-client stats --json).
 # 3. Delete the scratch copy: Remove-Item -Recurse "$env:TEMP\drill"
 ```
 
 On a new PC, put the key back first (from the password manager into
 `%USERPROFILE%\.sharpwave\backup.key`, or `$env:SHARPWAVE_BACKUP_KEY="<base64>"` for
 one session). To **replace a live brain**: stop the service
-(`Stop-ScheduledTask -TaskName "SharpWave Brain Service"`), then
+(`Stop-ScheduledTask -TaskName "Xanima Brain Service"`), then
 `backup restore <file> --out <root>\brains\<brain>\brain.db --force`. Restore
 refuses: an existing `--out` without `--force`; any path under `brains\` or named
 `brain.db` without `--force`; and any live path while something listens on the

@@ -12,12 +12,12 @@ import { getDb, closeDb } from "../src/db.js";
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 const log = { info: () => {}, warn: () => {} };
 
-// NOTE (openwave/sharpwave-core split, Task 3):
-// clawbrain-v4's entity-resolution.ts and sharpwave-core's have DIVERGED. The
+// NOTE (openwave/xanima-core split, Task 3):
+// clawbrain-v4's entity-resolution.ts and xanima-core's have DIVERGED. The
 // clawbrain-v4 test covered `recordAlias` / `resolveEntity` / `getSessionAliases`
 // / `clearSessionAliases` / `linkCoreference` (session alias cache + FTS-Jaccard
 // entity linking) and a `psHashCompatible` / `PS_HASH_HAMMING_GATE` pair — none
-// of which exist in sharpwave-core. sharpwave-core's entity-resolution.ts is the
+// of which exist in xanima-core. xanima-core's entity-resolution.ts is the
 // v0.4.0 character-trigram MinHash implementation exporting `jaccardShingles`,
 // `findNearDuplicates`, `deduplicateExisting`, `mergeCoreferentNodes` (verified
 // in src/entity-resolution.ts). `mergeCoreferentNodes` also has different
@@ -26,7 +26,7 @@ const log = { info: () => {}, warn: () => {} };
 // edges the way clawbrain-v4's did.
 //
 // All 14 clawbrain-v4 cases were replaced with the ones below, which cover the
-// actual sharpwave-core surface. The ps-hash gating helper is not ported;
+// actual xanima-core surface. The ps-hash gating helper is not ported;
 // `computePsHash` / `psHashHamming` (from nodes.ts) are still covered here as a
 // sanity companion since the clawbrain test paired them with this file.
 

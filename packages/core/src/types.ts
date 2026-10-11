@@ -1,6 +1,8 @@
+import { envGet } from "./env.js";
 export type NodeType =
   | "identity" | "semantic" | "episodic" | "pattern"
-  | "skill" | "goal" | "emotion" | "procedural" | "schema";
+  | "skill" | "goal" | "emotion" | "procedural" | "schema"
+  | "decision"; // Xanima 0.2.0 decision ledger (structured row in `decisions`)
 
 // EdgeType: `associates` is the canonical Hebbian/similarity edge type since
 // v4.0.0 (CHANGELOG.md [4.0.0] Changed). `associated_with` is retained ONLY
@@ -12,6 +14,8 @@ export type EdgeType =
   | "goal_of" | "before" | "after" | "inhibits" | "summarizes"
   | "attaches_to" | "contradicts" | "supersedes" | "coreference_of"
   | "generated_skill" | "drives"
+  | "used_in" | "led_to" | "derived_from" // Xanima 0.1.0 lightweight causal links
+  | "advances" | "conflicts_with_goal" // Xanima 0.2.0 decision → goal
   | "associated_with"; // legacy — read only
 
 export interface BrainNode {
@@ -59,10 +63,45 @@ export interface BrainNode {
   // for engine-internal writers (SYSTEM_SLEEP_WRITER for consolidation). NULL on
   // rows written before v18 — see db.ts v18 migration for why there is no backfill.
   writer_agent_id: string | null;
+  // ── Belief metadata (v19, Xanima 0.1.0) ──────────────────────────────────
+  // How sure the brain is (discrete level + numeric score), where the belief
+  // came from, when it was last verified / contradicted, what supports it, and
+  // whether it is still current. Existing rows read source_type='legacy',
+  // confidence='medium' / 0.6, status='active' (see db.ts v19).
+  confidence?: ConfidenceLevel;
+  confidence_score?: number;
+  source_type?: SourceType;
+  verified_at?: number | null;
+  contradicted_at?: number | null;
+  /** JSON array of supporting episode / node ids. */
+  evidence?: string | null;
+  status?: BeliefStatus;
+  /** Why the node was retracted / superseded (free text). */
+  status_reason?: string | null;
+  status_changed_at?: number | null;
+  sensitivity?: Sensitivity;
+  /** Set by sleep when the node needs review (low confidence / contradicted). Exempts it from pruning. */
+  review_flagged_at?: number | null;
   created_at: number;
   accessed_at: number;
   updated_at: number;
 }
+
+/** Discrete confidence levels, lowest to highest. */
+export type ConfidenceLevel = "low" | "medium" | "high" | "certain";
+export const CONFIDENCE_LEVELS: readonly ConfidenceLevel[] = ["low", "medium", "high", "certain"];
+
+/** Where a belief came from. `legacy` = written before Xanima 0.1.0 (unknown origin). */
+export type SourceType = "user" | "self_observation" | "inference" | "tool" | "agent" | "seed" | "legacy";
+export const SOURCE_TYPES: readonly SourceType[] = ["user", "self_observation", "inference", "tool", "agent", "seed", "legacy"];
+
+/** Lifecycle of a belief. Only `active` nodes are recalled or injected. */
+export type BeliefStatus = "active" | "superseded" | "retracted" | "archived";
+export const BELIEF_STATUSES: readonly BeliefStatus[] = ["active", "superseded", "retracted", "archived"];
+
+/** `confirm_before_acting`: shown with a marker; the agent should check before acting on it. */
+export type Sensitivity = "normal" | "sensitive" | "confirm_before_acting";
+export const SENSITIVITIES: readonly Sensitivity[] = ["normal", "sensitive", "confirm_before_acting"];
 
 export interface BrainEdge {
   id: string;
@@ -147,6 +186,38 @@ export interface BrainConfig {
   skillEvolveMinPatternCount: number;
   workspaceSkillsDir: string;
   brainDocsDir: string;
+  // ── Xanima 0.1.0 feature flags (all optional; defaults below) ────────────
+  /** Belief metadata on writes + labels on recall (confidence, retracted/superseded exclusion). Default true. */
+  beliefMetadata?: boolean;
+  /** brain_status self-summary + a one-line status footer on injection when something needs attention. Default true. */
+  selfStatus?: boolean;
+  /** "3 days ago" labels on recall and injection. Default true. */
+  relativeTimeLabels?: boolean;
+  /** Numeric confidence below which a node counts as low-confidence (marked "(?)" and flagged by sleep). Default 0.4. */
+  lowConfidenceThreshold?: number;
+  /** Sleep pass that flags low-confidence / contradicted nodes for review (and protects them from pruning). Default true. */
+  sleepBeliefReview?: boolean;
+  // ── Xanima 0.2.0 continuity flags (all heuristic; no LLM needed) ─────────
+  /** Decision ledger tools + decision recall boost + sleep decision pass. Default true. */
+  decisionLedger?: boolean;
+  /** Draft low-confidence decisions from the agent's own "I'll go with X over Y because…" text. Default true. */
+  decisionAutoExtract?: boolean;
+  /** Promote recurring / high-value lessons from resolved decisions to skill nodes during sleep. Default false. */
+  decisionLessonPromotion?: boolean;
+  /** Activation multiplier for decision nodes that match the current context. Default 1.2. */
+  decisionBoost?: number;
+  /** Drift check against active tracked goals: "sleep" (during consolidation, default), "daily" (at most once a day, at turn time), "off". */
+  intentDriftCheck?: "off" | "daily" | "sleep";
+  /** Days without progress before a goal counts as drifting. Default 7. */
+  driftDays?: number;
+  /** Time / keyword triggers that surface a goal when relevant. Default true. */
+  goalTriggers?: boolean;
+  /** Token cap for the injected alignment note + goal trigger lines. Default 60 (~240 chars). */
+  alignmentNoteMaxTokens?: number;
+  /** Days before an unconfirmed, unlinked, outcome-less auto-extracted decision draft expires (soft-retired by sleep). Default 14. */
+  decisionDraftTtlDays?: number;
+  /** Cosine similarity at/above which a new lesson merges into an existing skill (embedding path). Default 0.86. */
+  lessonMergeSimilarity?: number;
 }
 
 export const DEFAULT_CONFIG: BrainConfig = {
@@ -163,12 +234,27 @@ export const DEFAULT_CONFIG: BrainConfig = {
   consolidationEpisodeGate: 10,
   pruneAfterDays: 90,
   ingestionModel: "openrouter/deepseek/deepseek-v4-flash",
-  openRouterApiKey: process.env["OPENROUTER_API_KEY"] ?? process.env["SHARPWAVE_OPENROUTER_API_KEY"] ?? "",
-  embeddingModel: process.env["SHARPWAVE_EMBEDDING_MODEL"] ?? "ollama/qwen3-embedding:0.6b",
+  openRouterApiKey: process.env["OPENROUTER_API_KEY"] ?? envGet("OPENROUTER_API_KEY") ?? "",
+  embeddingModel: envGet("EMBEDDING_MODEL") ?? "ollama/qwen3-embedding:0.6b",
   llmExtractionEnabled: false,
   llmExtractionMinImportance: 0.4,
   skillEvolution: false,
   skillEvolveMinPatternCount: 5,
   workspaceSkillsDir: "",
   brainDocsDir: "",
+  beliefMetadata: true,
+  selfStatus: true,
+  relativeTimeLabels: true,
+  lowConfidenceThreshold: 0.4,
+  sleepBeliefReview: true,
+  decisionLedger: true,
+  decisionAutoExtract: true,
+  decisionLessonPromotion: false,
+  decisionBoost: 1.2,
+  intentDriftCheck: "sleep",
+  driftDays: 7,
+  goalTriggers: true,
+  alignmentNoteMaxTokens: 60,
+  decisionDraftTtlDays: 14,
+  lessonMergeSimilarity: 0.86,
 };

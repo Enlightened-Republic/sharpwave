@@ -8,7 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFi
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { closeDb, getDb } from "sharpwave-core";
+import { closeDb, getDb, envRestore, envSet, envSnapshot } from "xanima-core";
 
 import { adoptBrain, AdoptError, formatAdoptResult, resolveBackfillWriter, type AdoptOptions } from "../src/adopt.js";
 import { servicePortInUse } from "../src/restore.js";
@@ -87,7 +87,7 @@ describe("brain adopt", () => {
     expect(r.after!.schema).toBeGreaterThanOrEqual(18);
     expect(r.after!.nullWriters).toEqual({ nodes: totals.nodes, edges: totals.edges, episodes: totals.episodes }); // no backfill by default
     expect(r.backfillWriter).toBeNull();
-    expect(counts(target)).toMatchObject({ ...totals, schema: 18 });
+    expect(counts(target)).toMatchObject({ ...totals, schema: 21 });
 
     // Pre-adopt backup: exists, sha256 matches result + manifest, schema still 17, counts equal.
     expect(r.backup!.path).toMatch(/[\\/]backups[\\/]main[\\/]pre-adopt[\\/]main-pre-adopt-.*\.db$/);
@@ -106,7 +106,7 @@ describe("brain adopt", () => {
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ agentId: "admin:cli", tool: "brain_adopt", brain: "main", nodeId: null, outcome: "ok" });
     expect(audit[0].detail).toContain(`nodes=${totals.nodes}`);
-    expect(audit[0].detail).toContain("schema=17->18");
+    expect(audit[0].detail).toContain("schema=17->21");
     expect(JSON.stringify(audit)).not.toContain("legacy-fixture-content");
     expect(JSON.stringify(audit)).not.toContain("kumquat");
   });
@@ -122,8 +122,8 @@ describe("brain adopt", () => {
     expect(r.replacedMovedTo!.length).toBeGreaterThanOrEqual(1);
     const aside = r.replacedMovedTo!.find((p) => /brain\.db\.pre-adopt-[^-]+.*Z$/.test(p))!;
     expect(aside).toBeTruthy();
-    expect(counts(aside)).toMatchObject({ nodes: totals.nodes, schema: 18 }); // the previously adopted brain, intact
-    expect(counts(target)).toMatchObject({ nodes: totals.nodes, schema: 18 });
+    expect(counts(aside)).toMatchObject({ nodes: totals.nodes, schema: 21 }); // the previously adopted brain, intact
+    expect(counts(target)).toMatchObject({ nodes: totals.nodes, schema: 21 });
   });
 
   it("an EMPTY existing private brain (e.g. created by a smoke test) is moved aside without --force", async () => {
@@ -202,15 +202,15 @@ describe("brain adopt — restore / rollback", () => {
     mkdirSync(join(restored, "main"), { recursive: true });
     copyFileSync(r.backup!.path, join(restored, "main", "brain.db"));
     expect(sha(join(restored, "main", "brain.db"))).toBe(r.backup!.sha256);
-    const prev = process.env["SHARPWAVE_DATA_DIR"];
-    process.env["SHARPWAVE_DATA_DIR"] = restored;
+    const prev = envSnapshot("DATA_DIR");
+    envSet("DATA_DIR", restored);
     try {
       const db = getDb("main");
       expect((db.prepare("SELECT COUNT(*) AS n FROM nodes").get() as { n: number }).n).toBe(totals.nodes);
       expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
     } finally {
       closeDb("main");
-      if (prev === undefined) delete process.env["SHARPWAVE_DATA_DIR"]; else process.env["SHARPWAVE_DATA_DIR"] = prev;
+      envRestore("DATA_DIR", prev);
     }
   });
 
@@ -228,8 +228,8 @@ describe("brain adopt — restore / rollback", () => {
     } finally { await h.stop(false); }
 
     // "brainMode local" again = core opening ~/.sharpwave/main/brain.db directly.
-    const prev = process.env["SHARPWAVE_DATA_DIR"];
-    process.env["SHARPWAVE_DATA_DIR"] = join(root, "legacy");
+    const prev = envSnapshot("DATA_DIR");
+    envSet("DATA_DIR", join(root, "legacy"));
     try {
       const db = getDb("main");
       expect((db.prepare("SELECT COUNT(*) AS n FROM nodes").get() as { n: number }).n).toBe(totals.nodes);
@@ -237,7 +237,7 @@ describe("brain adopt — restore / rollback", () => {
       expect((db.prepare("SELECT content FROM nodes WHERE id = 'n0'").get() as { content: string }).content).toContain(marker(0));
     } finally {
       closeDb("main");
-      if (prev === undefined) delete process.env["SHARPWAVE_DATA_DIR"]; else process.env["SHARPWAVE_DATA_DIR"] = prev;
+      envRestore("DATA_DIR", prev);
     }
     expect(existsSync(join(legacy, "brain.db"))).toBe(true);
   });
@@ -266,7 +266,7 @@ describe("brain adopt — CLI", () => {
     const real = await cli([...base, "--json"]);
     expect(real.code, real.err).toBe(0);
     const j = JSON.parse(real.out);
-    expect(j).toMatchObject({ dryRun: false, integrity: "ok", sourceUnchanged: true, after: { nodes: totals.nodes, schema: 18 } });
+    expect(j).toMatchObject({ dryRun: false, integrity: "ok", sourceUnchanged: true, after: { nodes: totals.nodes, schema: 21 } });
 
     const again = await cli(base);
     expect(again.code).toBe(1);

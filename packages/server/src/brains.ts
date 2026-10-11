@@ -6,7 +6,7 @@
 //   <root>/brains/<agentId>/brain.db     one private brain per agent
 //
 // Connections, per brain:
-//   • ONE write connection — sharpwave-core's cached `getDb(brain)` connection.
+//   • ONE write connection — xanima-core's cached `getDb(brain)` connection.
 //     Every mutation (writes, links, supersede, review, forget, reset, recall
 //     reinforcement, consolidation) runs through that brain's SerialQueue, so
 //     mutations are strictly serialized in-process and never contend for the
@@ -15,13 +15,13 @@
 //     read tools (expand, edges, history, stats) and by backups. WAL readers
 //     never block the writer and never wait on it.
 //
-// sharpwave-core resolves brain paths from SHARPWAVE_DATA_DIR, which is
+// xanima-core resolves brain paths from SHARPWAVE_DATA_DIR, which is
 // process-global — so only ONE BrainManager may be open per process.
 
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { getDb, closeDb, clearStaleWorkingMemory, resolveBusyTimeoutMs } from "sharpwave-core";
+import { getDb, closeDb, clearStaleWorkingMemory, resolveBusyTimeoutMs, envSet, envDelete } from "xanima-core";
 
 import { validateAgentId } from "./tokens.js";
 
@@ -73,8 +73,8 @@ export class BrainManager {
     activeManager = this;
     mkdirSync(this.brainsDir, { recursive: true });
     // An explicit single-db override would route EVERY brain to one file.
-    delete process.env["SHARPWAVE_DB_PATH"];
-    process.env["SHARPWAVE_DATA_DIR"] = this.brainsDir;
+    envDelete("DB_PATH");
+    envSet("DATA_DIR", this.brainsDir);
     this.open(SHARED_BRAIN);
   }
 

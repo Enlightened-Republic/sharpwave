@@ -218,6 +218,7 @@ export function validateBrainLink(args: Record<string, unknown>): ValidationResu
     const validEdges = [
       "caused_by", "associates", "supports", "instance_of", "goal_of", "before",
       "after", "inhibits", "summarizes", "attaches_to", "contradicts", "supersedes",
+      "used_in", "led_to", "derived_from",
       "coreference_of",
     ];
     if (!validEdges.includes(edge_type)) {

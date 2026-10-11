@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Stops and removes the "SharpWave Brain Service" Scheduled Task, then ends any
-  node.exe still running this checkout's sharpwave-server "serve". Brains,
+  Stops and removes the "Xanima Brain Service" Scheduled Task, then ends any
+  node.exe still running this checkout's xanima-server "serve". Brains,
   backups, tokens and logs under ~/.sharpwave/service are NOT touched.
 
 .PARAMETER KeepProcess
@@ -9,7 +9,7 @@
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-  [string]$TaskName = "SharpWave Brain Service",
+  [string]$TaskName = "Xanima Brain Service",
   [switch]$KeepProcess
 )
 
@@ -35,5 +35,5 @@ if (-not $KeepProcess) {
       Write-Host "Stopped node.exe pid $($p.ProcessId) ($pattern)."
     }
   }
-  if ($procs.Count -eq 0) { Write-Host "No running sharpwave-server process matched $pattern." }
+  if ($procs.Count -eq 0) { Write-Host "No running xanima-server process matched $pattern." }
 }
