@@ -4,7 +4,8 @@ import { executeWithWalRetrySync } from "./wal-retry.js";
 import { bumpCounter, logObservabilityEvent } from "./observability.js";
 import { findNearDuplicates } from "./entity-resolution.js";
 import { blendEmotionalWeight } from "./utils.js";
-import type { BrainNode, BrainConfig, NodeType, NeuromodState } from "./types.js";
+import type { BrainNode, BrainConfig, NodeType, NeuromodState, SourceType, ConfidenceLevel, Sensitivity } from "./types.js";
+import { inferSourceType, parseConfidence, confidenceLevel, DEFAULT_CONFIDENCE_BY_SOURCE } from "./belief-meta.js";
 
 const HALF_LIFE_DAYS: Record<string, number> = {
   identity:    180,
@@ -16,6 +17,13 @@ const HALF_LIFE_DAYS: Record<string, number> = {
   emotion:       7,
   procedural:   90,
   schema:      180,
+  decision:     90,
+  hypothesis:   45,
+  question:     45,
+  assumption:   60,
+  commitment:   60,
+  plan:         60,
+  reflection:   90,
 };
 
 // ── FSRS-6 forgetting model ────────────────────────────────────────────────────
@@ -288,6 +296,16 @@ export function writeNode(
      *  stamped on INSERT — a dedupe merge into an existing canonical node keeps
      *  the canonical node's original writer (writer = creator, not last toucher). */
     writerAgentId?: string;
+    // ── Xanima belief metadata (v19). All optional; inferred when absent. ──
+    /** Where the belief came from. Default: inferred from source/writer (inferSourceType). */
+    sourceType?: SourceType;
+    /** Confidence as a level or a 0..1 score. Default: by source type (DEFAULT_CONFIDENCE_BY_SOURCE). */
+    confidence?: ConfidenceLevel | number;
+    /** Supporting episode / node ids (stored as JSON). */
+    evidence?: string[];
+    sensitivity?: Sensitivity;
+    /** Mark the belief verified at this time (epoch ms). */
+    verifiedAt?: number;
   } = {},
 ): string {
   const db = getDb(agentId);
@@ -356,6 +374,14 @@ export function writeNode(
     }
   }
 
+  const sourceType: SourceType = opts.sourceType ?? inferSourceType({ source: opts.source, writerAgentId: opts.writerAgentId, brainAgentId: agentId });
+  const parsedConf = parseConfidence(opts.confidence);
+  const belief = {
+    sourceType,
+    score: parsedConf?.score ?? DEFAULT_CONFIDENCE_BY_SOURCE[sourceType],
+    level: parsedConf?.level ?? confidenceLevel(DEFAULT_CONFIDENCE_BY_SOURCE[sourceType]),
+  };
+
   executeWithWalRetrySync(
     db,
     (d) => {
@@ -364,11 +390,13 @@ export function writeNode(
           (id, type, label, content, importance, salience, stability, retrievability, ef,
            access_count, emotional_weight, episode_ids, source, embedding,
            encoding_context, extraction_confidence, ripple_count, eligibility_trace,
-           writer_agent_id, created_at, accessed_at, updated_at)
+           writer_agent_id, created_at, accessed_at, updated_at,
+           source_type, confidence, confidence_score, evidence, sensitivity, verified_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1.0, 2.5,
                 0, ?, ?, ?, NULL,
                 ?, ?, 0, 0.0,
-                ?, ?, ?, ?)
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?)
       `).run(
         id, type, label, content, importance, salience, stability,
         emotionalWeight,
@@ -378,6 +406,10 @@ export function writeNode(
         opts.extractionConfidence ?? 1.0,
         opts.writerAgentId ?? agentId,
         now, now, now,
+        belief.sourceType, belief.level, belief.score,
+        opts.evidence && opts.evidence.length ? JSON.stringify(opts.evidence.slice(0, 50)) : null,
+        opts.sensitivity ?? "normal",
+        opts.verifiedAt ?? null,
       );
     },
     { op: `nodes.write:${type}` },
@@ -517,11 +549,32 @@ const FTS_STOPWORDS = new Set([
   "tell", "know", "anything", "something", "everything",
 ]);
 
-export function ftsSearchNodes(agentId: string, query: string, limit = 10): BrainNode[] {
+export function ftsSearchNodes(
+  agentId: string,
+  query: string,
+  limit = 10,
+  /** Xanima `as_of`: when set (epoch ms), return what was believed at that
+   *  time — nodes created by then and valid at that instant — instead of the
+   *  current view. Retracted / superseded nodes are visible if they were
+   *  still current at `asOf`. */
+  asOf?: number,
+): BrainNode[] {
   const db = getDb(agentId);
 
   const run = (matchExpr: string): BrainNode[] => {
     try {
+      if (asOf !== undefined) {
+        return db.prepare(`
+          SELECT n.* FROM nodes n
+          JOIN nodes_fts f ON n.rowid = f.rowid
+          WHERE nodes_fts MATCH ?
+            AND n.created_at <= ?
+            AND (n.valid_from IS NULL OR n.valid_from <= ?)
+            AND (n.valid_until IS NULL OR n.valid_until > ?)
+          ORDER BY rank
+          LIMIT ?
+        `).all(matchExpr, asOf, asOf, asOf, limit) as BrainNode[];
+      }
       return db.prepare(`
         SELECT n.* FROM nodes n
         JOIN nodes_fts f ON n.rowid = f.rowid
@@ -645,7 +698,14 @@ export function getOperationalProcedures(
 export function getActiveGoals(agentId: string): BrainNode[] {
   const db = getDb(agentId);
   return db.prepare(
-    "SELECT * FROM nodes WHERE type = 'goal' AND retrievability > 0.1 AND (valid_until IS NULL OR valid_until > ?) ORDER BY salience DESC LIMIT 10"
+    // v20: goals with a goals row are filtered by goal status (paused / done /
+    // archived / superseded versions are not "active") and never fade out of
+    // the header; ordered by priority (1 = highest), then salience.
+    `SELECT n.* FROM nodes n LEFT JOIN goals g ON g.node_id = n.id
+      WHERE n.type = 'goal' AND n.status = 'active' AND (n.valid_until IS NULL OR n.valid_until > ?)
+        AND (g.node_id IS NULL OR g.status = 'active')
+        AND (n.retrievability > 0.1 OR g.tracked = 1)
+      ORDER BY COALESCE(g.priority, 3) ASC, n.salience DESC LIMIT 10`
   ).all(Date.now()) as BrainNode[];
 }
 

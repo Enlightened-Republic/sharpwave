@@ -2,7 +2,10 @@
 // then (if enabled) encrypted off-PC copies. Shared by the service scheduler
 // and the `backup now` CLI. Off-PC failures never fail the local snapshots.
 
-import { basename } from "node:path";
+import { basename, join, dirname } from "node:path";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import Database from "better-sqlite3";
+import { exportSoul, serializeSoul } from "xanima-core";
 import { snapshotAll, type SnapshotResult } from "./backup.js";
 import { OffsiteBackup, type OffsiteResult } from "./offsite.js";
 import { backupsDir, brainsDir, type ServiceConfig } from "./config.js";
@@ -34,7 +37,33 @@ export function snapshotAndAudit(cfg: ServiceConfig, log: Logger, audit: AuditLo
     a(f.brain, "error", f.error);
   }
   log.info(`backup: ${r.ok.length} snapshot(s), ${r.failed.length} failure(s)`);
+  if (cfg.brain?.soulPackageOnExport) for (const s of r.ok) if (s.brain !== "shared") writeSoulSidecar(s, cfg, log, a);
   return r;
+}
+
+/**
+ * soulPackageOnExport: a compact Soul Package of each private-brain snapshot, read from the snapshot file
+ * (never the live brain) into <backups>/<brain>/soul-packages/, rotated with the same keep count.
+ */
+export function writeSoulSidecar(s: SnapshotResult, cfg: ServiceConfig, log: Logger, a: (brain: string, outcome: "ok" | "error", detail: string) => void): string | null {
+  try {
+    const db = new Database(s.path, { readonly: true, fileMustExist: true });
+    try {
+      const pkg = exportSoul(db, { agentId: s.brain, profile: "compact", config: cfg.brain ?? {} });
+      const dir = join(dirname(s.path), "soul-packages");
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, basename(s.path).replace(/\.db$/, ".soul.json"));
+      writeFileSync(f, serializeSoul(pkg));
+      const all = readdirSync(dir).filter((x) => x.endsWith(".soul.json")).sort();
+      for (const old of all.slice(0, Math.max(0, all.length - Math.max(1, cfg.backup.keep)))) rmSync(join(dir, old), { force: true });
+      a(s.brain, "ok", `soul package ${pkg.package_id} -> ${basename(f)}`);
+      return f;
+    } finally { db.close(); }
+  } catch (e) {
+    log.warn(`soul package for ${s.brain} failed: ${String(e)}`);
+    a(s.brain, "error", `soul package: ${String(e).slice(0, 200)}`);
+    return null;
+  }
 }
 
 export async function runBackupJob(cfg: ServiceConfig, log: Logger, audit: AuditLog | undefined, opts: { only?: string[]; offsite?: boolean; offsiteBackup?: OffsiteBackup } = {}): Promise<BackupRun> {

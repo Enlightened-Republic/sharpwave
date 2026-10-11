@@ -39,7 +39,9 @@ export function validateBrainQuery(args: Record<string, unknown>): ValidationRes
   const type = args["type"];
   if (type !== undefined && type !== null) {
     const typeStr = String(type);
-    const validTypes = ["identity", "semantic", "episodic", "pattern", "skill", "goal", "emotion", "procedural", "schema"];
+    // query filters also accept the structured types written by their own tools (decisions, v0.3.0 continuity nodes)
+    const validTypes = ["identity", "semantic", "episodic", "pattern", "skill", "goal", "emotion", "procedural", "schema",
+      "decision", "reflection", "hypothesis", "question", "assumption", "commitment", "plan"];
     if (!validTypes.includes(typeStr)) {
       errors.push({ field: "type", message: `type must be one of: ${validTypes.join(", ")}` });
     }
@@ -218,6 +220,7 @@ export function validateBrainLink(args: Record<string, unknown>): ValidationResu
     const validEdges = [
       "caused_by", "associates", "supports", "instance_of", "goal_of", "before",
       "after", "inhibits", "summarizes", "attaches_to", "contradicts", "supersedes",
+      "used_in", "led_to", "derived_from",
       "coreference_of",
     ];
     if (!validEdges.includes(edge_type)) {

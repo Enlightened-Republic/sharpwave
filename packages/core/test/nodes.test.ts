@@ -229,7 +229,7 @@ describe("FSRS-6 forgetting model", () => {
 
   it("touchNode q=5 yields larger stability gain than q=3", () => {
     const id = fresh();
-    // Distinct content so sharpwave-core's default writeNode dedupe (trigram
+    // Distinct content so xanima-core's default writeNode dedupe (trigram
     // Jaccard >= 0.85, type-scoped) doesn't collapse these into one row.
     const a = writeNode(id, "semantic", "easy review", "easy review content body");
     const b = writeNode(id, "semantic", "borderline review", "borderline review content body");

@@ -44,7 +44,7 @@ export function createBackup(agentId: string, reason: string): string {
   try {
     db.pragma("wal_checkpoint(RESTART)");
   } catch (err) {
-    console.warn(`[sharpwave] backup: wal_checkpoint failed: ${String(err)}`);
+    console.warn(`[xanima] backup: wal_checkpoint failed: ${String(err)}`);
   }
 
   const dbPath = db.name as string | undefined;
@@ -150,7 +150,7 @@ export function deleteBackup(agentId: string, backupPath: string): void {
     try {
       unlinkSync(backupPath);
     } catch (err) {
-      console.warn(`[sharpwave] failed to delete backup ${backupPath}: ${String(err)}`);
+      console.warn(`[xanima] failed to delete backup ${backupPath}: ${String(err)}`);
     }
   }
 

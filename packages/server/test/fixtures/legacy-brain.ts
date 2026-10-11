@@ -3,7 +3,7 @@
 // no writer_agent_id columns, schema_version = 17, and (optionally) part of
 // the data only in the -wal (not yet checkpointed into brain.db).
 //
-// Built with sharpwave-core's own schema (getDb in a throwaway data dir), then
+// Built with xanima-core's own schema (getDb in a throwaway data dir), then
 // downgraded: drop the v18 index + columns, set schema_version 17. Content is
 // synthetic — no real memory text.
 
@@ -11,7 +11,7 @@ import Database from "better-sqlite3";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDb, getDb } from "sharpwave-core";
+import { closeDb, getDb, envRestore, envSet, envSnapshot } from "xanima-core";
 
 export interface LegacyBrainSpec {
   nodes: number;
@@ -30,8 +30,8 @@ let seq = 0;
 export function makeLegacyBrain(dir: string, spec: LegacyBrainSpec): { nodes: number; edges: number; episodes: number } {
   const work = mkdtempSync(join(tmpdir(), "sw-legacy-gen-"));
   const agent = `gen-${process.pid}-${++seq}`;
-  const prevDir = process.env["SHARPWAVE_DATA_DIR"];
-  process.env["SHARPWAVE_DATA_DIR"] = work;
+  const prevDir = envSnapshot("DATA_DIR");
+  envSet("DATA_DIR", work);
   try {
     const db = getDb(agent);
     const now = Date.now();
@@ -79,7 +79,7 @@ export function makeLegacyBrain(dir: string, spec: LegacyBrainSpec): { nodes: nu
     if (!existsSync(join(dir, "brain.db"))) throw new Error("fixture not written");
     return { nodes: spec.nodes + walNodes, edges: spec.edges, episodes: spec.episodes + walEpisodes };
   } finally {
-    if (prevDir === undefined) delete process.env["SHARPWAVE_DATA_DIR"]; else process.env["SHARPWAVE_DATA_DIR"] = prevDir;
+    envRestore("DATA_DIR", prevDir);
     rmSync(work, { recursive: true, force: true });
   }
 }

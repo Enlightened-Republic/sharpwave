@@ -11,7 +11,7 @@ export interface Logger {
 export function createLogger(file?: string, quiet = false): Logger {
   if (file) mkdirSync(dirname(file), { recursive: true });
   const emit = (level: string, msg: string) => {
-    const line = `${new Date().toISOString()} [sharpwave-server] ${level} ${msg}\n`;
+    const line = `${new Date().toISOString()} [xanima-server] ${level} ${msg}\n`;
     if (file) {
       try { appendFileSync(file, line); } catch { process.stderr.write(line); }
     } else if (!quiet || level !== "info") {

@@ -5,7 +5,7 @@
 //   npm run test:pack
 //
 // This is the ONLY gate that catches a C1-class bug — a build-time-only package
-// (`sharpwave-core`, `"private": true`, never on the registry) leaking into
+// (`xanima-core`, `"private": true`, never on the registry) leaking into
 // `"dependencies"`. `npm install <tarball>` in a workspace-free dir is exactly
 // where such an entry 404s, which is what every external `npm install sharpwave`
 // would hit. It is slow and touches the network (real `npm install`), so it is
@@ -40,27 +40,27 @@ const cleanup = [];
 process.on("exit", () => { for (const fn of cleanup.reverse()) { try { fn(); } catch {} } });
 
 // ── 1. Build core + mcp from the workspace ────────────────────────────────────
-run(NPM, ["run", "build", "--workspace", "sharpwave-core"], ROOT);
-run(NPM, ["run", "build", "--workspace", "sharpwave"], ROOT);
+run(NPM, ["run", "build", "--workspace", "xanima-core"], ROOT);
+run(NPM, ["run", "build", "--workspace", "xanima"], ROOT);
 
 // ── 2. npm pack the published package ─────────────────────────────────────────
 const packOut = run(NPM, ["pack"], MCP_DIR).stdout.trim();
 const tarball = packOut.split("\n").pop().trim(); // last line is the filename
 const tarballAbs = join(MCP_DIR, tarball);
 cleanup.push(() => rmSync(tarballAbs, { force: true }));
-check("npm pack produced a tarball", /^sharpwave-\d.*\.tgz$/.test(tarball), tarball);
+check("npm pack produced a tarball", /^xanima-\d.*\.tgz$/.test(tarball), tarball);
 
 // ── 3. Install the tarball in a clean, workspace-free directory ───────────────
-const INSTALL = mkdtempSync(join(tmpdir(), "sharpwave-pack-"));
+const INSTALL = mkdtempSync(join(tmpdir(), "xanima-pack-"));
 cleanup.push(() => rmSync(INSTALL, { recursive: true, force: true }));
 writeFileSync(join(INSTALL, "package.json"), JSON.stringify({ name: "pack-smoke-consumer", private: true, version: "1.0.0" }, null, 2));
-// This is where a bad "dependencies" entry (unpublished sharpwave-core) 404s.
+// This is where a bad "dependencies" entry (unpublished xanima-core) 404s.
 run(NPM, ["install", tarballAbs, "--no-audit", "--no-fund"], INSTALL);
 
-const SERVER = join(INSTALL, "node_modules", "sharpwave", "dist", "index.js");
+const SERVER = join(INSTALL, "node_modules", "xanima", "dist", "index.js");
 
 // ── 4. Drive the installed server over MCP (stranger's environment) ───────────
-const DATA = mkdtempSync(join(tmpdir(), "sharpwave-pack-data-"));
+const DATA = mkdtempSync(join(tmpdir(), "xanima-pack-data-"));
 cleanup.push(() => rmSync(DATA, { recursive: true, force: true }));
 
 const proc = spawn(process.execPath, [SERVER], {
@@ -105,7 +105,7 @@ try {
 
   const tools = await rpc("tools/list", {});
   const n = tools?.result?.tools?.length ?? 0;
-  check("tools/list returns exactly 11", n === 11, `${n} tools`);
+  check("tools/list returns exactly 19", n === 19, `${n} tools`);
 
   await call("brain_write", { type: "semantic", label: "db", content: "The production database is PostgreSQL 16 on RDS." });
   const hit = text(await call("brain_query", { query: "what database do we use in production?" }));

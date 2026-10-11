@@ -1,10 +1,11 @@
 {
-  "name": "sharpwave",
-  "version": "0.4.1",
-  "description": "Long-term memory for AI agents. An MCP server that remembers across sessions, forgets what stops mattering, and consolidates the rest — modeled on how the hippocampus actually works. Works with OpenClaw, Claude Code, Cursor, and any MCP client.",
+  "name": "xanima",
+  "version": "0.4.0",
+  "description": "Xanima: a portable agent continuity layer. An MCP server that remembers across sessions, tracks what it believes and how sure it is, forgets what stops mattering, and consolidates the rest. Works with OpenClaw, Claude Code, Cursor, and any MCP client.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
+    "xanima": "dist/index.js",
     "sharpwave": "dist/index.js"
   },
   "scripts": {
@@ -19,6 +20,8 @@
     "LICENSE"
   ],
   "keywords": [
+    "xanima",
+    "agent-continuity",
     "mcp",
     "model-context-protocol",
     "memory",
@@ -60,6 +63,6 @@
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0",
-    "sharpwave-core": "^0.4.1"
+    "xanima-core": "0.4.0"
   }
 }

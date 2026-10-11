@@ -21,9 +21,9 @@ export function handleCompaction(
 
   try {
     const nodeIds = extractNodesFromSummary(agentId, summary, payload.sourceEpisodeIds ?? []);
-    log.info(`[sharpwave] compaction: extracted ${nodeIds.length} node(s) from summary (agent=${agentId})`);
+    log.info(`[xanima] compaction: extracted ${nodeIds.length} node(s) from summary (agent=${agentId})`);
   } catch (err) {
-    log.warn(`[sharpwave] compaction extraction failed: ${String(err)}`);
+    log.warn(`[xanima] compaction extraction failed: ${String(err)}`);
   }
 }
 

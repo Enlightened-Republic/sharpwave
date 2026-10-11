@@ -14,8 +14,8 @@
 
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
-import { DEFAULT_CONFIG, drainEmbeddingQueue } from "sharpwave-core";
-import type { BrainConfig } from "sharpwave-core";
+import { DEFAULT_CONFIG, drainEmbeddingQueue } from "xanima-core";
+import type { BrainConfig } from "xanima-core";
 
 import { assertBindableHost, listenOnce, listenWithRetry } from "./bind.js";
 import { BrainManager } from "./brains.js";
@@ -59,7 +59,7 @@ export class BrainService {
     assertBindableHost(LOOPBACK);
     for (const h of cfg.tailnetHosts) assertBindableHost(h);
     this.log = opts.log ?? createLogger(cfg.logFile);
-    this.brainConfig = { ...DEFAULT_CONFIG, ...(opts.brainConfig ?? {}) };
+    this.brainConfig = { ...DEFAULT_CONFIG, ...(cfg.brain ?? {}), ...(opts.brainConfig ?? {}) };
     this.brains = new BrainManager(brainsDir(cfg), cfg.readConnectionsPerBrain);
     this.audit = new AuditLog(cfg.auditFile);
     this.tokens = new TokenStore(cfg.tokensFile);
@@ -116,7 +116,7 @@ export class BrainService {
     this.started = true;
     this.brains.init();
     if (this.tokens.size === 0) {
-      this.log.warn(`no tokens in ${this.cfg.tokensFile} — every /mcp request will get 401. Mint one with: sharpwave-server token mint --agent <id>`);
+      this.log.warn(`no tokens in ${this.cfg.tokensFile} — every /mcp request will get 401. Mint one with: xanima-server token mint --agent <id>`);
     }
 
     const loop = this.makeHttpServer();

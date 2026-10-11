@@ -1,3 +1,46 @@
+# Xanima (formerly Sharpwave)
+
+> **0.3.0 (pre-release, not published): reflection, replay, open items, commitments + plans, meta-tools.**
+> Twelve new tools: `brain_reflect` (on-demand, stored), `brain_replay`,
+> `brain_hypothesis`, `brain_question`, `brain_list_open`, `brain_commit`,
+> `brain_commitments`, `brain_plan` (park / resume with a briefing),
+> `brain_changes`, `brain_conflicts`, `brain_briefing`, `brain_forget_impact`
+> (read-only). Optional sleep reflection ("what worked / didn't / try next").
+> "I think … because …", "open question: …" and "I'm assuming …" in the
+> agent's replies become drafts that expire. A relevant open question or an
+> overdue commitment can add one line to `[BRAIN: goals]`. Schema v22 adds
+> tables only. Flags: `reflection` (`off`|`sleep`), `reflectionLlm`,
+> `reflectionWindowDays`, `openItemCapture`, `openItemDraftTtlDays`,
+> `openItemSurfacing`, `commitmentNudges`, `replayMaxChars`, `metaToolMaxChars`.
+> No LLM needed. See CHANGELOG.md.
+>
+> **0.2.0 (pre-release, not published): decision ledger + goals / drift.**
+> Six new tools: `brain_record_decision`, `brain_update_decision_outcome`,
+> `brain_query_decisions`, `brain_set_goal`, `brain_update_goal`,
+> `brain_list_goals`. Sleep merges near-duplicate decisions, calibrates
+> confidence from outcomes, optionally promotes lessons to skills, and checks
+> active goals for drift; one short alignment note is injected on the next
+> turn (consumed only by a real reply). Keyword / time triggers surface a goal when relevant. Schema v20–v21 add
+> tables only. Flags: `decisionLedger`, `decisionAutoExtract`,
+> `decisionLessonPromotion`, `decisionBoost`, `intentDriftCheck`
+> (`sleep`|`daily`|`off`), `driftDays`, `goalTriggers`,
+> `alignmentNoteMaxTokens`, `decisionDraftTtlDays`, `lessonMergeSimilarity`. See CHANGELOG.md.
+>
+> **0.1.0 (pre-release, not published):** the packages are now `xanima-core`,
+> `xanima` (MCP server; `sharpwave` bin kept as an alias) and `xanima-server`
+> (`sharpwave-server` bin alias). `XANIMA_*` env vars replace `SHARPWAVE_*`
+> (old names still work in 0.1.x with a one-time deprecation warning). Data
+> lives in `~/.xanima`; `~/.sharpwave` is used until you run
+> `xanima-server migrate`, which COPIES it (and verifies every brain's counts)
+> and never moves or deletes the old folder. Schema v19 adds belief metadata
+> (confidence, source_type, status, sensitivity, verified/contradicted
+> timestamps, evidence) with an additive migration: existing rows become
+> `source_type=legacy`, `confidence=medium (0.6)`. New tools `brain_retract`
+> and `brain_status`; `brain_supersede` takes a `reason` and returns related
+> nodes to re-check; `brain_query` takes `as_of`. Sleep flags low-confidence
+> and disputed beliefs for review (and keeps them out of the prune).
+> `xanima-server sleep now [--force]` runs one cycle offline. See CHANGELOG.
+
 # Sharpwave
 
 **A long-term memory MCP server for AI agents.** It remembers across sessions,
@@ -137,12 +180,18 @@ Memory lands in `~/.sharpwave/` as a SQLite database. Nothing leaves your machin
 | `brain_stats` | Return brain statistics: node/edge/episode counts, neuromodulator state, consolidation status, embedding coverage, observability counters. |
 | `brain_history` | Search episode history (raw conversation turns) by keyword. |
 | `brain_expand` | Get full detail for a specific node: content, FSRS metrics, encoding context, and source episodes. |
-| `brain_review` | Apply an FSRS-6 spaced-repetition review to a node. Updates stability, retrievability, and SIGMA calibration. |
+| `brain_review` | Apply an FSRS-6 spaced-repetition review to a node (`node_id` + `quality`). With `action` (0.4.0): the pending-review queue for soul imports and merge conflicts (`list` / `show`; `accept` / `reject` need an admin). |
 | `brain_forget` | Physically delete a node from the brain. Refuses to delete nodes with active edges unless `force=true`. |
 | `brain_edges` | Get all active incoming and outgoing edges for a node. |
 | `brain_reset` | Wipe an agent's brain back to empty (a `.db` backup is taken first). `confirm` must equal the agent id. |
 
+| `brain_export_soul` | (0.4.0) Export your own Soul Package (`xanima-soul/1`): identity, values, goals, skills, lessons, key facts with provenance and a sha256 hash. Compact JSON or a summary. |
+
 In multi-agent mode every tool above also takes a required `agent` argument.
+
+### Soul Packages (0.4.0)
+
+Carry an agent's identity, goals, skills, lessons and key facts to a fresh brain on another machine or runtime, or fork it and merge the changes back with a three-way merge. Identity, values and goal changes from imports always wait in a review queue; nothing is overwritten. CLI: `xanima-server soul export | fork | import | diff | merge | review | validate | keygen`. Library: `exportSoul`, `importSoul`, `mergeSoul`, `validateSoul` from `xanima-core`. Format: [`packages/core/schema/xanima-soul-1.schema.json`](packages/core/schema/xanima-soul-1.schema.json). Guide: [docs/portability.md](docs/portability.md).
 
 ## Memory types
 
