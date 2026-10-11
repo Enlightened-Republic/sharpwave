@@ -1,5 +1,5 @@
 // Isolate every test's DB writes to a throwaway temp dir. sharpwave's db.ts
-// honors SHARPWAVE_DATA_DIR directly (verified: src/db.ts). Each test still
+// honors XANIMA_DATA_DIR (src/env.ts) (verified: src/db.ts). Each test still
 // picks a unique agentId so their dbs never collide.
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,7 +8,9 @@ import { randomUUID } from "node:crypto";
 
 const dir = join(tmpdir(), "xanima-core-test-" + randomUUID());
 mkdirSync(dir, { recursive: true });
-process.env["SHARPWAVE_DATA_DIR"] = dir;
+process.env["XANIMA_DATA_DIR"] = dir;
+delete process.env["SHARPWAVE_DATA_DIR"];
 process.env["OLLAMA_BASE_URL"] = "http://127.0.0.1:59999"; // dead port — no live embeds
 delete process.env["OPENROUTER_API_KEY"];
 delete process.env["SHARPWAVE_OPENROUTER_API_KEY"];
+delete process.env["XANIMA_OPENROUTER_API_KEY"];

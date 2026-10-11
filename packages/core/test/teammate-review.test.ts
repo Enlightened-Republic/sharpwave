@@ -162,14 +162,14 @@ function applyMigrationV3toV4(db: Database.Database): void {
  * So we write directly to the real ~/.openclaw/agents/<agentName>/brain.db.
  */
 function makeRealAgentPath(agentName: string): string {
-  const dir = join(process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".sharpwave"), agentName);
+  const dir = join(process.env["XANIMA_DATA_DIR"] || process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".xanima"), agentName);
   mkdirSync(dir, { recursive: true });
   return join(dir, "brain.db");
 }
 
 function cleanupAgent(agentName: string): void {
   closeDb(agentName);
-  const dbPath = join(process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".sharpwave"), agentName, "brain.db");
+  const dbPath = join(process.env["XANIMA_DATA_DIR"] || process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".xanima"), agentName, "brain.db");
   try { if (existsSync(dbPath)) rmSync(dbPath); } catch { /* ok */ }
 }
 

@@ -23,7 +23,7 @@ import { appendEpisode, getRecentEpisodes, searchEpisodes } from "../src/episode
 import { runConsolidation } from "../src/consolidation.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
-function agentDir(id: string) { return join(process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".sharpwave"), id); }
+function agentDir(id: string) { return join(process.env["XANIMA_DATA_DIR"] || process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".xanima"), id); }
 function cleanupAgent(id: string) {
   try { closeDb(id); } catch { /* ok */ }
   try { rmSync(agentDir(id), { recursive: true, force: true }); } catch { /* ok */ }

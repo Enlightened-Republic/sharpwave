@@ -30,7 +30,7 @@ const SCHEMA_VERSION = 19; // v19 = Xanima 0.1.0 belief metadata
 // under CLAWBRAIN_DATA_DIR/<agentId>/brain.db.
 
 function agentDir(agentId: string): string {
-  return join(process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".sharpwave"), agentId);
+  return join(process.env["XANIMA_DATA_DIR"] || process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".xanima"), agentId);
 }
 
 function agentDbPath(agentId: string): string {
