@@ -345,3 +345,24 @@ export type { SoulPackage, SoulContent, SoulItem, SoulGoal, SoulLesson, SoulProv
 export { SOUL_TOOL_DEFS, SOUL_TOOL_NAMES, SOUL_AGENT_TOOLS, dispatchSoulTool, soulToolNeedsAdmin } from "./soul-tools.js";
 export type { SoulToolCtx } from "./soul-tools.js";
 export { migrateV23 } from "./db.js";
+// Xanima 0.5.0 — rooms (context bus), controllable injection, poisoning quarantine
+export { migrateV24 } from "./db.js";
+export {
+  ROOM_TOOL_DEFS, ROOM_TOOL_NAMES, ROOM_ROLES, ROOM_NAME_RE, ROOM_BRAIN_PREFIX, PUBLISHABLE_TYPES, roomBrainName, isRoomBrain, roleAtLeast,
+  openRoomRegistry, ensureRoomRegistry, getRoom, createRoom, roleOf, setMember, revokeMember, listMembers, roomsFor, allRooms,
+  parseRoomFilter, subscribe, unsubscribe, subscriptionsFor, filterAccepts,
+  publishNodes, unpublish, withdrawAll, roomQuery, roomConflicts, formatRoomItem, formatRoomConflict,
+} from "./rooms.js";
+export type { RoomRole, RoomInfo, MemberRow, RoomFilter, RoomItem, PublishResult, RoomConflict, RoomToolDef } from "./rooms.js";
+export {
+  setFocus, readFocus, tickFocus, describeFocus, parseFocusRule, matchesRule, sensitiveRelevant, applyInjectionControls,
+  injectionCategories, DEFAULT_INJECTION_CATEGORIES, FOCUS_BOOST,
+} from "./injection-control.js";
+export type { FocusKind, FocusRule, FocusState, FocusArgs, Injectable, ControlReport } from "./injection-control.js";
+export {
+  INJECTION_RE, looksLikeInjection, classifyWrite, gateWrite, gateToolCall, gateNotice, applyQuarantinedOp, quarantineCounts,
+  quarantineMode, describeQuarantineOp, GOAL_TOOLS, GATED_TOOLS,
+} from "./quarantine.js";
+export type { QuarantineMode, QuarantineOp, QuarantineVerdict, GateResult } from "./quarantine.js";
+export { FOCUS_TOOL_DEF, parseScopeTags, setScopeTags } from "./tools.js";
+export type { InjectionCategories } from "./types.js";

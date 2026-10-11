@@ -25,6 +25,24 @@
 import { randomUUID } from "node:crypto";
 import { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } from "./continuity-tools.js";
 import { SOUL_TOOL_DEFS, REVIEW_QUEUE_PROPS, dispatchSoulTool, isReviewQueueCall } from "./soul-tools.js";
+import { gateWrite, gateToolCall, gateNotice, GATED_TOOLS } from "./quarantine.js";
+import { setFocus, readFocus, describeFocus } from "./injection-control.js";
+
+/** Xanima 0.5.0 brain_focus (local mode and the service). */
+export const FOCUS_TOOL_DEF: BrainToolDef = {
+  description: "Shape what gets injected as recall for the next turns (or until a task ends): suppress or boost a topic, project, room or memory type. The header (identity, goals, rules) is never affected. Examples: {\"suppress\":[\"project:alpha\"],\"ttl\":2}, {\"suppress\":[\"room:team\"],\"ttl\":\"task\",\"task\":\"write the report\"}, {\"boost\":[\"type:decision\"]}, {\"clear\":true}, {\"show\":true}.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      suppress: { type: "array", items: { type: "string" }, description: "Entries like \"topic:billing\", \"project:alpha\", \"room:team\", \"type:decision\" (a bare word = topic)." },
+      boost: { type: "array", items: { type: "string" }, description: "Same forms; boosted items rank higher in recall." },
+      ttl: { type: ["number", "string"], description: "Turns (1–50) or \"task\" (until cleared). Default focusDefaultTtl (3)." },
+      task: { type: "string", description: "Task name for ttl \"task\"." },
+      clear: { type: "boolean", description: "Remove the focus now." },
+      show: { type: "boolean", description: "Only show the current focus." },
+    },
+  },
+};
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -135,6 +153,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
         source_type:      { type: "string", description: "Where it came from: user|self_observation|inference|tool|agent. Default self_observation." },
         sensitivity:      { type: "string", description: "normal (default) | sensitive | confirm_before_acting" },
         evidence:         { type: "array", items: { type: "string" }, description: "Optional ids of supporting episodes/nodes." },
+        tags:             { type: "array", items: { type: "string" }, description: "Optional project / category tags (brain_focus can suppress or boost them, e.g. \"project:alpha\")." },
       },
       required: ["type", "label", "content"],
     },
@@ -163,6 +182,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
         new_label:   { type: "string", description: "Updated label (defaults to old label)" },
         reason:      { type: "string", description: "Why the old version is wrong or outdated (recorded with the history)." },
         confidence:  { type: "string", description: "Confidence of the new version: low|medium|high|certain or 0–1." },
+        source_type: { type: "string", description: "Where the new version came from (user|self_observation|inference|tool|agent). Identity / goal / rule changes from tool or agent sources are quarantined." },
       },
       required: ["old_node_id", "new_content"],
     },
@@ -331,6 +351,8 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
 
 // Xanima 0.2.0 decision ledger + goals (appended; order of the older tools unchanged).
 Object.assign(BRAIN_TOOL_DEFS, CONTINUITY_TOOL_DEFS);
+// Xanima 0.5.0: per-turn / per-task injection focus.
+BRAIN_TOOL_DEFS["brain_focus"] = FOCUS_TOOL_DEF;
 // Xanima 0.4.0: the agent-safe soul tool (export of self). brain_import_soul is admin-only (xanima-server / CLI).
 BRAIN_TOOL_DEFS["brain_export_soul"] = SOUL_TOOL_DEFS["brain_export_soul"]!;
 
@@ -444,6 +466,18 @@ export function parseBeliefArgs(args: Record<string, unknown>):
   return out;
 }
 
+/** Optional `tags` (project / category, for brain_focus) on a write. */
+export function parseScopeTags(args: Record<string, unknown>): { tags: string[] } | { error: string } | null {
+  const t = args["tags"] ?? args["project"];
+  if (t === undefined || t === null || t === "") return null;
+  const arr = Array.isArray(t) ? t : [t];
+  if (arr.length > 10 || !arr.every((x) => typeof x === "string" && /^[A-Za-z0-9][A-Za-z0-9 _.:\/-]{0,47}$/.test(x))) return { error: "tags must be up to 10 short strings (letters, digits, space _ . : / -)" };
+  return { tags: (arr as string[]).map((x) => x.toLowerCase()) };
+}
+export function setScopeTags(agentId: string, nodeId: string, tags: string[]): void {
+  try { getDb(agentId).prepare("UPDATE nodes SET scope_tags = ? WHERE id = ?").run(JSON.stringify(tags), nodeId); } catch { /* pre-v24 */ }
+}
+
 // ─── Dispatcher ─────────────────────────────────────────────────────────────
 
 /**
@@ -519,6 +553,11 @@ export async function dispatchBrainTool(
       const writerAgentId = writer_agent_id ?? agentId;
       const belief = parseBeliefArgs(args);
       if ("error" in belief) return err(belief.error);
+      const tags = parseScopeTags(args);
+      if (tags && "error" in tags) return err(tags.error);
+      // Xanima 0.5.0 quarantine: identity / value / goal / rule writes from untrusted sources.
+      const gate = gateWrite(agentId, { op: "write", type, label, content, importance, sourceType: belief.sourceType, confidence: belief.confidence, sensitivity: belief.sensitivity, writer: writerAgentId, source }, { sourceType: belief.sourceType, config });
+      if (gate.decision === "held") return ok(gateNotice(gate));
       const nodeId = writeNode(agentId, type as NodeType, label, content, {
         importance,
         emotional_weight,
@@ -526,8 +565,9 @@ export async function dispatchBrainTool(
         writerAgentId,
         ...belief,
       });
+      if (tags) setScopeTags(agentId, nodeId, tags.tags);
       queueEmbedding(agentId, nodeId);
-      return ok(`Written: node ${nodeId} (${type}) "${label}" writer=${writerAgentId}`);
+      return ok(`Written: node ${nodeId} (${type}) "${label}" writer=${writerAgentId}${gate.reviewId ? `\n${gateNotice(gate)}` : ""}`);
     }
 
     // ── brain_link ────────────────────────────────────────────────────────
@@ -556,6 +596,10 @@ export async function dispatchBrainTool(
       const conf = parseConfidence(args["confidence"]);
       if (args["confidence"] !== undefined && args["confidence"] !== null && args["confidence"] !== "" && !conf) return err("confidence must be low|medium|high|certain or a number 0–1");
 
+      const oldNode = getNode(agentId, old_node_id);
+      const sst = typeof args["source_type"] === "string" ? args["source_type"] : null;
+      const sgate = oldNode ? gateWrite(agentId, { op: "supersede", oldNodeId: old_node_id, oldType: oldNode.type, oldLabel: oldNode.label, newContent: new_content, newLabel: new_label, reason, writer: agentId, source }, { sourceType: sst, config }) : null;
+      if (sgate?.decision === "held") return ok(gateNotice(sgate));
       const res = supersedeNode(agentId, old_node_id, new_content, {
         newLabel: new_label, reason, source, writerAgentId: agentId,
         ...(conf ? { confidence: conf.score } : {}),
@@ -809,6 +853,8 @@ export async function dispatchBrainTool(
           return err(`value for ${field} must be valid JSON`);
         }
       }
+      const smGate = gateToolCall(agentId, name, { field, value, ...(typeof args["source_type"] === "string" ? { source_type: args["source_type"] } : {}) }, { writer: agentId, config });
+      if (smGate?.decision === "held") return ok(gateNotice(smGate));
       updateSelfModelField(agentId, field as "identity" | "goals" | "user_model", value);
       return ok(`Updated self_model.${field}`);
     }
@@ -918,8 +964,19 @@ export async function dispatchBrainTool(
       }
     }
 
+    case "brain_focus": {
+      const db = getDb(agentId);
+      if (args["show"] === true) { const f = readFocus(db); return ok(f ? `Focus: ${describeFocus(f)}` : "No focus set — recall is normal."); }
+      const r = setFocus(db, args, config);
+      return r.ok ? ok(r.text) : err(r.text.replace(/^Error: /, ""));
+    }
+
     default: {
-      const c = dispatchContinuityTool(name, agentId, args, config);
+      const g = gateToolCall(agentId, name, args, { writer: agentId, config });
+      if (g?.decision === "held") return ok(gateNotice(g));
+      const { source_type: _st, ...cargs } = args;
+      const c0 = dispatchContinuityTool(name, agentId, GATED_TOOLS.has(name) ? cargs : args, config);
+      const c = c0 && g?.reviewId && !c0.isError ? { ...c0, text: `${c0.text}\n${gateNotice(g)}` } : c0;
       if (c) return c;
       const sr = dispatchSoulTool(name, agentId, args, config, { admin: false, by: agentId });
       if (sr) return sr;

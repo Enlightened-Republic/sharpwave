@@ -395,7 +395,7 @@ function initSchema(db: Database.Database): void {
 }
 
 /** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 24;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -728,6 +728,44 @@ export function migrateV23(db: Database.Database): void {
   `);
 }
 
+/**
+ * v24 (Xanima 0.5.0 rooms, additive, new tables only). Used by room brains
+ * (`_room.<name>`); present but empty in private brains so every brain shares one schema.
+ *   room_items      one row per published copy: who published which source node, when, status
+ *   room_conflicts  conflicting assertions by different writers in the room (never overwritten)
+ *   nodes.scope_tags  optional JSON list of project / category tags (focus suppression)
+ */
+export function migrateV24(db: Database.Database): void {
+  // project / category tags used by brain_focus {suppress: ["project:x"]}
+  try { db.exec("ALTER TABLE nodes ADD COLUMN scope_tags TEXT"); } catch { /* already exists */ }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS room_items (
+      room_node_id    TEXT PRIMARY KEY,
+      origin_agent    TEXT NOT NULL,
+      origin_node_id  TEXT NOT NULL,
+      origin_created_at INTEGER,
+      published_at    INTEGER NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'active',
+      withdrawn_at    INTEGER,
+      withdrawn_reason TEXT
+    );
+    CREATE INDEX IF NOT EXISTS room_items_origin ON room_items(origin_agent, origin_node_id);
+    CREATE TABLE IF NOT EXISTS room_conflicts (
+      id          TEXT PRIMARY KEY,
+      a_node_id   TEXT NOT NULL,
+      b_node_id   TEXT NOT NULL,
+      a_writer    TEXT,
+      b_writer    TEXT,
+      label       TEXT NOT NULL,
+      reason      TEXT,
+      status      TEXT NOT NULL DEFAULT 'open',
+      created_at  INTEGER NOT NULL,
+      resolved_at INTEGER,
+      resolved_by TEXT
+    );
+  `);
+}
+
 function runMigrations(db: Database.Database): void {
   const TARGET = SCHEMA_VERSION;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
@@ -1019,6 +1057,9 @@ function runMigrations(db: Database.Database): void {
 
   if (current < 23) {
     migrateV23(db);
+  }
+  if (current < 24) {
+    migrateV24(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

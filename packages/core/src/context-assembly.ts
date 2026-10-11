@@ -11,6 +11,7 @@ import { beliefTag, relativeTime } from "./belief-meta.js";
 import { computeBrainStatus, statusFooter } from "./beliefs.js";
 import { recordInjection } from "./valor.js";
 import type { BrainConfig } from "./types.js";
+import { applyInjectionControls, tickFocus, injectionCategories } from "./injection-control.js";
 
 const BRAIN_HEADER =
   "[Xanima active] Your memory is pre-loaded below — no manual lookup needed. brain_write to record new facts, brain_retract / brain_supersede (with a reason) to correct wrong ones, brain_status for a memory self-check, brain_record_decision / brain_update_decision_outcome to log choices and what happened, brain_set_goal / brain_list_goals for standing goals, brain_reflect for what worked / didn't, brain_hypothesis / brain_question for open items, brain_commit / brain_plan for commitments and plans (resume gives a briefing), brain_changes / brain_conflicts / brain_briefing to catch up, brain_query only for deep dives (as_of for 'what did I believe then'). Memory consolidates automatically in the background (awake replay every 30 min; deeper consolidation once enough new experience accumulates). Use brain_docs section='memo' for full system overview." +
@@ -73,6 +74,7 @@ export async function buildSelfModelHeader(
   opts: ContextAssemblyOptions = {},
 ): Promise<string> {
   const isVoice = surface === "voice";
+  const cats = injectionCategories(_config ?? {});
   const parts: string[] = [];
   if (!isVoice) {
     parts.push(
@@ -85,7 +87,7 @@ export async function buildSelfModelHeader(
   if (!opts.externalMemoryActive) {
     try {
       const selfModel = getSelfModel(agentId);
-      if (selfModel?.identity) {
+      if (selfModel?.identity && cats.identity) {
         const max = isVoice ? 200 : 400;
         parts.push(`[identity] ${selfModel.identity.trim().slice(0, max)}`);
       }
@@ -107,7 +109,7 @@ export async function buildSelfModelHeader(
     }
 
     try {
-      const goals = getActiveGoals(agentId).slice(0, 3);
+      const goals = cats.goals ? getActiveGoals(agentId).slice(0, 3) : [];
       if (goals.length > 0) {
         parts.push(`[goals] ${goals.map((g) => g.label).join(" · ")}`);
       }
@@ -307,7 +309,12 @@ export async function buildRecallContext(
 ): Promise<string> {
   if (!query || query.length < 3) return "";
 
-  const results = await hybridRetrieve(agentId, query, sessionId, config);
+  const raw = await hybridRetrieve(agentId, query, sessionId, config);
+  if (raw.length === 0) return "";
+  // Xanima 0.5.0: injection controls (category switches, sensitivity, brain_focus for this turn).
+  let focus = null;
+  try { focus = tickFocus(getDb(agentId)); } catch { /* pre-v24 / read-only */ }
+  const results = applyInjectionControls(raw, { query, focus, config }).items;
   if (results.length === 0) return "";
 
   // Voice: cap to top 3 query-relevant nodes, shorter content. Chat: full.
@@ -363,7 +370,9 @@ export function buildProceduralContext(
   agentId: string,
   sessionId: string,
   excludeIds: Set<string> = new Set(),
+  config?: Partial<BrainConfig>,
 ): string {
+  if (config && !injectionCategories(config).rules) return "";
   const nodes = getOperationalProcedures(agentId, PROCEDURAL_MAX_NODES)
     .filter((n) => !excludeIds.has(n.id));
   if (nodes.length === 0) return "";

@@ -25,6 +25,8 @@ import { updateSelfModelField } from "./self-model.js";
 import { setGoal, updateGoal, currentGoalRow } from "./goals.js";
 import { recordDecision, decisionContent } from "./decisions.js";
 import { createOpenItem } from "./open-items.js";
+import { INJECTION_RE, applyQuarantinedOp, describeQuarantineOp, type QuarantineOp } from "./quarantine.js";
+import { dispatchContinuityTool } from "./continuity-tools.js";
 import { createCommitment } from "./plans.js";
 import type { BrainConfig, NodeType, Sensitivity } from "./types.js";
 import { DEFAULT_CONFIG } from "./types.js";
@@ -447,8 +449,8 @@ export function formatSoulDiff(d: SoulDiff): string {
 
 // ─── import / merge (write path, one agent's brain) ─────────────────────────
 
-const POISON_RE = /\b(ignore|disregard|forget)\b.{0,40}\b(previous|prior|all|above|earlier)\b.{0,20}\b(instructions?|rules?|identity|guidelines|prompts?)\b|\byou are now\b|\bnew (system )?(prompt|identity|persona)\b|\bfrom now on,? you\b|\boverride\b.{0,30}\b(identity|rules|values|goals?)\b/i;
-/** Heuristic poisoning flag for identity / value / goal text arriving from outside (first step; quarantine proper is a later release). */
+const POISON_RE = INJECTION_RE;
+/** Heuristic poisoning flag for identity / value / goal text arriving from outside (same patterns as the 0.5.0 quarantine). */
 export function looksLikeIdentityRewrite(text: string): boolean { return POISON_RE.test(text); }
 
 export interface ReviewItem {
@@ -749,11 +751,14 @@ function rowToReview(r: Record<string, unknown>): ReviewItem {
     reason: (r["reason"] as string) ?? null, flags: (safeParse(String(r["flags_json"] ?? "[]")) as string[]) ?? [], created_at: Number(r["created_at"]),
     resolved_at: (r["resolved_at"] as number) ?? null, resolved_by: (r["resolved_by"] as string) ?? null, resolution_note: (r["resolution_note"] as string) ?? null };
 }
-export function listReviews(db: Database.Database, o: { status?: "pending" | "accepted" | "rejected" | "all"; limit?: number } = {}): ReviewItem[] {
+export function listReviews(db: Database.Database, o: { status?: "pending" | "accepted" | "rejected" | "logged" | "all"; limit?: number; kind?: string } = {}): ReviewItem[] {
   if (!tableExists(db, "review_items")) return [];
   const st = o.status ?? "pending";
   const lim = Math.max(1, Math.min(o.limit ?? 200, 1000));
-  const rows = (st === "all" ? db.prepare("SELECT * FROM review_items ORDER BY created_at, id LIMIT ?").all(lim) : db.prepare("SELECT * FROM review_items WHERE status = ? ORDER BY created_at, id LIMIT ?").all(st, lim)) as Array<Record<string, unknown>>;
+  const kind = o.kind ?? null;
+  const rows = (st === "all"
+    ? db.prepare("SELECT * FROM review_items WHERE (? IS NULL OR kind = ?) ORDER BY created_at, id LIMIT ?").all(kind, kind, lim)
+    : db.prepare("SELECT * FROM review_items WHERE status = ? AND (? IS NULL OR kind = ?) ORDER BY created_at, id LIMIT ?").all(st, kind, kind, lim)) as Array<Record<string, unknown>>;
   return rows.map(rowToReview);
 }
 export function getReview(db: Database.Database, idOrPrefix: string): ReviewItem | null {
@@ -771,6 +776,13 @@ export function reviewCounts(db: Database.Database): { pending: number; byKind: 
 }
 export function formatReview(r: ReviewItem, full = false): string {
   const s = r.section as SoulSection;
+  if (r.kind === "quarantine") {
+    const op = r.theirs as QuarantineOp | null;
+    const head = `${r.id} [${r.status}] quarantine (${r.section}) ${short(r.label, 80)}${r.flags.length ? ` ⚠ ${r.flags.join(", ")}` : ""}: ${r.reason ?? ""}`;
+    if (!full) return head;
+    return [head, `  proposed: ${op ? describeQuarantineOp(op) : "(missing)"}`,
+      ...(r.resolved_at ? [`  resolved by ${r.resolved_by} at ${iso(r.resolved_at)}${r.resolution_note ? `: ${r.resolution_note}` : ""}`] : [])].join("\n");
+  }
   const head = `${r.id} [${r.status}] ${r.kind} (${r.section}) ${short(r.label, 80)}${r.flags.length ? ` ⚠ ${r.flags.join(", ")}` : ""}: ${r.reason ?? ""}`;
   if (!full) return head;
   return [head,
@@ -795,7 +807,10 @@ export function acceptReview(agentId: string, idOrPrefix: string, o: { by?: stri
   let applied = "";
   const localLive = r.local_id && db.prepare("SELECT 1 FROM nodes WHERE id = ? AND status = 'active'").get(r.local_id);
   const run = db.transaction(() => {
-    if (r.kind === "removal") {
+    if (r.kind === "quarantine") {
+      if (!t) throw new Error("quarantined op is missing");
+      applied = applyQuarantinedOp(agentId, t as unknown as QuarantineOp, by, (tool, args, writer) => dispatchContinuityTool(tool, agentId, args, cfg, { writerAgentId: writer }));
+    } else if (r.kind === "removal") {
       if (localLive) { const x = retractNode(agentId, r.local_id!, `removed in soul ${r.package_id ?? ""} (review ${r.id} accepted by ${by})`, { by }); applied = x.ok ? `retracted ${r.local_id!.slice(0, 8)}` : `nothing to retract (${x.error ?? ""})`; }
       else applied = "nothing to retract";
     } else if (!t) {

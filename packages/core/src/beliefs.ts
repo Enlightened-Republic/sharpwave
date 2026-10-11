@@ -20,6 +20,8 @@ import { relativeTime, confidenceLevel } from "./belief-meta.js";
 import { isSilentReplyText, isInternalWakeText } from "./system-noise.js";
 import { decisionCounts } from "./decisions.js";
 import { goalCounts } from "./goals.js";
+import { quarantineCounts, quarantineMode } from "./quarantine.js";
+import { readFocus, describeFocus } from "./injection-control.js";
 import type { BrainConfig, BrainNode, NodeType, SourceType, ConfidenceLevel, Sensitivity } from "./types.js";
 
 type Log = { info: (m: string) => void; warn: (m: string) => void };
@@ -255,6 +257,10 @@ export interface BrainStatus {
   reflections: { total: number; lastAt: number | null };
   /** Xanima 0.4.0: pending-review queue (soul imports / merges) */
   reviews?: { pending: number; byKind: Record<string, number>; flagged: number };
+  /** Xanima 0.5.0: poisoning quarantine counts (review_items kind "quarantine") */
+  quarantine?: { mode: "off" | "log" | "enforce"; held: number; logged: number; accepted: number; rejected: number };
+  /** Xanima 0.5.0: active brain_focus, described */
+  focus?: string | null;
   lastSleep: { at: number | null; ago: string; summary: SleepSummary | null };
   injection: {
     budgetChars: number;
@@ -345,9 +351,13 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
   const reviews = { pending: 0, byKind: {} as Record<string, number>, flagged: 0 };
   try {
     for (const r of db.prepare("SELECT kind, flags_json FROM review_items WHERE status = 'pending'").all() as Array<{ kind: string; flags_json: string }>) {
-      reviews.pending++; reviews.byKind[r.kind] = (reviews.byKind[r.kind] ?? 0) + 1; if (r.flags_json !== "[]") reviews.flagged++;
+      reviews.pending++; reviews.byKind[r.kind] = (reviews.byKind[r.kind] ?? 0) + 1; if (r.flags_json !== "[]" && r.kind !== "quarantine") reviews.flagged++;
     }
   } catch { /* pre-v23 */ }
+  const quarantine = { mode: quarantineMode(config), ...quarantineCounts(db) };
+  if (quarantine.held) attention.push(`${quarantine.held} identity/goal write${quarantine.held === 1 ? "" : "s"} from an untrusted source quarantined — held in review (brain_review list)`);
+  const focusState = readFocus(db);
+  const focus = focusState ? describeFocus(focusState) : null;
   if (reviews.flagged) attention.push(`${reviews.flagged} imported identity/goal change${reviews.flagged === 1 ? "" : "s"} flagged as a possible rewrite — held in review (brain_review list)`);
   for (const a of open.contradictedAssumptions.slice(0, 2)) attention.push(`load-bearing assumption CONTRADICTED: "${a.text.slice(0, 60)}" — re-check what rests on it`);
   if (commitments.overdue.length) attention.push(`${commitments.overdue.length} commitment${commitments.overdue.length === 1 ? "" : "s"} overdue ("${commitments.overdue[0]!.title.slice(0, 40)}")`);
@@ -367,6 +377,8 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
     commitments,
     reflections,
     reviews,
+    quarantine,
+    focus,
     lastSleep: { at: lastAt, ago: lastAt ? relativeTime(lastAt, now) : "never", summary },
     injection: { budgetChars, headerChars, recallCapChars, estimatedTokens: Math.ceil((headerChars + recallCapChars) / 4) },
     attention,
@@ -399,6 +411,8 @@ export function formatBrainStatus(s: BrainStatus, label = ""): string {
     if (s.commitments.pendingNudge) L.push(`  commitment nudge pending (consumed by the next real reply): ${s.commitments.pendingNudge}`);
   }
   if (s.reviews?.pending) L.push(`  review queue: ${s.reviews.pending} pending (${Object.entries(s.reviews.byKind).map(([k, v]) => `${k} ${v}`).join(", ")})${s.reviews.flagged ? `, ${s.reviews.flagged} flagged as possible identity rewrite` : ""} — nothing in review is applied until accepted`);
+  if (s.quarantine && (s.quarantine.held || s.quarantine.logged || s.quarantine.accepted || s.quarantine.rejected || s.quarantine.mode === "enforce")) L.push(`  quarantine (${s.quarantine.mode}): ${s.quarantine.held} held for review, ${s.quarantine.logged} logged (applied), ${s.quarantine.accepted} accepted, ${s.quarantine.rejected} rejected`);
+  if (s.focus) L.push(`  focus: ${s.focus}`);
   if (s.reflections?.total) L.push(`  reflections: ${s.reflections.total} (last ${relativeTime(s.reflections.lastAt)})`);
   if (s.goals.pendingNote) L.push(`  alignment note pending (${s.goals.pendingNoteOffers ? `offered ${s.goals.pendingNoteOffers}×, ` : ""}not yet delivered — consumed by the next real reply): ${s.goals.pendingNote}`);
   if (s.hotConflicts.length) {

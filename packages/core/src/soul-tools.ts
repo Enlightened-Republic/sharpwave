@@ -38,9 +38,10 @@ export const SOUL_TOOL_DEFS: Record<string, SoulToolDef> = {
 };
 /** brain_review already exists (FSRS review of one node); the pending-review queue is its `action` mode. */
 export const REVIEW_QUEUE_PROPS: Record<string, unknown> = {
-  action: { type: "string", enum: ["list", "show", "accept", "reject"], description: "Pending-review queue mode (Xanima 0.4.0): identity / value / goal changes from soul imports and three-way merge conflicts. list (status), show (id); accept / reject need an admin." },
+  action: { type: "string", enum: ["list", "show", "accept", "reject"], description: "Pending-review queue mode: identity / value / goal changes from soul imports, three-way merge conflicts (0.4.0) and quarantined identity / goal writes from untrusted sources (0.5.0). list (status, kind), show (id); accept / reject need an admin." },
   id: { type: "string", description: "Review item id (or a unique prefix) for show / accept / reject." },
-  status: { type: "string", enum: ["pending", "accepted", "rejected", "all"], description: "list filter (default pending)." },
+  status: { type: "string", enum: ["pending", "accepted", "rejected", "logged", "all"], description: "list filter (default pending; logged = quarantine log-mode records, already applied)." },
+  kind: { type: "string", description: "list filter by kind, e.g. quarantine, identity, goal, conflict." },
   reason: { type: "string", description: "Why (accept note / reject reason)." },
 };
 export const SOUL_TOOL_NAMES = [...Object.keys(SOUL_TOOL_DEFS), "brain_review"];
@@ -75,8 +76,9 @@ export function dispatchSoulTool(name: string, agentId: string, args: Record<str
       const db = getDb(agentId);
       const action = String(args["action"] ?? "list");
       if (action === "list") {
-        const st = (["pending", "accepted", "rejected", "all"].includes(String(args["status"])) ? args["status"] : "pending") as "pending";
-        const rows = listReviews(db, { status: st, limit: 30 });
+        const st = (["pending", "accepted", "rejected", "logged", "all"].includes(String(args["status"])) ? args["status"] : "pending") as "pending";
+        const kind = typeof args["kind"] === "string" && args["kind"] ? String(args["kind"]) : undefined;
+        const rows = listReviews(db, { status: st, limit: 30, ...(kind ? { kind } : {}) });
         return ok(rows.length ? `${rows.length} review item(s) (${st}):\n${rows.map((r) => formatReview(r)).join("\n")}` : `No ${st} review items.`);
       }
       const id = typeof args["id"] === "string" ? args["id"] : "";
