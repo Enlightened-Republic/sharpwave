@@ -27,7 +27,7 @@ import {
   getDb, forgetNodeById,
   retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
   parseAsOf, relativeTime, beliefTag, parseConfidence, parseBeliefArgs,
-  CONTINUITY_TOOL_NAMES, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost,
+  CONTINUITY_TOOL_NAMES, CONTINUITY_READ_ONLY_TOOLS, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost,
 } from "xanima-core";
 import { createHash } from "node:crypto";
 import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "xanima-core";
@@ -92,7 +92,7 @@ function withProps(name: string, extra: Record<string, unknown>, drop: string[] 
 }
 
 export const TURN_CONTEXT_TOOL = "brain_turn_context";
-const CONTINUITY_READ_ONLY = new Set(["brain_query_decisions", "brain_list_goals"]);
+const CONTINUITY_READ_ONLY = new Set(CONTINUITY_READ_ONLY_TOOLS);
 
 /** Published tool list (order is stable). */
 export const SERVICE_TOOLS = [
@@ -115,14 +115,15 @@ export const SERVICE_TOOLS = [
     "ADMIN ONLY, disabled unless the service sets allowReset. Wipes one brain (backup taken first). confirm must equal the brain name (your agent id, or \"shared\")."),
   withProps("brain_retract", { visibility: VIS_PROP }),
   withProps("brain_status", { visibility: { type: "string", enum: ["all", "private", "shared"], description: "Which brain(s) to report (default all)." } }),
-  // Xanima 0.2.0 decision ledger + goals — always on the caller's PRIVATE brain.
+  // Xanima 0.2.0 decision ledger + goals, 0.3.0 reflection / open items / plans / meta-tools — always on the caller's PRIVATE brain.
   ...CONTINUITY_TOOL_NAMES.map((n) => withProps(n, {})),
   {
     name: TURN_CONTEXT_TOOL,
-    description: "Plugin plumbing (called once per agent turn): returns the pending goal alignment note (offered, not yet delivered) and any goal triggers matching this turn, as JSON. After the turn produced a real assistant reply, call again with ack_note_id to mark the note delivered. Needs the write scope.",
+    description: "Plugin plumbing (called once per agent turn): returns the pending goal alignment note and commitment nudge (offered, not yet delivered; noteIds), any goal triggers matching this turn and at most one relevant open question / hypothesis, as JSON. After the turn produced a real assistant reply, call again with ack_note_ids (or ack_note_id) to mark them delivered. Needs the write scope.",
     inputSchema: { type: "object" as const, properties: {
       query: { type: "string", description: "The user's message for this turn." },
       ack_note_id: { type: "integer", description: "Mark this alignment note delivered (it was injected into a prompt that produced a real reply)." },
+      ack_note_ids: { type: "array", items: { type: "integer" }, description: "Mark these offered notes delivered (alignment note + commitment nudge)." },
     } },
   },
   {
@@ -482,20 +483,22 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
     if (CONTINUITY_TOOL_NAMES.includes(name) || name === TURN_CONTEXT_TOOL) {
       const needs: Scope = CONTINUITY_READ_ONLY.has(name) ? "read" : "write";
       if (!has(p, needs)) return err(`forbidden — ${name} needs the ${needs} scope`);
-      if (args["visibility"] === "shared") return err(`${name} works on your private brain only (decisions and goals are per-agent in Xanima 0.2.0)`);
+      if (args["visibility"] === "shared") return err(`${name} works on your private brain only (decisions, goals, plans, commitments, open items and reflections are per-agent)`);
       const brain = ctx.brains.privateBrain(p.agentId);
       if (name === TURN_CONTEXT_TOOL) {
         // Two-phase alignment note: offered here, delivered only when the host acks after a real reply.
-        const ack = args["ack_note_id"];
+        const ack = args["ack_note_id"] ?? args["ack_note_ids"];
         if (ack !== undefined) {
-          if (typeof ack !== "number" || !Number.isInteger(ack)) return err("ack_note_id must be an integer note id");
-          const done = await ctx.brains.write(brain, () => ackAlignmentNote(brain, ack));
-          if (done) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `ack note=${ack}` });
-          return ok(JSON.stringify({ acked: done, noteId: ack }));
+          const ids = Array.isArray(ack) ? ack : [ack];
+          if (!ids.length || ids.length > 10 || !ids.every((x) => typeof x === "number" && Number.isInteger(x))) return err("ack_note_id must be an integer note id (or ack_note_ids an array of them)");
+          const acked: number[] = [];
+          for (const id of ids as number[]) if (await ctx.brains.write(brain, () => ackAlignmentNote(brain, id))) acked.push(id);
+          if (acked.length) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `ack notes=${acked.join(",")}` });
+          return ok(JSON.stringify(Array.isArray(ack) ? { acked: acked.length > 0, noteIds: acked } : { acked: acked.length > 0, noteId: ack }));
         }
         const q = typeof args["query"] === "string" ? args["query"].slice(0, 4000) : "";
         const r = await ctx.brains.write(brain, () => buildGoalTurnContext(brain, q, cfg));
-        if (r.noteId !== null || r.triggered.length) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `note=${r.noteId ?? "-"} triggers=${r.triggered.map((t) => t.trigger_id).join(",") || "-"}` });
+        if (r.noteIds.length || r.triggered.length || r.openItemId) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `notes=${r.noteIds.join(",") || "-"} open=${r.openItemId ?? "-"} triggers=${r.triggered.map((t) => t.trigger_id).join(",") || "-"}` });
         return ok(JSON.stringify(r));
       }
       const { visibility: _v, writer_agent_id: _w, agent: _a, ...rest } = args;

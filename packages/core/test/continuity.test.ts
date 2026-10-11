@@ -38,7 +38,7 @@ const cfg = { ...DEFAULT_CONFIG };
 describe("schema v20", () => {
   it("fresh brain has the continuity tables", () => {
     const db = getDb(fresh());
-    expect(SCHEMA_VERSION).toBe(21);
+    expect(SCHEMA_VERSION).toBe(22);
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map((t) => t.name);
     for (const t of ["decisions", "goals", "goal_events", "goal_triggers", "alignment_notes"]) expect(tables).toContain(t);
   });
@@ -62,7 +62,7 @@ describe("schema v20", () => {
       let db: Database.Database;
       try { db = getDb(b); } finally { delete process.env["XANIMA_DB_PATH"]; }
       expect(census(db)).toEqual(before);
-      expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(21);
+      expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(22);
       expect(db.prepare("SELECT node_id, version, tracked, status, priority FROM goals").all()).toEqual([{ node_id: g, version: 1, tracked: 0, status: "active", priority: 3 }]);
       expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
       expect(getActiveGoals(b).map((n) => n.id)).toEqual([g]);

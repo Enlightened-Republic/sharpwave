@@ -318,3 +318,20 @@ export {
 export type { GoalRow, GoalStatus, GoalAction, TriggerSpec, DriftFlag, DriftResult, GoalTurnContext, GoalHistory } from "./goals.js";
 export { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } from "./continuity-tools.js";
 export type { ContinuityResult, ContinuityToolDef } from "./continuity-tools.js";
+export { CONTINUITY_READ_ONLY_TOOLS } from "./continuity-tools.js";
+// ── Xanima 0.3.0: reflection, replay, open items, commitments, plans, meta-tools ──
+export { draftReflection, storeReflection, reflect, formatReflection, runReflectionPass, reflectionBody } from "./reflection.js";
+export type { ReflectInput, ReflectionDraft, ReflectResult } from "./reflection.js";
+export {
+  createOpenItem, updateOpenItem, getOpenItem, listOpenItems, formatOpenItem, extractOpenItemCandidates, autoExtractOpenItems,
+  expireOpenItemDrafts, surfaceOpenItem, openItemCounts, OPEN_KINDS, OPEN_STATUSES,
+} from "./open-items.js";
+export type { OpenKind, OpenStatus, OpenItemRow, OpenItemView, OpenItemCandidate } from "./open-items.js";
+export {
+  createCommitment, updateCommitment, getCommitment, listCommitments, formatCommitment, runCommitmentCheck, commitmentCounts,
+  createPlan, updatePlan, getPlan, listPlans, formatPlan, addBlockers, removeBlockers, blockersOf, blockerDone,
+} from "./plans.js";
+export type { CommitmentView, PlanView, PlanStatus, CommitAction, PlanAction } from "./plans.js";
+export { replay, changesSince, formatChanges, conflicts, briefing, forgetImpact } from "./meta-tools.js";
+export { parseWhen } from "./continuity-util.js";
+export { migrateV22 } from "./db.js";

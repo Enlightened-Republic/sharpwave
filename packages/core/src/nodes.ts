@@ -18,6 +18,12 @@ const HALF_LIFE_DAYS: Record<string, number> = {
   procedural:   90,
   schema:      180,
   decision:     90,
+  hypothesis:   45,
+  question:     45,
+  assumption:   60,
+  commitment:   60,
+  plan:         60,
+  reflection:   90,
 };
 
 // ── FSRS-6 forgetting model ────────────────────────────────────────────────────

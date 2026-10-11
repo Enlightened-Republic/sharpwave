@@ -333,8 +333,8 @@ export function formatDecision(d: DecisionView, now = Date.now()): string {
 
 const LEAD = String.raw`(?:I(?:'ll| will| am going to|'m going to)\s+(?:go with|choose|pick|use|take|opt for)|I(?:'ve| have)?\s*(?:decided|chosen|chose|opted)(?:\s+(?:to\s+(?:go with|use|take|pick)|for|on))?|I'm\s+(?:going with|choosing|picking|opting for)|(?:we'll|we will|let's)\s+(?:go with|use|pick|choose)|^going with)`;
 /** Conditional / hypothetical / hedged / reported framing: not a decision that was made. */
-const HEDGE = /\b(?:if|unless|whether|would|could|might|may|maybe|perhaps|probably|suppose|supposing|assuming|hypothetically|imagine|in theory|otherwise|when we|once we|until|should i|should we|i'd|we'd|you'd|wouldn't|not going to|won't|never|don't|didn't)\b/i;
-const REPORTED = /\b(?:said|says|saying|asked|told|tells|wrote|writes|suggested|suggests|recommended|recommends|according to|quote|quoted)\b/i;
+export const HEDGE = /\b(?:if|unless|whether|would|could|might|may|maybe|perhaps|probably|suppose|supposing|assuming|hypothetically|imagine|in theory|otherwise|when we|once we|until|should i|should we|i'd|we'd|you'd|wouldn't|not going to|won't|never|don't|didn't)\b/i;
+export const REPORTED = /\b(?:said|says|saying|asked|told|tells|wrote|writes|suggested|suggests|recommended|recommends|according to|quote|quoted)\b/i;
 const OVER = new RegExp(String.raw`\b${LEAD}\s+(.{2,120}?)\s+(?:over|instead of|rather than)\s+(.{2,120}?)(?:\s*[,;—-]?\s*(?:because|since|as)\s+(.{3,240}?))?(?=[.!?\n]|$)`, "i");
 const BECAUSE = new RegExp(String.raw`\b${LEAD}\s+(.{2,120}?)\s*[,;—-]?\s*(?:because|since)\s+(.{3,240}?)(?=[.!?\n]|$)`, "i");
 

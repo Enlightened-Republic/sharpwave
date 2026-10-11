@@ -809,6 +809,11 @@ export async function dispatchBrainTool(
 
     // ── brain_reflect (clawbrain-v4) ──────────────────────────────────────
     case "brain_reflect": {
+      // Xanima 0.3.0: scoped reflection (topic / goal_id / since / until) → continuity tool.
+      if (["topic", "goal_id", "since", "until"].some((k) => args[k] !== undefined)) {
+        const c = dispatchContinuityTool(name, agentId, args, config);
+        if (c) return c.isError ? err(c.text.replace(/^Error: /, "")) : ok(c.text);
+      }
       const model = getSelfModel(agentId);
       if (!model) return ok("Self model not initialized — try again after the first session.");
       const goals = getActiveGoals(agentId).map((g) => g.label);
@@ -819,6 +824,8 @@ export async function dispatchBrainTool(
         `User model: ${model.user_model}`,
         `Last updated: ${new Date(model.updated_at).toISOString()}`,
       ];
+      const c = dispatchContinuityTool(name, agentId, {}, config);
+      if (c && !c.isError) lines.push("", c.text);
       return ok(lines.join("\n"));
     }
 

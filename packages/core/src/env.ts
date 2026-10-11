@@ -7,7 +7,7 @@
 //
 // When only the old name is set, it still works, and a one-time deprecation
 // warning is written to stderr (once per variable per process). The old names
-// are dropped in 0.3.0 (kept through 0.2.x: neither release has shipped to a live install yet).
+// are dropped in the release after the first one that reaches a live install (kept through 0.3.x: nothing has shipped yet).
 //
 // Data dir: ~/.xanima is the new default. If ~/.xanima does not exist but
 // ~/.sharpwave does, the old folder is used (and a one-time notice says so),
@@ -60,7 +60,7 @@ export function envGet(suffix: string, env: NodeJS.ProcessEnv = process.env): st
     if (env === process.env || old !== "") {
       deprecationWarnOnce(
         `env:${suffix}`,
-        `${LEGACY_ENV_PREFIX}${suffix} is deprecated; set ${ENV_PREFIX}${suffix} instead (the old name stops working in 0.3.0).`,
+        `${LEGACY_ENV_PREFIX}${suffix} is deprecated; set ${ENV_PREFIX}${suffix} instead (the old name stops working in 0.4.0).`,
       );
     }
     return old;
