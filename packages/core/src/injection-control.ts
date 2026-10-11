@@ -160,9 +160,12 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export function sensitiveRelevant(n: Injectable, query: string): boolean {
   const q = words(query);
   if (!q.size) return false;
-  for (const w of words(n.label)) if (q.has(w)) return true;
-  for (const t of tagsOf(n)) if (q.has(t)) return true;
-  return false;
+  for (const t of tagsOf(n)) if (q.has(t.replace(/^[a-z]+:/, ""))) return true;
+  // The turn must name the topic, not just brush past it: at least two label words (or the only one).
+  const lw = [...words(n.label)];
+  if (!lw.length) return false;
+  const hits = lw.filter((w) => q.has(w)).length;
+  return hits >= Math.min(2, lw.length);
 }
 
 export interface ControlReport { suppressedByFocus: number; boosted: number; sensitiveHeld: number; categoryDropped: number; focus: FocusState | null }

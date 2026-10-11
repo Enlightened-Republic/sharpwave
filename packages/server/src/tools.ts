@@ -569,6 +569,10 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
       const { source_type: _st, ...rest1 } = rest0;
       const rest = GATED_TOOLS.has(name) ? rest1 : rest0;
       // Reads go through the serialized write connection too: core opens the brain by name (getDb).
+      if (name === "brain_conflicts" && !(typeof rest["topic"] === "string" && rest["topic"].trim())) {
+        const rc = roomConflictText(ctx).trim();
+        if (rc) return ok(rc);
+      }
       const r0 = await ctx.brains.write(brain, () => dispatchContinuityTool(name, brain, rest, cfg, { writerAgentId: p.agentId }));
       const r = r0 && !r0.isError ? { ...r0, text: `${r0.text}${gateText}${name === "brain_conflicts" ? roomConflictText(ctx) : ""}` } : r0;
       if (!CONTINUITY_READ_ONLY.has(name)) {
