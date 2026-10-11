@@ -571,7 +571,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
       // Reads go through the serialized write connection too: core opens the brain by name (getDb).
       if (name === "brain_conflicts" && !(typeof rest["topic"] === "string" && rest["topic"].trim())) {
         const rc = roomConflictText(ctx).trim();
-        if (rc) return ok(rc);
+        return ok(rc || "No open room conflicts. Pass a topic to check your own memories for contradictions.");
       }
       const r0 = await ctx.brains.write(brain, () => dispatchContinuityTool(name, brain, rest, cfg, { writerAgentId: p.agentId }));
       const r = r0 && !r0.isError ? { ...r0, text: `${r0.text}${gateText}${name === "brain_conflicts" ? roomConflictText(ctx) : ""}` } : r0;
