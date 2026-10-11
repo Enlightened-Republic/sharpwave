@@ -133,5 +133,6 @@ the normal supersede path (history kept); rejecting changes nothing.
 In remote mode the OpenClaw plugin does not inject local mode's full self-model header. From 0.4.0,
 `brain_turn_context` also returns the brain's identity (up to 400 chars) and its top 3 active goals, and the
 plugin's `soulHeader` setting decides what's shown: `"identity"` (default, adds `[BRAIN: identity] …` only
-when identity is non-empty and MEMORY.md / USER.md doesn't own identity), `"identity+goals"` (also
+when identity is non-empty and, while the setting is left unset, MEMORY.md / USER.md don't own identity —
+setting it explicitly shows it regardless), `"identity+goals"` (also
 `[BRAIN: active goals] a · b · c`), or `"off"`. Decision lessons arrive through normal recall.
