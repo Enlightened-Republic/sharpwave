@@ -279,7 +279,7 @@ export type { TurnSignals, NoiseVerdict, NoiseOptions, InputProvenanceLike, Syst
 // ── Xanima env / data-dir compatibility (0.1.x: SHARPWAVE_* still honoured) ──
 export {
   envGet, envSet, envDelete, envSnapshot, envRestore,
-  resolveDataDir, defaultDataHome, deprecationWarnOnce,
+  resolveDataDir, defaultDataHome, deprecationWarnOnce, suppressDeprecationWarning,
   setDeprecationWarningSink, resetDeprecationWarnings,
   ENV_PREFIX, LEGACY_ENV_PREFIX, DATA_DIR_NAME, LEGACY_DATA_DIR_NAME,
 } from "./env.js";

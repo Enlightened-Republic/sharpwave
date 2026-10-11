@@ -133,6 +133,18 @@ describe("xanima-server migrate (copy ~/.sharpwave → ~/.xanima)", () => {
     return { home, old, brains: [] };
   }
 
+  it("does not print the old-data-folder deprecation warning while migrating (it IS the fix)", async () => {
+    const { home } = fakeSharpwaveHome();
+    try {
+      const env = { ...cleanEnv(), HOME: home, USERPROFILE: home, XANIMA_HOME_OVERRIDE: home };
+      const r = await cli(["migrate", "--dry-run"], env);
+      expect(r.code, r.err + r.out).toBe(0);
+      expect(r.err + r.out).not.toMatch(/using the old data folder/);
+      const other = await cli(["token", "list"], env);
+      expect(other.err).toMatch(/using the old data folder/);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
   it("copies, migrates and verifies every brain; source untouched; refuses a non-empty target", async () => {
     const { home, old } = fakeSharpwaveHome();
     try {

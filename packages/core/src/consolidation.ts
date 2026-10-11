@@ -235,7 +235,7 @@ export async function runConsolidation(
   // Phase 3.5 (Xanima): belief review — stamp contradicted_at from contradicts
   // edges and flag low-confidence / disputed items for review (flagged items
   // are protected from the Deep prune below instead of silently decaying away).
-  let review = { newContradictions: 0, flagged: 0, lowConfidence: 0, contradicted: 0 };
+  let review = { newContradictions: 0, flagged: 0, lowConfidence: 0, contradicted: 0, legacyNoiseFlagged: 0 };
   if (config.sleepBeliefReview !== false) {
     try { review = runBeliefReviewPass(agentId, config, log); } catch (err) { log.warn(`[xanima] belief review failed (agent=${agentId}): ${String(err)}`); }
   }
@@ -255,7 +255,7 @@ export async function runConsolidation(
       at: Date.now(), durationMs: Date.now() - sleepStarted,
       nodesBefore: before.nodes, nodesAfter: after.nodes, edgesBefore: before.edges, edgesAfter: after.edges,
       pruned, newContradictions: review.newContradictions, flaggedForReview: review.flagged,
-      lowConfidence: review.lowConfidence, contradicted: review.contradicted,
+      lowConfidence: review.lowConfidence, contradicted: review.contradicted, legacyNoiseFlagged: review.legacyNoiseFlagged,
     });
   } catch { /* summary is best-effort */ }
 

@@ -35,7 +35,7 @@ import { adoptBrain, formatAdoptResult, type AdoptMode } from "./adopt.js";
 import { migrateDataDir, formatMigrateResult } from "./migrate.js";
 import { SleepRunner } from "./sleep.js";
 import { BrainManager } from "./brains.js";
-import { DEFAULT_CONFIG } from "xanima-core";
+import { DEFAULT_CONFIG, suppressDeprecationWarning } from "xanima-core";
 import { defaultReportBase, ftsProbe, parseSelection, registryStatus, retireItems, scanBrainFile, unretireItems, writeReport } from "./noise.js";
 import { BrainService } from "./service.js";
 import { VERSION } from "./version.js";
@@ -154,6 +154,8 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  // `migrate` IS the fix for the old-data-folder warning; don't print it while migrating.
+  if (cmd === "migrate") suppressDeprecationWarning("datadir");
   const cfg = buildConfig(p);
 
   if (cmd === "serve") {

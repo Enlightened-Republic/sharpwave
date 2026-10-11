@@ -38,6 +38,9 @@ export function resetDeprecationWarnings(): void {
   warned.clear();
 }
 
+/** Silence one deprecation key (e.g. "datadir" while `xanima-server migrate` is the fix being run). */
+export function suppressDeprecationWarning(key: string): void { warned.add(key); }
+
 export function deprecationWarnOnce(key: string, msg: string): void {
   if (warned.has(key)) return;
   warned.add(key);

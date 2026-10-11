@@ -296,6 +296,10 @@ describe("as_of", () => {
     const tool = await dispatchBrainTool("brain_query", a, { query: "project plan", as_of: t1 }, DEFAULT_CONFIG);
     expect(tool.text).toContain("Plan A");
     expect(tool.text).not.toContain("Plan B");
+    const num = await dispatchBrainTool("brain_query", a, { query: "project plan", as_of: t1 }, DEFAULT_CONFIG);
+    expect(num.isError).toBeFalsy();
+    const { BRAIN_TOOL_DEFS } = await import("../src/tools.js");
+    expect((BRAIN_TOOL_DEFS["brain_query"]!.inputSchema.properties as Record<string, { type: unknown }>)["as_of"]!.type).toEqual(["string", "number"]);
     const bad = await dispatchBrainTool("brain_query", a, { query: "project plan", as_of: "someday" }, DEFAULT_CONFIG);
     expect(bad.isError).toBe(true);
   });
@@ -360,6 +364,27 @@ describe("sleep belief review", () => {
     const st = computeBrainStatus(getDb(a), DEFAULT_CONFIG);
     expect(st.lastSleep.summary?.pruned).toBe(1);
     expect(st.lastSleep.ago).toBe("just now");
+  });
+
+  it("first sleep on a migrated brain flags legacy heartbeat / NO_REPLY noise for review (no retire, no delete)", async () => {
+    const a = fresh();
+    const noise = writeNode(a, "semantic", "NO_REPLY — 8:58 AM", "NO_REPLY — 8:58 AM Phoenix, daytime but nothing urgent in scope", { deduplicate: false });
+    const wake = writeNode(a, "semantic", "wake", "[OpenClaw heartbeat poll] check in", { deduplicate: false });
+    const real = writeNode(a, "semantic", "Router", "The router is in the hall closet", { deduplicate: false });
+    const fresh2 = writeNode(a, "semantic", "NO_REPLY new", "NO_REPLY — written after v19 by the agent", { deduplicate: false });
+    getDb(a).prepare("UPDATE nodes SET source_type = 'legacy' WHERE id IN (?, ?, ?)").run(noise, wake, real);
+    await runConsolidation(a, DEFAULT_CONFIG, log);
+    expect(getNode(a, noise)!.review_flagged_at).not.toBeNull();
+    expect(getNode(a, noise)!.status).toBe("active");
+    expect(getNode(a, noise)!.status_reason).toMatch(/legacy heartbeat/);
+    expect(getNode(a, real)!.review_flagged_at).toBeNull();
+    expect(getNode(a, fresh2)!.review_flagged_at).toBeNull();
+    const s = getSleepSummary(a)!;
+    expect(s.legacyNoiseFlagged).toBeGreaterThanOrEqual(1);
+    expect((await dispatchBrainTool("brain_status", a, {}, DEFAULT_CONFIG)).text).toMatch(/look like legacy heartbeat\/NO_REPLY noise/);
+    // idempotent: a second sleep does not re-count them
+    await runConsolidation(a, DEFAULT_CONFIG, log);
+    expect(getSleepSummary(a)!.legacyNoiseFlagged).toBe(0);
   });
 
   it("can be switched off", async () => {

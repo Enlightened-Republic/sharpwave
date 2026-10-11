@@ -15,6 +15,7 @@ import { executeWithWalRetrySync } from "./wal-retry.js";
 import { writeNode, getNode, ftsSearchNodes } from "./nodes.js";
 import { writeEdge, closeEdgesFromNode, closeEdgesToNode } from "./edges.js";
 import { relativeTime, confidenceLevel } from "./belief-meta.js";
+import { isSilentReplyText, isInternalWakeText } from "./system-noise.js";
 import type { BrainConfig, BrainNode, NodeType, SourceType, ConfidenceLevel, Sensitivity } from "./types.js";
 
 type Log = { info: (m: string) => void; warn: (m: string) => void };
@@ -211,6 +212,8 @@ export interface SleepSummary {
   flaggedForReview: number;
   lowConfidence: number;
   contradicted: number;
+  /** Of flaggedForReview: legacy rows that look like heartbeat / NO_REPLY noise. */
+  legacyNoiseFlagged?: number;
 }
 
 export interface BrainStatus {
@@ -329,7 +332,7 @@ export function formatBrainStatus(s: BrainStatus, label = ""): string {
   if (src) L.push(`  sources: ${src}`);
   L.push(`  injection: ~${s.injection.estimatedTokens} tokens (header ${s.injection.headerChars} + recall cap ${s.injection.recallCapChars} chars; budget ${s.injection.budgetChars})`);
   const ss = s.lastSleep.summary;
-  L.push(`  last sleep: ${s.lastSleep.ago}${ss ? ` — nodes ${ss.nodesBefore}→${ss.nodesAfter}, edges ${ss.edgesBefore}→${ss.edgesAfter}, pruned ${ss.pruned}, new contradictions ${ss.newContradictions}, flagged ${ss.flaggedForReview}` : ""}`);
+  L.push(`  last sleep: ${s.lastSleep.ago}${ss ? ` — nodes ${ss.nodesBefore}→${ss.nodesAfter}, edges ${ss.edgesBefore}→${ss.edgesAfter}, pruned ${ss.pruned}, new contradictions ${ss.newContradictions}, flagged ${ss.flaggedForReview}${ss.legacyNoiseFlagged ? ` (${ss.legacyNoiseFlagged} look like legacy heartbeat/NO_REPLY noise — review, then retire with xanima-server noise)` : ""}` : ""}`);
   if (s.hotConflicts.length) {
     L.push(`  hot conflicts:`);
     for (const c of s.hotConflicts) L.push(`    [${c.a.id.slice(0, 8)}] ${c.a.label}  ⟂  [${c.b.id.slice(0, 8)}] ${c.b.label}  (${relativeTime(c.since)})`);
@@ -354,12 +357,33 @@ export function statusFooter(s: BrainStatus): string {
  *      a disputed belief surfaces in brain_status instead of silently decaying away.
  *   3. Unflag anything no longer active.
  */
-export function runBeliefReviewPass(agentId: string, config: Partial<BrainConfig>, log?: Log): { newContradictions: number; flagged: number; lowConfidence: number; contradicted: number } {
+/**
+ * Legacy rows (pre-v19, backfilled source_type='legacy') that are really
+ * system-turn noise: the agent's own NO_REPLY / HEARTBEAT_OK triage or an
+ * OpenClaw internal wake body that older extractors stored as a "fact".
+ * Cheap text check; only flags for review (never retires or deletes).
+ */
+export function looksLikeLegacyNoise(label: string, content: string): boolean {
+  for (const t of [content, label]) {
+    const x = (t ?? "").trim();
+    if (!x) continue;
+    if (/^(NO_REPLY|HEARTBEAT_OK)\b/.test(x)) return true;
+    if (isSilentReplyText(x) || isInternalWakeText(x)) return true;
+  }
+  return false;
+}
+
+export function runBeliefReviewPass(agentId: string, config: Partial<BrainConfig>, log?: Log): { newContradictions: number; flagged: number; lowConfidence: number; contradicted: number; legacyNoiseFlagged: number } {
   const db = getDb(agentId);
   const now = Date.now();
   const low = config.lowConfidenceThreshold ?? 0.4;
-  let newContradictions = 0, flagged = 0;
+  let newContradictions = 0, flagged = 0, legacyNoiseFlagged = 0;
   executeWithWalRetrySync(db, (d) => {
+    // First-sleep signal for migrated brains: legacy heartbeat / NO_REPLY noise.
+    const cand = d.prepare(`SELECT id, label, content FROM nodes WHERE source_type = 'legacy' AND status = 'active'
+                              AND review_flagged_at IS NULL AND type != 'episodic' AND (valid_until IS NULL OR valid_until > ?)`).all(now) as Array<{ id: string; label: string; content: string }>;
+    const mark = d.prepare(`UPDATE nodes SET review_flagged_at = ?, status_reason = COALESCE(status_reason, 'review: looks like legacy heartbeat/NO_REPLY system noise') WHERE id = ?`);
+    for (const c of cand) if (looksLikeLegacyNoise(c.label, c.content)) { mark.run(now, c.id); legacyNoiseFlagged++; }
     newContradictions = d.prepare(`
       UPDATE nodes SET contradicted_at = ?
        WHERE contradicted_at IS NULL AND id IN (
@@ -376,8 +400,9 @@ export function runBeliefReviewPass(agentId: string, config: Partial<BrainConfig
   }, { op: "beliefs.reviewPass" });
   const lowConfidence = (db.prepare("SELECT COUNT(*) AS n FROM nodes WHERE status = 'active' AND (valid_until IS NULL OR valid_until > ?) AND confidence_score < ?").get(now, low) as { n: number }).n;
   const contradicted = (db.prepare("SELECT COUNT(*) AS n FROM nodes WHERE status = 'active' AND (valid_until IS NULL OR valid_until > ?) AND contradicted_at IS NOT NULL").get(now) as { n: number }).n;
-  if (newContradictions || flagged) log?.info(`[xanima] belief review: ${newContradictions} newly disputed, ${flagged} flagged for review (agent=${agentId})`);
-  return { newContradictions, flagged, lowConfidence, contradicted };
+  flagged += legacyNoiseFlagged;
+  if (newContradictions || flagged) log?.info(`[xanima] belief review: ${newContradictions} newly disputed, ${flagged} flagged for review (${legacyNoiseFlagged} legacy noise) (agent=${agentId})`);
+  return { newContradictions, flagged, lowConfidence, contradicted, legacyNoiseFlagged };
 }
 
 export function getSleepSummary(agentId: string): SleepSummary | null {
