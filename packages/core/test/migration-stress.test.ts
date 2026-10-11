@@ -19,7 +19,7 @@ import { getDb, closeDb } from "../src/db.js";
 import { writeNode, getNode, ftsSearchNodes } from "../src/nodes.js";
 import { searchEpisodes } from "../src/episodes.js";
 
-// sharpwave-core's db.ts keeps the migration target module-local (TARGET = 18)
+// xanima-core's db.ts keeps the migration target module-local (TARGET = 18)
 // and does NOT export a SCHEMA_VERSION symbol — assert against the known value
 // (mirrors packages/core/test/db.test.ts).
 const SCHEMA_VERSION = 18;

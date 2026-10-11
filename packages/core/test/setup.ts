@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
-const dir = join(tmpdir(), "sharpwave-core-test-" + randomUUID());
+const dir = join(tmpdir(), "xanima-core-test-" + randomUUID());
 mkdirSync(dir, { recursive: true });
 process.env["SHARPWAVE_DATA_DIR"] = dir;
 process.env["OLLAMA_BASE_URL"] = "http://127.0.0.1:59999"; // dead port — no live embeds

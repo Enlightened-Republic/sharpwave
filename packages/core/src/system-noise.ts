@@ -12,7 +12,7 @@
 //     older clients (openwave <= 0.1.3) can no longer mint triage nodes.
 //   - drainExtractionQueue (extraction.ts): noise episodes are dropped before
 //     the LLM / heuristic extractor sees them.
-//   - sharpwave-server: brain_episode_append skips them; `noise scan` reuses the
+//   - xanima-server: brain_episode_append skips them; `noise scan` reuses the
 //     same rules to find existing pollution.
 //
 // Mirrors openwave src/system-noise.ts (OpenClaw 2026.9.7 markers — see that
@@ -221,7 +221,7 @@ export function isSystemNoiseEpisode(ep: { role: string; content: string; sessio
 
 /**
  * meta_kv key prefixes for the reversible "retire" registry used by
- * sharpwave-server `noise retire`. A node is retired by setting valid_until
+ * xanima-server `noise retire`. A node is retired by setting valid_until
  * (every recall path already filters it) and recording its prior state under
  * `retired:node:<id>`; an episode by zeroing importance under
  * `retired:episode:<id>`. Sleep (SWS downscale, Deep prune) never touches a

@@ -1,4 +1,4 @@
-' sharpwave-service.vbs - windowless launcher for the SharpWave brain service.
+' sharpwave-service.vbs - windowless launcher for the Xanima brain service.
 '
 ' Same pattern as OpenClaw's gateway.vbs: the Scheduled Task runs
 '   wscript.exe //B //Nologo sharpwave-service.vbs "<node.exe>" "<dist\cli.js>" ["<config.json>"] ["<log file>"]

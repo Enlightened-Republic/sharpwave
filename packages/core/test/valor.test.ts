@@ -6,7 +6,7 @@ import { closeDb } from "../src/db.js";
 
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 
-// NOTE: sharpwave-core's BrainNode type (types.ts) does not declare the v17
+// NOTE: xanima-core's BrainNode type (types.ts) does not declare the v17
 // VALOR columns, and this task may not edit types.ts. The columns DO exist on
 // the row (SELECT * returns them); read them through a narrow cast.
 function injectCounts(agentId: string, nodeId: string): { inject_count: number; inject_hits: number } {

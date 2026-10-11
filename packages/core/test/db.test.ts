@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { getDb, getMeta, setMeta, closeDb } from "../src/db.js";
 
-// sharpwave-core's db.ts keeps the migration target (16) as a module-local
+// xanima-core's db.ts keeps the migration target (16) as a module-local
 // constant and does not export it. The clawbrain-v4 test imported a
 // `SCHEMA_VERSION` symbol; here we assert against the known current value.
 const SCHEMA_VERSION = 18;

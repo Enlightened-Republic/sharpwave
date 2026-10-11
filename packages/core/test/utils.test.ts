@@ -16,9 +16,9 @@ import {
   blendEmotionalWeight,
 } from "../src/utils.js";
 
-// NOTE (openwave/sharpwave-core split, Task 3): the clawbrain-v4 utils.ts also
+// NOTE (openwave/xanima-core split, Task 3): the clawbrain-v4 utils.ts also
 // exported `resolveChatLlmRoute`, `resolveChatLlmChain`, `extractBalancedJson`
-// and `stripControlDirectives`. sharpwave-core's utils.ts does not carry those
+// and `stripControlDirectives`. xanima-core's utils.ts does not carry those
 // (chat-LLM routing + control-directive stripping are host-agent concerns that
 // live outside the engine and are not on the plan's port list). The three
 // describe blocks covering them were removed here rather than left failing.
@@ -360,7 +360,7 @@ describe("BoundedTtlSet — sibling for sessionId tracking", () => {
 });
 
 // NOTE (Task 3): the clawbrain-v4 `stripControlDirectives` regression block was
-// removed — that helper is not part of sharpwave-core's utils.ts (see the import
+// removed — that helper is not part of xanima-core's utils.ts (see the import
 // note at the top of this file).
 
 // ─── blendEmotionalWeight ───────────────────────────────────────────────────

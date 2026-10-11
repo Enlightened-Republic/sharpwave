@@ -1,3 +1,4 @@
+import { envGet, resolveDataDir } from "./env.js";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { join } from "node:path";
@@ -15,7 +16,7 @@ let _writeCount = 0;
 // Default threshold matches the Python reference (every 100 writes). Operators
 // can override via SHARPWAVE_FTS_OPTIMIZE_EVERY.
 const _ftsOptimizeEvery = (() => {
-  const raw = process.env["SHARPWAVE_FTS_OPTIMIZE_EVERY"];
+  const raw = envGet("FTS_OPTIMIZE_EVERY");
   const n = raw ? parseInt(raw, 10) : 100;
   return Number.isFinite(n) && n > 0 ? n : 100;
 })();
@@ -128,10 +129,9 @@ export function getFtsOptimizeEvery(): number {
 }
 
 function resolveDbPath(agentId: string): string {
-  const explicit = process.env["SHARPWAVE_DB_PATH"];
+  const explicit = envGet("DB_PATH");
   if (explicit) return explicit;
-  const dataDir = process.env["SHARPWAVE_DATA_DIR"]
-    ?? join(homedir(), ".sharpwave");
+  const dataDir = resolveDataDir();
   return join(dataDir, agentId, "brain.db");
 }
 
@@ -157,7 +157,7 @@ export function resolveBusyTimeoutMs(override?: number): number {
     return Math.min(Math.floor(n), MAX_BUSY_TIMEOUT_MS);
   };
   return pick(override)
-    ?? pick(process.env["SHARPWAVE_BUSY_TIMEOUT_MS"])
+    ?? pick(envGet("BUSY_TIMEOUT_MS"))
     ?? DEFAULT_BUSY_TIMEOUT_MS;
 }
 

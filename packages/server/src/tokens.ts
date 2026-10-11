@@ -1,7 +1,7 @@
 // packages/server/src/tokens.ts
 //
 // Per-agent bearer tokens. The token file stores ONLY sha256 hashes — the
-// plaintext is printed once by `sharpwave-server token mint` and never written
+// plaintext is printed once by `xanima-server token mint` and never written
 // anywhere. Tokens are 256 bits of CSPRNG output, so a fast hash is the right
 // tool (a slow KDF such as scrypt only matters for low-entropy secrets like
 // passwords, and would add per-request latency for no gain).

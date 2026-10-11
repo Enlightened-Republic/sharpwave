@@ -1,4 +1,4 @@
-// Seeding: brain_seed (server) + `sharpwave-client seed` (client), against a
+// Seeding: brain_seed (server) + `xanima-client seed` (client), against a
 // live test server with FAKE fixture markdown (no real seed content here).
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { rpc, startService, tool } from "./helpers.js";
 
 const run = promisify(execFile);
-const CLIENT = fileURLToPath(new URL("../bin/sharpwave-client.mjs", import.meta.url));
+const CLIENT = fileURLToPath(new URL("../bin/xanima-client.mjs", import.meta.url));
 
 let h: Awaited<ReturnType<typeof startService>>;
 let admin: string;     // "cos": admin + shared-write

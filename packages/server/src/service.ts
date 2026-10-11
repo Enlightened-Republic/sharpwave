@@ -14,8 +14,8 @@
 
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
-import { DEFAULT_CONFIG, drainEmbeddingQueue } from "sharpwave-core";
-import type { BrainConfig } from "sharpwave-core";
+import { DEFAULT_CONFIG, drainEmbeddingQueue } from "xanima-core";
+import type { BrainConfig } from "xanima-core";
 
 import { assertBindableHost, listenOnce, listenWithRetry } from "./bind.js";
 import { BrainManager } from "./brains.js";
@@ -116,7 +116,7 @@ export class BrainService {
     this.started = true;
     this.brains.init();
     if (this.tokens.size === 0) {
-      this.log.warn(`no tokens in ${this.cfg.tokensFile} — every /mcp request will get 401. Mint one with: sharpwave-server token mint --agent <id>`);
+      this.log.warn(`no tokens in ${this.cfg.tokensFile} — every /mcp request will get 401. Mint one with: xanima-server token mint --agent <id>`);
     }
 
     const loop = this.makeHttpServer();

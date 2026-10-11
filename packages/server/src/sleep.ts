@@ -8,8 +8,8 @@
 // has no cancellation); the budget is checked between brains. Only one cycle
 // runs at a time.
 
-import { runConsolidation, shouldConsolidate } from "sharpwave-core";
-import type { BrainConfig } from "sharpwave-core";
+import { runConsolidation, shouldConsolidate } from "xanima-core";
+import type { BrainConfig } from "xanima-core";
 
 import type { BrainManager } from "./brains.js";
 import type { AuditLog } from "./audit.js";

@@ -5,7 +5,7 @@
 //   npm run test:pack
 //
 // This is the ONLY gate that catches a C1-class bug — a build-time-only package
-// (`sharpwave-core`, `"private": true`, never on the registry) leaking into
+// (`xanima-core`, `"private": true`, never on the registry) leaking into
 // `"dependencies"`. `npm install <tarball>` in a workspace-free dir is exactly
 // where such an entry 404s, which is what every external `npm install sharpwave`
 // would hit. It is slow and touches the network (real `npm install`), so it is
@@ -40,7 +40,7 @@ const cleanup = [];
 process.on("exit", () => { for (const fn of cleanup.reverse()) { try { fn(); } catch {} } });
 
 // ── 1. Build core + mcp from the workspace ────────────────────────────────────
-run(NPM, ["run", "build", "--workspace", "sharpwave-core"], ROOT);
+run(NPM, ["run", "build", "--workspace", "xanima-core"], ROOT);
 run(NPM, ["run", "build", "--workspace", "sharpwave"], ROOT);
 
 // ── 2. npm pack the published package ─────────────────────────────────────────
@@ -54,7 +54,7 @@ check("npm pack produced a tarball", /^sharpwave-\d.*\.tgz$/.test(tarball), tarb
 const INSTALL = mkdtempSync(join(tmpdir(), "sharpwave-pack-"));
 cleanup.push(() => rmSync(INSTALL, { recursive: true, force: true }));
 writeFileSync(join(INSTALL, "package.json"), JSON.stringify({ name: "pack-smoke-consumer", private: true, version: "1.0.0" }, null, 2));
-// This is where a bad "dependencies" entry (unpublished sharpwave-core) 404s.
+// This is where a bad "dependencies" entry (unpublished xanima-core) 404s.
 run(NPM, ["install", tarballAbs, "--no-audit", "--no-fund"], INSTALL);
 
 const SERVER = join(INSTALL, "node_modules", "sharpwave", "dist", "index.js");

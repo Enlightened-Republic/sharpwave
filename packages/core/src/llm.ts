@@ -3,7 +3,7 @@
 // Shared OpenRouter chat-completion call for the engine.
 //
 // Extracted verbatim from consolidation.ts's private `callRemLlm` (openwave /
-// sharpwave-core split, Task 6d) so that consolidation's generative-REM /
+// xanima-core split, Task 6d) so that consolidation's generative-REM /
 // contradiction path and extraction.ts share ONE OpenRouter fetch site — no
 // drift between the two. Body, headers, and error shape are unchanged from the
 // original `callRemLlm`. Two optional trailing args let extraction preserve its

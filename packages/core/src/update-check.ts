@@ -1,3 +1,4 @@
+import { envGet } from "./env.js";
 import { getMeta, setMeta } from "./db.js";
 
 /**
@@ -28,7 +29,7 @@ export function updateCheckDisabled(env: NodeJS.ProcessEnv = process.env): boole
     v !== undefined && v !== "" && v !== "0" && v.toLowerCase() !== "false";
 
   return (
-    truthy(env["SHARPWAVE_NO_UPDATE_CHECK"]) ||
+    truthy(envGet("NO_UPDATE_CHECK", env)) ||
     truthy(env["NO_UPDATE_NOTIFIER"]) ||
     truthy(env["CI"]) ||
     env["NODE_ENV"] === "test"
@@ -124,7 +125,7 @@ export async function checkForUpdate(
   if (!latest || !isNewer(latest, currentVersion)) return null;
 
   write(
-    `[sharpwave] update available: ${currentVersion} → ${latest}` +
+    `[xanima] update available: ${currentVersion} → ${latest}` +
       `  (npm install sharpwave@latest — set SHARPWAVE_NO_UPDATE_CHECK=1 to silence)\n`,
   );
   return latest;

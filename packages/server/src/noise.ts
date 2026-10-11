@@ -34,7 +34,7 @@ import { join } from "node:path";
 import {
   isSilentReplyText, isInternalWakeText, isSystemNoiseEpisode, isHeartbeatSessionKey,
   RETIRED_NODE_META_PREFIX, RETIRED_EPISODE_META_PREFIX,
-} from "sharpwave-core";
+} from "xanima-core";
 
 import { snapshotBrain, snapshotStamp } from "./backup.js";
 import type { AuditLog } from "./audit.js";

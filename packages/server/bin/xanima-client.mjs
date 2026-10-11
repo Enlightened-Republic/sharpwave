@@ -1,25 +1,25 @@
 #!/usr/bin/env node
-// sharpwave-client — tiny, dependency-free CLI for the SharpWave brain service.
+// xanima-client — tiny, dependency-free CLI for the Xanima brain service.
 //
 // Plain Node (>=18, uses global fetch). No build step, no npm install: copy this
-// one file anywhere and run it with `node sharpwave-client.mjs ...` — works the
+// one file anywhere and run it with `node xanima-client.mjs ...` — works the
 // same in Windows PowerShell, cmd, and POSIX shells.
 //
-//   node sharpwave-client.mjs search <query...> [--limit 10] [--scope all|private|shared] [--type semantic]
-//   node sharpwave-client.mjs read   <nodeId>   [--shared]
-//   node sharpwave-client.mjs write  <content...> --label "Short name" [--type semantic] [--importance 0.6] [--shared]
-//   node sharpwave-client.mjs stats  [--scope all|private|shared]
-//   node sharpwave-client.mjs forget <nodeId>   [--shared] [--force]
-//   node sharpwave-client.mjs history <query...> [--limit 10] [--shared]   (episode log full-text search)
-//   node sharpwave-client.mjs health
-//   node sharpwave-client.mjs seed   <dir> [--target shared|private|skip] [--map file=shared|private|skip ...]
+//   node xanima-client.mjs search <query...> [--limit 10] [--scope all|private|shared] [--type semantic]
+//   node xanima-client.mjs read   <nodeId>   [--shared]
+//   node xanima-client.mjs write  <content...> --label "Short name" [--type semantic] [--importance 0.6] [--shared]
+//   node xanima-client.mjs stats  [--scope all|private|shared]
+//   node xanima-client.mjs forget <nodeId>   [--shared] [--force]
+//   node xanima-client.mjs history <query...> [--limit 10] [--shared]   (episode log full-text search)
+//   node xanima-client.mjs health
+//   node xanima-client.mjs seed   <dir> [--target shared|private|skip] [--map file=shared|private|skip ...]
 //                                    [--type file=nodeType ...] [--tag t ...] [--importance 0.6] [--max-chars 1800]
 //                                    [--dry-run | --offline | --remove | --list] [--prune]
 //
 // Options:
-//   --url <base>         default $SHARPWAVE_URL or http://127.0.0.1:18790
-//   --token <token>      else $SHARPWAVE_TOKEN, else --token-file / $SHARPWAVE_TOKEN_FILE,
-//                        else ~/.sharpwave/token (first line)
+//   --url <base>         default $XANIMA_URL or http://127.0.0.1:18790
+//   --token <token>      else $XANIMA_TOKEN, else --token-file / $XANIMA_TOKEN_FILE,
+//                        else ~/.xanima/token (first line; ~/.sharpwave/token if not migrated)
 //   --json               machine-readable output
 //
 // Exit codes: 0 ok · 1 tool error · 2 usage · 3 auth (401/403) · 4 connection/HTTP error.
@@ -50,40 +50,57 @@ function parse(argv) {
   return out;
 }
 
-const HELP = `sharpwave-client ${VERSION}
+const HELP = `xanima-client ${VERSION}
 Usage:
-  sharpwave-client search <query...> [--limit N] [--scope all|private|shared] [--type T] [--json]
-  sharpwave-client read <nodeId> [--shared] [--json]
-  sharpwave-client write <content...> --label "name" [--type semantic] [--importance 0.5] [--shared] [--json]
-  sharpwave-client stats [--scope all|private|shared] [--json]
-  sharpwave-client forget <nodeId> [--shared] [--force]   (delete one node; needs write / shared-write)
-  sharpwave-client history <query...> [--limit N] [--shared]   (search the episode log via brain_history)
-  sharpwave-client health [--json]
-  sharpwave-client seed <dir> [--target shared|private|skip] [--map file=shared|private|skip ...]
+  xanima-client search <query...> [--limit N] [--scope all|private|shared] [--type T] [--json]
+  xanima-client read <nodeId> [--shared] [--json]
+  xanima-client write <content...> --label "name" [--type semantic] [--importance 0.5] [--shared] [--json]
+  xanima-client stats [--scope all|private|shared] [--json]
+  xanima-client forget <nodeId> [--shared] [--force]   (delete one node; needs write / shared-write)
+  xanima-client history <query...> [--limit N] [--shared]   (search the episode log via brain_history)
+  xanima-client health [--json]
+  xanima-client seed <dir> [--target shared|private|skip] [--map file=shared|private|skip ...]
                    [--type file=nodeType ...] [--tag t ...] [--importance 0.6] [--max-chars 1800]
                    [--dry-run | --offline | --remove | --list] [--prune] [--json]
       Imports every *.md in <dir> (chunked by #/##/### heading) via brain_seed (admin token).
       Idempotent: each chunk is keyed by a content hash in source "seed:<file>#<hash>".
       --dry-run asks the server what would be created; --offline only chunks (no server);
       --remove deletes everything seeded from the mapped files; --list counts seeded nodes.
-Options: --url (default $SHARPWAVE_URL or http://127.0.0.1:18790)
-         --token | $SHARPWAVE_TOKEN | --token-file | $SHARPWAVE_TOKEN_FILE | ~/.sharpwave/token`;
+Options: --url (default $XANIMA_URL or http://127.0.0.1:18790)
+         --token | $XANIMA_TOKEN | --token-file | $XANIMA_TOKEN_FILE | ~/.xanima/token  (SHARPWAVE_* names still work in 0.1.x)`;
 
 function usage(msg) {
-  if (msg) process.stderr.write(`sharpwave-client: ${msg}\n\n`);
+  if (msg) process.stderr.write(`xanima-client: ${msg}\n\n`);
   process.stderr.write(HELP + "\n");
   process.exit(2);
 }
 
+const warnedEnv = new Set();
+/** XANIMA_<k>, falling back to the deprecated SHARPWAVE_<k> (one warning per name). */
+function env(k) {
+  const v = process.env[`XANIMA_${k}`];
+  if (v) return v;
+  const old = process.env[`SHARPWAVE_${k}`];
+  if (old) {
+    if (!warnedEnv.has(k)) { warnedEnv.add(k); process.stderr.write(`[xanima] DEPRECATED: SHARPWAVE_${k} is deprecated; set XANIMA_${k} instead (the old name stops working in 0.2.0).\n`); }
+    return old;
+  }
+  return undefined;
+}
+
 function die(code, msg) {
-  process.stderr.write(`sharpwave-client: ${msg}\n`);
+  process.stderr.write(`xanima-client: ${msg}\n`);
   process.exit(code);
 }
 
 function resolveToken(f) {
   if (typeof f.token === "string" && f.token) return f.token.trim();
-  if (process.env.SHARPWAVE_TOKEN) return process.env.SHARPWAVE_TOKEN.trim();
-  const file = (typeof f["token-file"] === "string" && f["token-file"]) || process.env.SHARPWAVE_TOKEN_FILE || join(homedir(), ".sharpwave", "token");
+  const envTok = env("TOKEN");
+  if (envTok) return envTok.trim();
+  const file = (typeof f["token-file"] === "string" && f["token-file"]) || env("TOKEN_FILE") ||
+    (existsSync(join(homedir(), ".xanima", "token")) || !existsSync(join(homedir(), ".sharpwave", "token"))
+      ? join(homedir(), ".xanima", "token")
+      : join(homedir(), ".sharpwave", "token"));
   if (existsSync(file)) {
     const line = readFileSync(file, "utf8").split(/\r?\n/).map((s) => s.trim()).find(Boolean);
     if (line) return line;
@@ -92,7 +109,7 @@ function resolveToken(f) {
 }
 
 function baseUrl(f) {
-  const u = (typeof f.url === "string" && f.url) || process.env.SHARPWAVE_URL || "http://127.0.0.1:18790";
+  const u = (typeof f.url === "string" && f.url) || env("URL") || "http://127.0.0.1:18790";
   return u.replace(/\/+$/, "").replace(/\/mcp$/, "");
 }
 
@@ -232,7 +249,7 @@ async function seedCommand(rest, f, base, json) {
   let token = null;
   if (mode !== "offline") {
     token = resolveToken(f);
-    if (!token) die(3, "no token — seeding needs an admin token (--token-file / SHARPWAVE_TOKEN_FILE)");
+    if (!token) die(3, "no token — seeding needs an admin token (--token-file / XANIMA_TOKEN_FILE)");
   }
 
   if (mode === "list") {
@@ -306,7 +323,7 @@ async function main() {
   if (cmd === "seed") { await seedCommand(rest, f, base, json); return; }
 
   const token = resolveToken(f);
-  if (!token) die(3, "no token — pass --token, set SHARPWAVE_TOKEN, or use --token-file");
+  if (!token) die(3, "no token — pass --token, set XANIMA_TOKEN, or use --token-file");
 
   let name;
   let args;

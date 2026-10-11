@@ -6,11 +6,11 @@ import { getDb, closeDb } from "../src/db.js";
 
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 
-// sharpwave-core's writeNode dedupes on near-identical content by default
+// xanima-core's writeNode dedupes on near-identical content by default
 // (trigram-Jaccard >= 0.85, type-scoped) — a behaviour clawbrain-v4's writeNode
 // did not have. Several tests below intentionally create multiple nodes with the
 // same placeholder content ("c"), so they pass `{ deduplicate: false }` to get
-// distinct rows. (openwave/sharpwave-core split, Task 3.)
+// distinct rows. (openwave/xanima-core split, Task 3.)
 
 describe("edges", () => {
   it("writeEdge creates a valid edge", () => {
