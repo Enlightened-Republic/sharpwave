@@ -17,7 +17,7 @@ await build({
   // inlines its compiled dist/*.js into this single bundle. Only the native
   // modules (better-sqlite3 / sqlite-vec*) and node:* stay external.
   banner: {
-    js: `#!/usr/bin/env node\n// sharpwave — built ${new Date().toISOString()}\n`,
+    js: `#!/usr/bin/env node\n// xanima — built ${new Date().toISOString()}\n`,
   },
 });
 
@@ -26,4 +26,4 @@ await build({
 cpSync(new URL("../../README.md", import.meta.url), new URL("./README.md", import.meta.url));
 cpSync(new URL("../../LICENSE", import.meta.url), new URL("./LICENSE", import.meta.url));
 
-console.log(`sharpwave v${version} built to dist/index.js`);
+console.log(`xanima v${version} built to dist/index.js`);

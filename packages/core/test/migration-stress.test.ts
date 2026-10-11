@@ -22,7 +22,7 @@ import { searchEpisodes } from "../src/episodes.js";
 // xanima-core's db.ts keeps the migration target module-local (TARGET = 18)
 // and does NOT export a SCHEMA_VERSION symbol — assert against the known value
 // (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19; // v19 = Xanima 0.1.0 belief metadata
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 // sharpwave's db.ts resolves the per-agent path as

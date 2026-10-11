@@ -41,7 +41,7 @@ process.on("exit", () => { for (const fn of cleanup.reverse()) { try { fn(); } c
 
 // ── 1. Build core + mcp from the workspace ────────────────────────────────────
 run(NPM, ["run", "build", "--workspace", "xanima-core"], ROOT);
-run(NPM, ["run", "build", "--workspace", "sharpwave"], ROOT);
+run(NPM, ["run", "build", "--workspace", "xanima"], ROOT);
 
 // ── 2. npm pack the published package ─────────────────────────────────────────
 const packOut = run(NPM, ["pack"], MCP_DIR).stdout.trim();

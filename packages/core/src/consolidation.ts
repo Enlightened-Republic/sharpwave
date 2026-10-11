@@ -1,3 +1,4 @@
+import { runBeliefReviewPass, saveSleepSummary, countNodesEdges } from "./beliefs.js";
 import { getDb, getMeta, setMeta, bumpWriteCounter } from "./db.js";
 import { decayEligibilityTraces, decayRetrievability, writeNode, ftsSearchNodes } from "./nodes.js";
 import { queueEmbedding, vectorSearchNodes, bufferToFloat32, cosineSimilarity, upsertNodeVector } from "./embeddings.js";
@@ -206,6 +207,8 @@ export async function runConsolidation(
   const sinceMs = lastRaw ? parseInt(lastRaw, 10) : Date.now() - 86400000 * 7;
 
   log.info(`[xanima] consolidation start (agent=${agentId})`);
+  const sleepStarted = Date.now();
+  const before = countNodesEdges(agentId);
 
   // Phase 1: SWS — extract nodes from episodes (only those LLM hasn't seen)
   // SWS query filter `llm_extracted = 0` lives inside runSwsPhase so that
@@ -229,14 +232,32 @@ export async function runConsolidation(
   await runRemPhase(agentId, config, log);
   await new Promise<void>((r) => setImmediate(r));
 
+  // Phase 3.5 (Xanima): belief review — stamp contradicted_at from contradicts
+  // edges and flag low-confidence / disputed items for review (flagged items
+  // are protected from the Deep prune below instead of silently decaying away).
+  let review = { newContradictions: 0, flagged: 0, lowConfidence: 0, contradicted: 0 };
+  if (config.sleepBeliefReview !== false) {
+    try { review = runBeliefReviewPass(agentId, config, log); } catch (err) { log.warn(`[xanima] belief review failed (agent=${agentId}): ${String(err)}`); }
+  }
+
   // Phase 4: Deep — physically prune near-zero retrievability orphans
-  runDeepPhase(agentId, config, log);
+  const pruned = runDeepPhase(agentId, config, log);
 
   // Reset ripple counts after consolidation
   db.transaction(() => {
     db.exec("UPDATE nodes SET ripple_count = 0 WHERE ripple_count > 0");
     db.exec("UPDATE episodes SET ripple_count = 0 WHERE ripple_count > 0");
   })();
+
+  try {
+    const after = countNodesEdges(agentId);
+    saveSleepSummary(agentId, {
+      at: Date.now(), durationMs: Date.now() - sleepStarted,
+      nodesBefore: before.nodes, nodesAfter: after.nodes, edgesBefore: before.edges, edgesAfter: after.edges,
+      pruned, newContradictions: review.newContradictions, flaggedForReview: review.flagged,
+      lowConfidence: review.lowConfidence, contradicted: review.contradicted,
+    });
+  } catch { /* summary is best-effort */ }
 
   setMeta(agentId, "last_consolidation", String(Date.now()));
   setMeta(agentId, "last_consolidation_episode_count", String(getEpisodeCount(agentId)));
@@ -1204,9 +1225,13 @@ async function runRemKeywordBuckets(agentId: string, log: Logger): Promise<void>
  * Periodic PRAGMA wal_checkpoint(TRUNCATE) after a batch prune is what
  * actually shrinks the on-disk file.
  */
-function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): void {
+function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): number {
   const db = getDb(agentId);
   const cutoff = Date.now() - config.pruneAfterDays * 86400000;
+  // Xanima: never prune history (retracted / superseded beliefs back `as_of`)
+  // or items sleep flagged for review. Guarded so pre-v19 schemas still work.
+  const hasBelief = (db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('nodes') WHERE name = 'review_flagged_at'").get() as { n: number }).n > 0;
+  const beliefKeep = hasBelief ? "AND n.review_flagged_at IS NULL AND n.status NOT IN ('retracted', 'superseded')" : "";
 
   // Gather candidates in one query. UNION the two prune predicates that
   // existed in v3:
@@ -1221,6 +1246,7 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): void {
         WHERE (e.from_id = n.id OR e.to_id = n.id) AND e.valid_until IS NULL
       )
       AND NOT EXISTS (SELECT 1 FROM meta_kv m WHERE m.key = '${RETIRED_NODE_META_PREFIX}' || n.id)
+      ${beliefKeep}
     UNION
     SELECT n.id, n.rowid FROM nodes n
     WHERE n.type = 'episodic'
@@ -1232,9 +1258,10 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): void {
         WHERE (e.from_id = n.id OR e.to_id = n.id) AND e.valid_until IS NULL
       )
       AND NOT EXISTS (SELECT 1 FROM meta_kv m WHERE m.key = '${RETIRED_NODE_META_PREFIX}' || n.id)
+      ${beliefKeep}
   `).all(cutoff) as { id: string; rowid: number }[];
 
-  if (candidates.length === 0) return;
+  if (candidates.length === 0) return 0;
 
   const delVec = db.prepare("DELETE FROM nodes_vec WHERE rowid = ?");
   const delWm = db.prepare("DELETE FROM working_memory WHERE node_id = ?");
@@ -1270,6 +1297,7 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): void {
   } catch (err) {
     log.warn(`[xanima] Deep: wal_checkpoint failed: ${String(err)}`);
   }
+  return deleted;
 }
 
 /**

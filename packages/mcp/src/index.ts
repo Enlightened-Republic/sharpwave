@@ -33,14 +33,14 @@ const config: BrainConfig = { ...DEFAULT_CONFIG };
 
 // ─── Agent scoping ──────────────────────────────────────────────────────────
 //
-// Single-agent mode (default, backward compatible): `SHARPWAVE_AGENT_ID` pins
+// Single-agent mode (default, backward compatible): `XANIMA_AGENT_ID` (or the deprecated `SHARPWAVE_AGENT_ID`) pins
 // this process to one agent; the `agent` tool argument is optional and, if
 // given, must match.
 //
-// Multi-agent mode (`SHARPWAVE_AGENT_ID` unset): one process serves many
+// Multi-agent mode (`XANIMA_AGENT_ID` (or the deprecated `SHARPWAVE_AGENT_ID`) unset): one process serves many
 // agents. Every brain_* call MUST carry an `agent` argument — the calling
 // agent's own id. Each id maps to its own `<dataDir>/<agentId>/brain.db`.
-// `SHARPWAVE_AGENTS` (comma list), when set, is an allowlist.
+// `XANIMA_AGENTS` (comma list), when set, is an allowlist.
 const PINNED_AGENT_ID = envGet("AGENT_ID")?.trim() || undefined;
 const MULTI = !PINNED_AGENT_ID;
 const AGENT_ALLOWLIST = (envGet("AGENTS") ?? "")
@@ -69,7 +69,7 @@ function resolveAgent(args: Record<string, unknown>): AgentResolve {
   if (!given) return { ok: false, error: `multi-agent mode: pass "agent" (your own agent id) with every brain_* call` };
   if (!AGENT_ID_RE.test(given)) return { ok: false, error: `invalid agent id "${given}"` };
   if (AGENT_ALLOWLIST.length && !AGENT_ALLOWLIST.includes(given)) {
-    return { ok: false, error: `agent "${given}" is not in SHARPWAVE_AGENTS` };
+    return { ok: false, error: `agent "${given}" is not in XANIMA_AGENTS` };
   }
   touchAgent(given);
   return { ok: true, agentId: given };
@@ -123,7 +123,7 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<To
 // ─── MCP server setup ───────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "sharpwave", version: VERSION },
+  { name: "xanima", version: VERSION },
   { capabilities: { tools: {} } },
 );
 

@@ -8,6 +8,8 @@
 //   xanima-server backup keygen [--key-file f] [--force]
 //   xanima-server backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest]
 //   xanima-server brain adopt  --agent <id> --from <brain.db|dir> [--mode copy|move] [--dry-run] [--force] [--backfill-writer legacy|<id>] [--json]
+//   xanima-server migrate [--from ~/.sharpwave] [--to ~/.xanima] [--dry-run] [--include-backups] [--json]
+//   xanima-server sleep now [--force] [--brain name ...] [--json]
 //   xanima-server noise scan     --agent <id> [--out base] [--include-retired] [--json]
 //   xanima-server noise check    --agent <id> --query <text> [--limit 10] [--json]
 //   xanima-server noise retire   --agent <id> --ids-file <reviewed.csv|json|txt> [--dry-run] [--json]
@@ -16,7 +18,7 @@
 //   xanima-server version
 //
 // Common: --config <file> (default <root>/config.json if present), --root <dir>
-// (default ~/.sharpwave/service), --tokens-file <file>.
+// (default ~/.xanima/service, or ~/.sharpwave/service before migrating), --tokens-file <file>.
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -30,6 +32,10 @@ import { servicePortInUse, restoreBackup } from "./restore.js";
 import { defaultKeyFile } from "./config.js";
 import { offsiteOk } from "./offsite.js";
 import { adoptBrain, formatAdoptResult, type AdoptMode } from "./adopt.js";
+import { migrateDataDir, formatMigrateResult } from "./migrate.js";
+import { SleepRunner } from "./sleep.js";
+import { BrainManager } from "./brains.js";
+import { DEFAULT_CONFIG } from "xanima-core";
 import { defaultReportBase, ftsProbe, parseSelection, registryStatus, retireItems, scanBrainFile, unretireItems, writeReport } from "./noise.js";
 import { BrainService } from "./service.js";
 import { VERSION } from "./version.js";
@@ -40,7 +46,7 @@ interface Parsed {
   flags: Map<string, string[]>;
 }
 
-const BOOL_FLAGS = new Set(["json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
+const BOOL_FLAGS = new Set(["include-backups", "skip-port-check", "json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
 
 function parse(argv: string[]): Parsed {
   const out: Parsed = { _: [], flags: new Map() };
@@ -110,6 +116,13 @@ Usage:
       Make an existing brain.db the agent's private brain (<root>/brains/<id>/brain.db). The service must be stopped.
       Pre-adopt backup (VACUUM INTO, WAL included) + sha256, migrate via xanima-core, verify integrity/counts/schema.
       copy (default) never touches the source; --force moves an existing non-empty target aside (never deletes).
+  xanima-server migrate [--from ~/.sharpwave] [--to ~/.xanima] [--dry-run] [--include-backups] [--skip-port-check] [--json]
+      COPY the SharpWave data folder to the Xanima one (never moves or deletes the old folder; refuses a non-empty
+      target and a running service). Every brain.db in the copy is migrated to the current schema and verified
+      (node/edge/episode counts before == after, integrity ok); config.json paths are pointed at the new folder.
+      _backup-* folders are skipped unless --include-backups. Report: <to>/MIGRATED-FROM-SHARPWAVE.json.
+  xanima-server sleep now [--force] [--brain name ...] [--json]
+      Run one sleep/consolidation cycle now (service must be stopped). --force ignores the episode gate.
   xanima-server noise scan --agent <id> [--out <report base path>] [--include-retired] [--json]
       Read-only (safe while the service runs). Lists system-noise candidates (NO_REPLY / HEARTBEAT_OK triage,
       heartbeat/exec/cron wake markers, nodes minted from such episodes, triage phrasing) and writes
@@ -126,7 +139,8 @@ Usage:
   xanima-server version
 
 Binds 127.0.0.1 always, plus the tailnet IP (default 100.121.136.3). Never 0.0.0.0/::.
-Root defaults to ~/.sharpwave/service (brains/, backups/, audit/, tokens.json, config.json).`;
+Root defaults to ~/.xanima/service (brains/, backups/, audit/, tokens.json, config.json); ~/.sharpwave/service
+is used if ~/.xanima does not exist yet (run: xanima-server migrate). XANIMA_SERVICE_ROOT overrides.`;
 
 async function main(argv: string[]): Promise<number> {
   const p = parse(argv);
@@ -169,7 +183,7 @@ async function main(argv: string[]): Promise<number> {
           `Minted token ${entry.id} for agent "${entry.agentId}" scopes=${entry.scopes.join(",")}\n` +
           `Only its sha256 hash was stored in ${cfg.tokensFile}.\n\n` +
           `  ${token}\n\n` +
-          `This is the ONLY time the token is shown. Store it now (e.g. SHARPWAVE_TOKEN or a token file).\n`,
+          `This is the ONLY time the token is shown. Store it now (e.g. XANIMA_TOKEN or a token file).\n`,
         );
       }
       return 0;
@@ -277,6 +291,39 @@ async function main(argv: string[]): Promise<number> {
     });
     process.stdout.write((bool(p, "json") ? JSON.stringify(r, null, 2) : formatAdoptResult(r)) + "\n");
     return 0;
+  }
+
+  if (cmd === "migrate") {
+    const { homedir } = await import("node:os");
+    const from = expandHome(one(p, "from") ?? join(homedir(), ".sharpwave"));
+    const to = expandHome(one(p, "to") ?? join(homedir(), ".xanima"));
+    if (!bool(p, "skip-port-check") && !bool(p, "dry-run") && await servicePortInUse(cfg.port)) {
+      throw new Error(`a brain service is listening on 127.0.0.1:${cfg.port} — stop it (and the gateway) before migrating, so the copy is consistent`);
+    }
+    const r = migrateDataDir({
+      from, to, dryRun: bool(p, "dry-run"), includeBackups: bool(p, "include-backups"),
+      log: bool(p, "json") ? undefined : (m) => process.stderr.write(m + "\n"),
+    });
+    process.stdout.write((bool(p, "json") ? JSON.stringify(r, null, 2) : formatMigrateResult(r)) + "\n");
+    return r.ok ? 0 : 1;
+  }
+
+  if (cmd === "sleep") {
+    if (sub !== "now") throw new Error(`unknown sleep subcommand "${sub ?? ""}" (now)`);
+    if (await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first (sleep now writes the brain files directly)`);
+    const log = createLogger(cfg.logFile, true);
+    const brainCfg = { ...DEFAULT_CONFIG, ...(cfg.brain ?? {}) };
+    const mgr = new BrainManager(brainsDir(cfg), 1);
+    mgr.init();
+    const only = many(p, "brain");
+    try {
+      const runner = new SleepRunner(mgr, brainCfg, cfg.sleep.budgetMs, cfg.sleep.respectGate, log, new AuditLog(cfg.auditFile), only.length ? only : undefined);
+      const r = await runner.runCycle({ force: bool(p, "force") });
+      process.stdout.write((bool(p, "json") ? JSON.stringify(r, null, 2) : `sleep: ran=[${r.ran.join(",")}] gated=[${r.skippedGate.join(",")}] failed=${r.failed.length} in ${r.elapsedMs}ms`) + "\n");
+      return r.failed.length ? 1 : 0;
+    } finally {
+      await mgr.close();
+    }
   }
 
   if (cmd === "noise") {

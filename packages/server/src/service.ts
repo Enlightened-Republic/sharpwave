@@ -59,7 +59,7 @@ export class BrainService {
     assertBindableHost(LOOPBACK);
     for (const h of cfg.tailnetHosts) assertBindableHost(h);
     this.log = opts.log ?? createLogger(cfg.logFile);
-    this.brainConfig = { ...DEFAULT_CONFIG, ...(opts.brainConfig ?? {}) };
+    this.brainConfig = { ...DEFAULT_CONFIG, ...(cfg.brain ?? {}), ...(opts.brainConfig ?? {}) };
     this.brains = new BrainManager(brainsDir(cfg), cfg.readConnectionsPerBrain);
     this.audit = new AuditLog(cfg.auditFile);
     this.tokens = new TokenStore(cfg.tokensFile);

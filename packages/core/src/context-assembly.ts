@@ -6,12 +6,14 @@ import { detectSkillCandidates } from "./skill-evolution.js";
 import { bootstrapRetrieve } from "./retrieval.js";
 import { hybridRetrieve } from "./retrieval.js";
 import { getNeuromodulatorState } from "./consolidation.js";
-import { getMeta } from "./db.js";
+import { getMeta, getDb } from "./db.js";
+import { beliefTag, relativeTime } from "./belief-meta.js";
+import { computeBrainStatus, statusFooter } from "./beliefs.js";
 import { recordInjection } from "./valor.js";
 import type { BrainConfig } from "./types.js";
 
 const BRAIN_HEADER =
-  "[Xanima active] Your memory is pre-loaded below — no manual lookup needed. brain_write to record new facts, brain_reflect to review identity/goals, brain_query only for deep dives. Memory consolidates automatically in the background (awake replay every 30 min; deeper consolidation once enough new experience accumulates). Use brain_docs section='memo' for full system overview." +
+  "[Xanima active] Your memory is pre-loaded below — no manual lookup needed. brain_write to record new facts, brain_retract / brain_supersede (with a reason) to correct wrong ones, brain_status for a memory self-check, brain_reflect to review identity/goals, brain_query only for deep dives (as_of for 'what did I believe then'). Memory consolidates automatically in the background (awake replay every 30 min; deeper consolidation once enough new experience accumulates). Use brain_docs section='memo' for full system overview." +
   " (compat: ClawBrain v3)";
 
 export function getDreamContext(agentId: string): string {
@@ -209,7 +211,7 @@ export async function buildBootstrapContext(
       if (topNodes.length > 0) {
         const cap = isVoice ? 3 : 8;
         const knowLines = topNodes.slice(0, cap).map((n) =>
-          `[${n.type}] ${n.label}: ${n.content.slice(0, 120)}`
+          `[${n.type}] ${n.label}: ${n.content.slice(0, 120)}${config.relativeTimeLabels === false ? "" : ` (${relativeTime(n.created_at)})`}`
         ).join("\n");
         const knowBlock = `[BRAIN: know]\n${knowLines}`;
         blocks.push(knowBlock);
@@ -312,9 +314,17 @@ export async function buildRecallContext(
   const cap = surface === "voice" ? 3 : results.length;
   const contentMax = surface === "voice" ? 120 : 200;
   const injected = results.slice(0, cap);
+  const now = Date.now();
   const lines = injected.map((n) => {
     const tag = provenanceTag(n.source);
-    return `[${n.type}${tag ? "·" + tag : ""}] ${n.label}: ${n.content.slice(0, contentMax)}`;
+    const belief = config.beliefMetadata === false && config.relativeTimeLabels === false
+      ? ""
+      : beliefTag(n, {
+          now,
+          relativeTime: config.relativeTimeLabels !== false,
+          lowThreshold: config.beliefMetadata === false ? -1 : config.lowConfidenceThreshold,
+        });
+    return `[${n.type}${tag ? "·" + tag : ""}] ${n.label}: ${n.content.slice(0, contentMax)}${belief ? ` (${belief})` : ""}`;
   });
 
   // VALOR: remember exactly what was injected so llm_output can score the
@@ -375,6 +385,21 @@ export function buildProceduralContext(
   recordInjection(agentId, sessionId, injected);
 
   return `[BRAIN: operational rules — verified on THIS machine, follow them over your priors]\n${lines.join("\n")}`;
+}
+
+/**
+ * Xanima self-status footer: one line, only when something needs attention
+ * (disputed beliefs, items flagged by sleep, sleep overdue, budget overrun).
+ * Empty string otherwise, so a healthy brain adds zero injection overhead.
+ * Read-only.
+ */
+export function buildStatusFooter(agentId: string, config: BrainConfig): string {
+  if (config.selfStatus === false) return "";
+  try {
+    return statusFooter(computeBrainStatus(getDb(agentId), config));
+  } catch {
+    return "";
+  }
 }
 
 export { BRAIN_HEADER };

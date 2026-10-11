@@ -25,6 +25,8 @@ import {
   validateBrainQuery, validateBrainWrite, validateBrainLink, validateBrainSupersede,
   validateBrainHistory, validateBrainExpand, validateBrainEdges, formatValidationErrors,
   getDb, forgetNodeById,
+  retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
+  parseAsOf, relativeTime, beliefTag, parseConfidence, parseBeliefArgs,
 } from "xanima-core";
 import { createHash } from "node:crypto";
 import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "xanima-core";
@@ -107,6 +109,8 @@ export const SERVICE_TOOLS = [
   withProps("brain_edges", { visibility: { ...VIS_PROP, description: "Which brain holds the node. Default: your private brain, then shared." } }),
   withProps("brain_reset", { visibility: VIS_PROP }, [],
     "ADMIN ONLY, disabled unless the service sets allowReset. Wipes one brain (backup taken first). confirm must equal the brain name (your agent id, or \"shared\")."),
+  withProps("brain_retract", { visibility: VIS_PROP }),
+  withProps("brain_status", { visibility: { type: "string", enum: ["all", "private", "shared"], description: "Which brain(s) to report (default all)." } }),
   {
     name: "brain_seed",
     description:
@@ -472,6 +476,49 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         const { query, type: typeFilter, limit } = v.data!;
         const scopeArg = args["scope"] ?? "all";
         if (scopeArg !== "all" && scopeArg !== "private" && scopeArg !== "shared") return err(`scope must be all, private, or shared`);
+        const metaOn = cfg.beliefMetadata !== false;
+        const relOn = cfg.relativeTimeLabels !== false;
+        const beliefJson = (n: BrainNode) => metaOn ? {
+          confidence: n.confidence ?? "medium", confidence_score: n.confidence_score ?? null,
+          source_type: n.source_type ?? "legacy", status: n.status ?? "active",
+          created_at: n.created_at, ago: relativeTime(n.created_at),
+          contradicted_at: n.contradicted_at ?? null, sensitivity: n.sensitivity ?? "normal",
+        } : {};
+        const beliefText = (n: BrainNode) => metaOn
+          ? ` conf=${n.confidence ?? "medium"} src=${n.source_type ?? "legacy"}${relOn ? ` (${relativeTime(n.created_at)})` : ""}${n.contradicted_at ? " DISPUTED" : ""}${n.sensitivity && n.sensitivity !== "normal" ? ` [${n.sensitivity}]` : ""}`
+          : "";
+
+        // as_of: what did I believe at time T (pure read, no reinforcement).
+        if (args["as_of"] !== undefined && args["as_of"] !== null && args["as_of"] !== "") {
+          const asOf = parseAsOf(args["as_of"]);
+          if (asOf === null) return err(`as_of must be an ISO date/time, epoch ms, or e.g. "3 days ago"`);
+          type AHit = { brain: "private" | "shared"; node: BrainNode };
+          const ahits: AHit[] = [];
+          for (const brain of readBrains(ctx, scopeArg)) {
+            const rows = await ctx.brains.write(brain, () => queryAsOf(brain, query, asOf, (limit ?? 10) * 2));
+            for (const node of rows) ahits.push({ brain: label(ctx, brain), node });
+          }
+          let arows = typeFilter ? ahits.filter((h) => h.node.type === typeFilter) : ahits;
+          arows = arows.slice(0, limit ?? 10);
+          if (args["format"] === "json") {
+            return ok(JSON.stringify({
+              as_of: asOf, as_of_iso: new Date(asOf).toISOString(),
+              results: arows.map((h) => {
+                const st = statusAt(h.node, asOf);
+                return { brain: h.brain, id: h.node.id, type: h.node.type, label: h.node.label, content: h.node.content, writer: h.node.writer_agent_id ?? null, ...beliefJson(h.node), status_then: st.statusThen, later_change: st.laterChange };
+              }),
+            }, null, 2));
+          }
+          const when = `${new Date(asOf).toISOString().slice(0, 16).replace("T", " ")} UTC (${relativeTime(asOf)})`;
+          if (arows.length === 0) return ok(`As of ${when}: no matching beliefs.`);
+          return ok([`As of ${when}, I believed:`, ...arows.map((h) => {
+            const n = h.node;
+            const st = statusAt(n, asOf);
+            const tag = beliefTag(n, { now: asOf, relativeTime: false, lowThreshold: cfg.lowConfidenceThreshold });
+            return `[${h.brain}] ${n.id} (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  recorded ${relativeTime(n.created_at)} · confidence ${n.confidence ?? "medium"}${tag ? ` · ${tag}` : ""}${st.laterChange ? `\n  since then: ${st.laterChange}` : ""}`;
+          })].join("\n\n"));
+        }
+
         const emb = await embedQuery(query, cfg);
         const sid = ctx.sessionId(p.agentId);
         type Hit = { brain: "private" | "shared"; node: ActivatedNode };
@@ -491,6 +538,8 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
               brain: h.brain, id: h.node.id, type: h.node.type, label: h.node.label, content: h.node.content,
               score: round(h.node.activation), retrievability: round(h.node.retrievability),
               importance: round(h.node.importance), writer: h.node.writer_agent_id ?? null,
+              source: h.node.source ?? null,
+              ...beliefJson(h.node),
             })),
           }, null, 2));
         }
@@ -498,7 +547,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         return ok(merged.map((h) => {
           const n = h.node;
           const writer = n.writer_agent_id ? ` writer=${n.writer_agent_id}` : "";
-          return `[${h.brain}] ${n.id} (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  score=${n.activation.toFixed(2)} R=${n.retrievability.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}`;
+          return `[${h.brain}] ${n.id} (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  score=${n.activation.toFixed(2)} R=${n.retrievability.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}${beliefText(n)}`;
         }).join("\n\n"));
       }
 
@@ -509,10 +558,12 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         const v = validateBrainWrite(stripClientFields(args));
         if (!v.ok) return err(`Invalid arguments:\n${formatValidationErrors(v.errors!)}`);
         const { type, label: lbl, content, importance, emotional_weight } = v.data!;
+        const belief = parseBeliefArgs(args);
+        if ("error" in belief) return err(belief.error);
         const started = Date.now();
         const { id, merged } = await ctx.brains.write(t.brain, () => {
           const nodeId = writeNode(t.brain, type as NodeType, lbl, content, {
-            importance, emotional_weight, source: WRITE_SOURCE, writerAgentId: p.agentId,
+            importance, emotional_weight, source: WRITE_SOURCE, writerAgentId: p.agentId, ...belief,
           });
           queueEmbedding(t.brain, nodeId);
           const row = getNode(t.brain, nodeId);
@@ -550,22 +601,45 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         const v = validateBrainSupersede(stripClientFields(args));
         if (!v.ok) return err(`Invalid arguments:\n${formatValidationErrors(v.errors!)}`);
         const { old_node_id, new_content, new_label } = v.data!;
+        const reason = typeof args["reason"] === "string" ? args["reason"] : undefined;
+        const conf = parseConfidence(args["confidence"]);
+        if (args["confidence"] !== undefined && args["confidence"] !== null && args["confidence"] !== "" && !conf) return err("confidence must be low|medium|high|certain or a number 0–1");
         const res = await ctx.brains.write(t.brain, () => {
-          const old = getNode(t.brain, old_node_id);
-          if (!old) return { error: `node ${old_node_id} not found in the ${label(ctx, t.brain)} brain` };
-          const newId = writeNode(t.brain, old.type as NodeType, new_label ?? old.label, new_content, {
-            importance: old.importance, emotional_weight: old.emotional_weight, source: WRITE_SOURCE,
-            writerAgentId: p.agentId, deduplicate: false,
+          const r = supersedeNode(t.brain, old_node_id, new_content, {
+            newLabel: new_label, reason, source: WRITE_SOURCE, writerAgentId: p.agentId,
+            ...(conf ? { confidence: conf.score } : {}),
           });
-          queueEmbedding(t.brain, newId);
-          closeEdgesFromNode(t.brain, old.id);
-          closeEdgesToNode(t.brain, old.id);
-          writeEdge(t.brain, newId, old.id, "supersedes", { writerAgentId: p.agentId });
-          return { newId, oldId: old.id };
+          if (!r.ok) return { error: `${r.error} in the ${label(ctx, t.brain)} brain` };
+          queueEmbedding(t.brain, r.newId!);
+          return { newId: r.newId!, oldId: r.oldId!, related: r.related };
         });
         if ("error" in res) return err(res.error!);
-        ctx.audit.append({ agentId: p.agentId, tool: name, brain: t.brain, nodeId: res.newId!, outcome: "ok", detail: `supersedes ${res.oldId}` });
-        return ok(`Superseded: ${res.oldId} → new node ${res.newId} brain=${label(ctx, t.brain)} writer=${p.agentId}`);
+        ctx.audit.append({ agentId: p.agentId, tool: name, brain: t.brain, nodeId: res.newId!, outcome: "ok", detail: `supersedes ${res.oldId}${reason ? ` reason=${reason.slice(0, 200)}` : ""}` });
+        let text = `Superseded: ${res.oldId} → new node ${res.newId} brain=${label(ctx, t.brain)} writer=${p.agentId}`;
+        if (cfg.beliefMetadata !== false) text += `${reason ? `\nReason: ${reason}` : ""}\n${formatRelated(res.related!, 36)}`;
+        return ok(text);
+      }
+
+      case "brain_retract": {
+        const t = writeTarget(ctx, name, args);
+        if ("text" in t) return t;
+        const nodeId = typeof args["node_id"] === "string" ? args["node_id"].trim() : "";
+        const reason = typeof args["reason"] === "string" ? args["reason"] : "";
+        if (!nodeId) return err("node_id is required");
+        if (!reason.trim()) return err("reason is required");
+        const res = await ctx.brains.write(t.brain, () => retractNode(t.brain, nodeId, reason, { by: p.agentId }));
+        if (!res.ok) return err(`${res.error} (${label(ctx, t.brain)} brain)`);
+        ctx.audit.append({ agentId: p.agentId, tool: name, brain: t.brain, nodeId, outcome: "ok", detail: `retract reason=${reason.slice(0, 200)}` });
+        return ok(`Retracted: ${nodeId} "${res.node!.label}" brain=${label(ctx, t.brain)} — ${reason.trim()}\nIt is kept as history (brain_query as_of still finds it) but will not be recalled or injected again.\n${formatRelated(res.related, 36)}`);
+      }
+
+      case "brain_status": {
+        if (!has(p, "read")) return err("forbidden — this token has no read scope");
+        const which = (args["visibility"] ?? "all") as string;
+        if (which !== "all" && which !== "private" && which !== "shared") return err("visibility must be all, private, or shared");
+        const sts = readBrains(ctx, which).map((b) => ({ brain: label(ctx, b), status: ctx.brains.read(b, (db) => computeBrainStatus(db, cfg)) }));
+        if (args["format"] === "json") return ok(JSON.stringify({ agentId: p.agentId, brains: sts.map((x) => ({ brain: x.brain, ...x.status })) }, null, 2));
+        return ok(sts.map((x) => formatBrainStatus(x.status, x.brain)).join("\n\n"));
       }
 
       case "brain_review":

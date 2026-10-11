@@ -18,7 +18,7 @@ import { getMeta, setMeta } from "./db.js";
  * endpoint. No identifiers are sent, nothing is uploaded.
  */
 
-const REGISTRY_URL = "https://registry.npmjs.org/sharpwave/latest";
+const REGISTRY_URL = "https://registry.npmjs.org/xanima/latest";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 3000;
 const LAST_CHECK_KEY = "update_check:last_run";
@@ -126,7 +126,7 @@ export async function checkForUpdate(
 
   write(
     `[xanima] update available: ${currentVersion} → ${latest}` +
-      `  (npm install sharpwave@latest — set SHARPWAVE_NO_UPDATE_CHECK=1 to silence)\n`,
+      `  (npm install xanima@latest — set XANIMA_NO_UPDATE_CHECK=1 to silence)\n`,
   );
   return latest;
 }

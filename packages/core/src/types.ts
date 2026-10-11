@@ -13,6 +13,7 @@ export type EdgeType =
   | "goal_of" | "before" | "after" | "inhibits" | "summarizes"
   | "attaches_to" | "contradicts" | "supersedes" | "coreference_of"
   | "generated_skill" | "drives"
+  | "used_in" | "led_to" | "derived_from" // Xanima 0.1.0 lightweight causal links
   | "associated_with"; // legacy — read only
 
 export interface BrainNode {
@@ -60,10 +61,45 @@ export interface BrainNode {
   // for engine-internal writers (SYSTEM_SLEEP_WRITER for consolidation). NULL on
   // rows written before v18 — see db.ts v18 migration for why there is no backfill.
   writer_agent_id: string | null;
+  // ── Belief metadata (v19, Xanima 0.1.0) ──────────────────────────────────
+  // How sure the brain is (discrete level + numeric score), where the belief
+  // came from, when it was last verified / contradicted, what supports it, and
+  // whether it is still current. Existing rows read source_type='legacy',
+  // confidence='medium' / 0.6, status='active' (see db.ts v19).
+  confidence?: ConfidenceLevel;
+  confidence_score?: number;
+  source_type?: SourceType;
+  verified_at?: number | null;
+  contradicted_at?: number | null;
+  /** JSON array of supporting episode / node ids. */
+  evidence?: string | null;
+  status?: BeliefStatus;
+  /** Why the node was retracted / superseded (free text). */
+  status_reason?: string | null;
+  status_changed_at?: number | null;
+  sensitivity?: Sensitivity;
+  /** Set by sleep when the node needs review (low confidence / contradicted). Exempts it from pruning. */
+  review_flagged_at?: number | null;
   created_at: number;
   accessed_at: number;
   updated_at: number;
 }
+
+/** Discrete confidence levels, lowest to highest. */
+export type ConfidenceLevel = "low" | "medium" | "high" | "certain";
+export const CONFIDENCE_LEVELS: readonly ConfidenceLevel[] = ["low", "medium", "high", "certain"];
+
+/** Where a belief came from. `legacy` = written before Xanima 0.1.0 (unknown origin). */
+export type SourceType = "user" | "self_observation" | "inference" | "tool" | "agent" | "seed" | "legacy";
+export const SOURCE_TYPES: readonly SourceType[] = ["user", "self_observation", "inference", "tool", "agent", "seed", "legacy"];
+
+/** Lifecycle of a belief. Only `active` nodes are recalled or injected. */
+export type BeliefStatus = "active" | "superseded" | "retracted" | "archived";
+export const BELIEF_STATUSES: readonly BeliefStatus[] = ["active", "superseded", "retracted", "archived"];
+
+/** `confirm_before_acting`: shown with a marker; the agent should check before acting on it. */
+export type Sensitivity = "normal" | "sensitive" | "confirm_before_acting";
+export const SENSITIVITIES: readonly Sensitivity[] = ["normal", "sensitive", "confirm_before_acting"];
 
 export interface BrainEdge {
   id: string;
@@ -148,6 +184,17 @@ export interface BrainConfig {
   skillEvolveMinPatternCount: number;
   workspaceSkillsDir: string;
   brainDocsDir: string;
+  // ── Xanima 0.1.0 feature flags (all optional; defaults below) ────────────
+  /** Belief metadata on writes + labels on recall (confidence, retracted/superseded exclusion). Default true. */
+  beliefMetadata?: boolean;
+  /** brain_status self-summary + a one-line status footer on injection when something needs attention. Default true. */
+  selfStatus?: boolean;
+  /** "3 days ago" labels on recall and injection. Default true. */
+  relativeTimeLabels?: boolean;
+  /** Numeric confidence below which a node counts as low-confidence (marked "(?)" and flagged by sleep). Default 0.4. */
+  lowConfidenceThreshold?: number;
+  /** Sleep pass that flags low-confidence / contradicted nodes for review (and protects them from pruning). Default true. */
+  sleepBeliefReview?: boolean;
 }
 
 export const DEFAULT_CONFIG: BrainConfig = {
@@ -172,4 +219,9 @@ export const DEFAULT_CONFIG: BrainConfig = {
   skillEvolveMinPatternCount: 5,
   workspaceSkillsDir: "",
   brainDocsDir: "",
+  beliefMetadata: true,
+  selfStatus: true,
+  relativeTimeLabels: true,
+  lowConfidenceThreshold: 0.4,
+  sleepBeliefReview: true,
 };

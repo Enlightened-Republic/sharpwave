@@ -283,3 +283,21 @@ export {
   setDeprecationWarningSink, resetDeprecationWarnings,
   ENV_PREFIX, LEGACY_ENV_PREFIX, DATA_DIR_NAME, LEGACY_DATA_DIR_NAME,
 } from "./env.js";
+
+// ── Xanima 0.1.0 belief foundation ─────────────────────────────────────────
+export {
+  CONFIDENCE_LEVEL_SCORE, DEFAULT_CONFIDENCE_BY_SOURCE, confidenceLevel, parseConfidence,
+  isConfidenceLevel, isSourceType, isSensitivity, inferSourceType,
+  relativeTime, parseAsOf, beliefTag,
+} from "./belief-meta.js";
+export {
+  DOWNSTREAM_EDGE_TYPES, relatedDownstream, formatRelated, retractNode, supersedeNode,
+  queryAsOf, statusAt, verifyNode, computeBrainStatus, formatBrainStatus, statusFooter,
+  runBeliefReviewPass, getSleepSummary, saveSleepSummary, countNodesEdges,
+} from "./beliefs.js";
+export type {
+  RelatedNode, RetractResult, SupersedeOptions, SupersedeResult, SleepSummary, BrainStatus,
+} from "./beliefs.js";
+export { SCHEMA_VERSION, migrateV19 } from "./db.js";
+export { buildStatusFooter } from "./context-assembly.js";
+export { parseBeliefArgs } from "./tools.js";

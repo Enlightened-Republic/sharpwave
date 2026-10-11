@@ -8,6 +8,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { defaultDataHome, envGet } from "xanima-core";
+import type { BrainConfig } from "xanima-core";
 import { defaultOffsiteConfig, type OffsiteConfig } from "./offsite.js";
 import { defaultProvisioningConfig, type ProvisioningConfig } from "./provision.js";
 
@@ -83,6 +84,13 @@ export interface ServiceConfig {
   provisioning: ProvisioningConfig;
   /** Optional log file (append). When unset logs go to stderr. */
   logFile?: string;
+  /**
+   * Engine settings passed to xanima-core (BrainConfig), e.g. the Xanima
+   * 0.1.0 flags { "beliefMetadata": true, "selfStatus": true,
+   * "relativeTimeLabels": true, "lowConfidenceThreshold": 0.4,
+   * "sleepBeliefReview": true }. Unset keys use core's DEFAULT_CONFIG.
+   */
+  brain?: Partial<BrainConfig>;
 }
 
 /** Default service root: <data home>/service, where the data home is ~/.xanima (or ~/.sharpwave if not migrated yet). */

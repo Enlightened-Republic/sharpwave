@@ -817,8 +817,8 @@ function checkReconsolidation(
     const decayedRetrievability = Math.max(0.05, other.retrievability * 0.85);
     const now = Date.now();
     db.prepare(
-      "UPDATE nodes SET retrievability = ?, is_consolidated = 0, valid_until = ?, updated_at = ? WHERE id = ?",
-    ).run(decayedRetrievability, now, now, other.id);
+      "UPDATE nodes SET retrievability = ?, is_consolidated = 0, valid_until = ?, updated_at = ?, status = 'superseded', status_reason = 'reconsolidation: newer near-duplicate', status_changed_at = ? WHERE id = ?",
+    ).run(decayedRetrievability, now, now, now, other.id);
 
     reconsolidated++;
     log?.info(
@@ -880,8 +880,8 @@ function checkNoveltyGate(
     ).run(mergedImportance, now, other.id);
 
     db.prepare(
-      "UPDATE nodes SET valid_until = ?, updated_at = ? WHERE id = ?",
-    ).run(now, now, nodeId);
+      "UPDATE nodes SET valid_until = ?, updated_at = ?, status = 'archived', status_reason = 'coreference: merged into an existing node', status_changed_at = ? WHERE id = ?",
+    ).run(now, now, now, nodeId);
 
     if (!edgeExists(agentId, nodeId, other.id, "coreference_of")) {
       writeEdge(agentId, nodeId, other.id, "coreference_of", { weight: sim });

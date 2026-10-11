@@ -38,14 +38,14 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { closeDb, getDb, envDelete, envRestore, envSet, envSnapshot } from "xanima-core";
+import { SCHEMA_VERSION, closeDb, getDb, envDelete, envRestore, envSet, envSnapshot } from "xanima-core";
 
 import { AuditLog } from "./audit.js";
 import { snapshotStamp } from "./backup.js";
 import { validateAgentId } from "./tokens.js";
 
 /** Minimum schema the adopted brain must reach (core v18 = writer_agent_id). */
-export const ADOPT_MIN_SCHEMA = 18;
+export const ADOPT_MIN_SCHEMA = SCHEMA_VERSION;
 /** Sidecar files that belong to a SQLite database file. */
 const SIDECARS = ["-wal", "-shm", "-journal"] as const;
 

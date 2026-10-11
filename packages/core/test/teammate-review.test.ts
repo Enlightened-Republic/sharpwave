@@ -31,7 +31,7 @@ import type { BrainNode, NeuromodState } from "../src/types.js";
 
 // xanima-core's db.ts does not export SCHEMA_VERSION — assert against the
 // known current migration target (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19; // v19 = Xanima 0.1.0 belief metadata
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
