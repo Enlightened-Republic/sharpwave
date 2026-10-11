@@ -41,7 +41,9 @@ describe("1. talking about a goal is not progress", () => {
   it("criteria keywords exclude the goal's name; goal plumbing is goal talk", () => {
     expect(criteriaKeywords("Gano answers messages on Telegram", ["Finish the Telegram bot for Gano"]).sort()).toEqual(["answers", "messages"]);
     expect(criteriaKeywords(null, ["x"])).toEqual([]);
-    for (const t of ["TOOL brain_set_goal RESULT: Goal set: …", "CALL brain_list_goals {}", "[BRAIN: goals]\nAlignment: no progress", "Is Gano answering messages yet?"]) expect(isGoalTalk(t), t).toBe(true);
+    for (const t of ["TOOL brain_set_goal RESULT: Goal set: …", "CALL brain_list_goals {}", "[BRAIN: goals]\nAlignment: no progress", "Is Gano answering messages yet?",
+      "TOOL brain_query RESULT: [private] 4e4d (goal) Finish the Telegram bot. Success: Gano answers messages on Telegram", "Goal (P1): Finish the bot. Success: Gano answers messages",
+      "[BRAIN: recall]\n- Gano answers messages on Telegram (3 days ago)"]) expect(isGoalTalk(t), t).toBe(true);
     expect(isGoalTalk("Gano answers messages on Telegram now.")).toBe(false);
   });
 
@@ -51,6 +53,7 @@ describe("1. talking about a goal is not progress", () => {
     for (let d = 10; d >= 1; d--) {
       appendEpisode(a, "s", "user", `day ${d}: how is the Telegram bot for Gano going?`, 0.5);
       appendEpisode(a, "s", "assistant", `day ${d}: The Telegram bot for Gano is still on my list, I'll get to the Gano Telegram bot soon.`, 0.5);
+      appendEpisode(a, "s", "assistant", `TOOL brain_query RESULT:\n[private] ${g.node_id} (goal) Finish the Telegram bot for Gano. Success: Gano answers messages on Telegram`, 0.5);
       appendEpisode(a, "s", "assistant", `TOOL brain_list_goals RESULT:\n${g.lineage_id} P1 [active] Finish the Telegram bot for Gano\n  success: Gano answers messages on Telegram`, 0.5);
     }
     // goal tools during the period: list, re-word (supersede), set a sibling goal

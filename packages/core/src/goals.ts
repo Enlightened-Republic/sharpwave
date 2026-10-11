@@ -300,8 +300,13 @@ export function criteriaKeywords(criteria: string | null, titles: string[]): str
   return deriveKeywords(criteria).filter((k) => !named.has(k));
 }
 
-/** Goal plumbing / goal talk: never progress evidence. */
-const GOAL_TALK = /\bbrain_(?:set_goal|update_goal|list_goals|turn_context|status)\b|\[BRAIN: goals\]|\bAlignment: |\bGoal (?:set|update|supersede|progress)\b/i;
+/**
+ * Goal plumbing / goal talk: never progress evidence. Any memory-tool call or
+ * result (brain_*: set/list/update goals, status, recall that echoes the goal
+ * node), goal listings / recall formats ("(goal)", "Goal (P1):", "success: …"),
+ * the injected goals block and alignment notes, and questions.
+ */
+const GOAL_TALK = /\bbrain_[a-z_]+\b|\[BRAIN: [a-z]+\]|\bAlignment: |\bGoal (?:set|update|supersede|progress)\b|\(goal\)|\bGoal \(P\d\):|\bsuccess: /i;
 export function isGoalTalk(content: string): boolean {
   const c = content.trim();
   return GOAL_TALK.test(c) || c.endsWith("?");
