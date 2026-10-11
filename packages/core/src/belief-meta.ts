@@ -23,6 +23,7 @@ export const DEFAULT_CONFIDENCE_BY_SOURCE: Record<SourceType, number> = {
   agent: 0.6,            // another agent said so
   legacy: 0.6,           // pre-Xanima row, origin unknown
   inference: 0.45,       // derived by sleep / extraction heuristics
+  import: 0.5,           // loaded from a Soul Package (original confidence kept in soul_provenance)
 };
 
 /** Score → level. Boundaries: <0.4 low, <0.7 medium, <0.9 high, else certain. */

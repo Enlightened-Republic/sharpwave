@@ -46,7 +46,7 @@ describe("schema v22 (additive)", () => {
   it("creates the 0.3.0 tables and keeps the note queue compatible", () => {
     const a = fresh();
     const db = getDb(a);
-    expect(SCHEMA_VERSION).toBe(22);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(22);
     for (const t of ["reflections", "open_items", "commitments", "plans", "plan_steps", "dependencies"]) expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t), t).toBeTruthy();
     const cols = (db.prepare("PRAGMA table_info(alignment_notes)").all() as Array<{ name: string }>).map((c) => c.name);
     expect(cols).toEqual(expect.arrayContaining(["kind", "ref_id", "offered_count"]));

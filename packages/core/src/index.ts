@@ -335,3 +335,13 @@ export type { CommitmentView, PlanView, PlanStatus, CommitAction, PlanAction } f
 export { replay, changesSince, formatChanges, conflicts, briefing, forgetImpact } from "./meta-tools.js";
 export { parseWhen } from "./continuity-util.js";
 export { migrateV22 } from "./db.js";
+// Xanima 0.4.0 — Soul Package (portable continuity: export / import / fork / three-way merge / review)
+export {
+  SOUL_FORMAT, exportSoul, serializeSoul, canonicalJson, validateSoul, parseSoul, signSoul, generateSoulKeyPair,
+  importSoul, mergeSoul, diffSoul, formatSoulDiff, formatImportReport, listReviews, getReview, reviewCounts, formatReview,
+  acceptReview, rejectReview, writeSoulSqlite, soulSummary, looksLikeIdentityRewrite, brainFingerprint, originIdOf,
+} from "./soul.js";
+export type { SoulPackage, SoulContent, SoulItem, SoulGoal, SoulLesson, SoulProvenance, SoulOptions, SoulValidation, SoulDiff, ImportReport, ImportOptions, ReviewItem, ExportSoulOptions } from "./soul.js";
+export { SOUL_TOOL_DEFS, SOUL_TOOL_NAMES, SOUL_AGENT_TOOLS, dispatchSoulTool, soulToolNeedsAdmin } from "./soul-tools.js";
+export type { SoulToolCtx } from "./soul-tools.js";
+export { migrateV23 } from "./db.js";

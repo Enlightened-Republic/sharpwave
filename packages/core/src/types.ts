@@ -19,6 +19,7 @@ export type EdgeType =
   | "used_in" | "led_to" | "derived_from" // Xanima 0.1.0 lightweight causal links
   | "advances" | "conflicts_with_goal" // Xanima 0.2.0 decision → goal
   | "reflects_on" | "about" | "blocked_by" | "evidence_for" | "evidence_against" // Xanima 0.3.0
+  | "imported_from" // Xanima 0.4.0 soul package provenance
   | "associated_with"; // legacy — read only
 
 export interface BrainNode {
@@ -95,8 +96,8 @@ export type ConfidenceLevel = "low" | "medium" | "high" | "certain";
 export const CONFIDENCE_LEVELS: readonly ConfidenceLevel[] = ["low", "medium", "high", "certain"];
 
 /** Where a belief came from. `legacy` = written before Xanima 0.1.0 (unknown origin). */
-export type SourceType = "user" | "self_observation" | "inference" | "tool" | "agent" | "seed" | "legacy";
-export const SOURCE_TYPES: readonly SourceType[] = ["user", "self_observation", "inference", "tool", "agent", "seed", "legacy"];
+export type SourceType = "user" | "self_observation" | "inference" | "tool" | "agent" | "seed" | "legacy" | "import";
+export const SOURCE_TYPES: readonly SourceType[] = ["user", "self_observation", "inference", "tool", "agent", "seed", "legacy", "import"];
 
 /** Lifecycle of a belief. Only `active` nodes are recalled or injected. */
 export type BeliefStatus = "active" | "superseded" | "retracted" | "archived";
@@ -240,6 +241,19 @@ export interface BrainConfig {
   replayMaxChars?: number;
   /** Character cap for brain_changes / brain_conflicts / brain_briefing / brain_forget_impact output. Default 2400. */
   metaToolMaxChars?: number;
+  // ── Xanima 0.4.0 Soul Package ──
+  /** Default export profile. Default "compact". */
+  soulExportProfile?: "compact" | "full";
+  /** Token budget (≈ chars / 4) for a compact package's content. Default 2000. */
+  soulTokenBudget?: number;
+  /** Facts below this confidence score are left out of a package. Default 0.6. */
+  soulMinFactConfidence?: number;
+  /** Confidence score cap for imported memories (original kept in soul_provenance). Default 0.5. */
+  soulImportConfidence?: number;
+  /** Three-way merge: apply theirs-only changes to skills / facts / lessons (as supersede, history kept). Identity, values and goals always go to review. Default true. */
+  soulMergeApplyTheirs?: boolean;
+  /** xanima-server backup now: also write a compact soul package next to each private-brain snapshot. Default false. */
+  soulPackageOnExport?: boolean;
 }
 
 export const DEFAULT_CONFIG: BrainConfig = {
@@ -287,5 +301,11 @@ export const DEFAULT_CONFIG: BrainConfig = {
   commitmentNudges: true,
   replayMaxChars: 1600,
   metaToolMaxChars: 2400,
+  soulExportProfile: "compact",
+  soulTokenBudget: 2000,
+  soulMinFactConfidence: 0.6,
+  soulImportConfidence: 0.5,
+  soulMergeApplyTheirs: true,
+  soulPackageOnExport: false,
   lessonMergeSimilarity: 0.86,
 };
