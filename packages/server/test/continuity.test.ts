@@ -51,6 +51,14 @@ describe("continuity tools on the service", () => {
       db.close();
       const t1 = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "hello" })).text);
       expect(t1.text).toMatch(/Alignment: no progress on goal "Ship the billing migration by Nov 1" \(P1\) in 10 days/);
+      // offered, not delivered: a tool-only turn (no ack) leaves it pending
+      const t2 = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "CALL brain_status {}" })).text);
+      expect(t2.noteId).toBe(t1.noteId);
+      expect((await tool(h.url, a, "brain_status", { visibility: "private" })).text).toMatch(/alignment note pending \(offered 2×/);
+      expect((await tool(h.url, a, "brain_turn_context", { ack_note_id: "x" })).isError).toBe(true);
+      expect((await tool(h.url, h.mint("ro3", ["read"]), "brain_turn_context", { ack_note_id: t1.noteId })).isError).toBe(true);
+      expect(JSON.parse((await tool(h.url, a, "brain_turn_context", { ack_note_id: t1.noteId })).text)).toEqual({ acked: true, noteId: t1.noteId });
+      expect(JSON.parse((await tool(h.url, a, "brain_turn_context", { ack_note_id: t1.noteId })).text).acked).toBe(false);
       expect(JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "hello" })).text).text).toBe("");
       const t3 = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "send the invoice please" })).text);
       expect(t3.triggered[0].why).toBe('you mentioned "invoice"');

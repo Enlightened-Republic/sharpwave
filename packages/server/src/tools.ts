@@ -27,7 +27,7 @@ import {
   getDb, forgetNodeById,
   retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
   parseAsOf, relativeTime, beliefTag, parseConfidence, parseBeliefArgs,
-  CONTINUITY_TOOL_NAMES, dispatchContinuityTool, buildGoalTurnContext, applyDecisionBoost,
+  CONTINUITY_TOOL_NAMES, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost,
 } from "xanima-core";
 import { createHash } from "node:crypto";
 import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "xanima-core";
@@ -119,8 +119,11 @@ export const SERVICE_TOOLS = [
   ...CONTINUITY_TOOL_NAMES.map((n) => withProps(n, {})),
   {
     name: TURN_CONTEXT_TOOL,
-    description: "Plugin plumbing (called once per agent turn): returns the pending goal alignment note (delivered once) and any goal triggers matching this turn, as JSON. Needs the write scope (it marks the note delivered).",
-    inputSchema: { type: "object" as const, properties: { query: { type: "string", description: "The user's message for this turn." } } },
+    description: "Plugin plumbing (called once per agent turn): returns the pending goal alignment note (offered, not yet delivered) and any goal triggers matching this turn, as JSON. After the turn produced a real assistant reply, call again with ack_note_id to mark the note delivered. Needs the write scope.",
+    inputSchema: { type: "object" as const, properties: {
+      query: { type: "string", description: "The user's message for this turn." },
+      ack_note_id: { type: "integer", description: "Mark this alignment note delivered (it was injected into a prompt that produced a real reply)." },
+    } },
   },
   {
     name: "brain_seed",
@@ -482,6 +485,14 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
       if (args["visibility"] === "shared") return err(`${name} works on your private brain only (decisions and goals are per-agent in Xanima 0.2.0)`);
       const brain = ctx.brains.privateBrain(p.agentId);
       if (name === TURN_CONTEXT_TOOL) {
+        // Two-phase alignment note: offered here, delivered only when the host acks after a real reply.
+        const ack = args["ack_note_id"];
+        if (ack !== undefined) {
+          if (typeof ack !== "number" || !Number.isInteger(ack)) return err("ack_note_id must be an integer note id");
+          const done = await ctx.brains.write(brain, () => ackAlignmentNote(brain, ack));
+          if (done) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `ack note=${ack}` });
+          return ok(JSON.stringify({ acked: done, noteId: ack }));
+        }
         const q = typeof args["query"] === "string" ? args["query"].slice(0, 4000) : "";
         const r = await ctx.brains.write(brain, () => buildGoalTurnContext(brain, q, cfg));
         if (r.noteId !== null || r.triggered.length) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `note=${r.noteId ?? "-"} triggers=${r.triggered.map((t) => t.trigger_id).join(",") || "-"}` });

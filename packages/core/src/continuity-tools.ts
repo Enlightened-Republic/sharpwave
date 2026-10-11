@@ -5,7 +5,7 @@
  */
 import type { BrainConfig } from "./types.js";
 import {
-  recordDecision, updateDecisionOutcome, queryDecisions, formatDecision, OUTCOME_STATUSES, type OutcomeStatus,
+  confirmDecision,   recordDecision, updateDecisionOutcome, queryDecisions, formatDecision, OUTCOME_STATUSES, type OutcomeStatus,
 } from "./decisions.js";
 import {
   setGoal, updateGoal, listGoals, goalHistory, formatGoal, formatGoalHistory, GOAL_ACTIONS, GOAL_STATUSES,
@@ -46,7 +46,7 @@ export const CONTINUITY_TOOL_DEFS: Record<string, ContinuityToolDef> = {
     },
   },
   brain_update_decision_outcome: {
-    description: "Record what actually happened after a decision: the outcome, whether it matched your prediction (matched | partial | missed), and the lesson. Sleep uses this to calibrate confidence and (if enabled) promote recurring lessons to skills.",
+    description: "Record what actually happened after a decision: the outcome, whether it matched your prediction (matched | partial | missed), and the lesson. Sleep uses this to calibrate confidence and (if enabled) promote recurring lessons to skills. Or pass confirm=true (outcome optional) to confirm an auto-extracted draft as a real decision (optionally with goal_id to link it); unconfirmed drafts expire after decisionDraftTtlDays.",
     inputSchema: {
       type: "object",
       properties: {
@@ -54,8 +54,10 @@ export const CONTINUITY_TOOL_DEFS: Record<string, ContinuityToolDef> = {
         outcome: { type: "string", description: "What actually happened." },
         outcome_status: { type: "string", enum: OUTCOME_STATUSES, description: "Did it match the prediction?" },
         lesson: { type: "string", description: "What to do (or avoid) next time." },
+        confirm: { type: "boolean", description: "Confirm an auto-extracted draft (no outcome needed)." },
+        goal_id: { type: "string", description: "With confirm: link the decision to the goal it advances." },
       },
-      required: ["decision_id", "outcome", "outcome_status"],
+      required: ["decision_id"],
     },
   },
   brain_query_decisions: {
@@ -87,7 +89,7 @@ export const CONTINUITY_TOOL_DEFS: Record<string, ContinuityToolDef> = {
     },
   },
   brain_update_goal: {
-    description: "Change a goal with history preserved. update / supersede (new version; supersede needs a reason), pause, resume, done, archive, progress (log progress, clears drift), track / untrack (drift checking). Add triggers with any action.",
+    description: "Change a goal with history preserved. update / supersede (new version; supersede needs a reason), pause, resume, done, archive, progress (log real progress with a note; clears drift — talking about a goal is not progress), track / untrack (drift checking). Shortcut: {goal_id, progress: \"what got done\"}. Add triggers with any action.",
     inputSchema: {
       type: "object",
       properties: {
@@ -97,9 +99,10 @@ export const CONTINUITY_TOOL_DEFS: Record<string, ContinuityToolDef> = {
         success_criteria: { type: "string" }, keywords: { type: "array", items: { type: "string" } },
         reason: { type: "string", description: "Why (required for supersede; recorded in history)." },
         note: { type: "string", description: "Progress note (action progress)." },
+        progress: { type: "string", description: "Shortcut for action=progress with this note: what concretely advanced the goal." },
         triggers: TRIGGERS,
       },
-      required: ["goal_id", "action"],
+      required: ["goal_id"],
     },
   },
   brain_list_goals: {
@@ -142,6 +145,17 @@ export function dispatchContinuityTool(
       return ok(`Recorded decision ${r.id}${r.goal ? ` (advances goal "${r.goal.title}")` : ""}${r.conflicts?.length ? ` — conflicts with: ${r.conflicts.join(", ")}` : ""}.\nRecord what happens later with brain_update_decision_outcome {"decision_id":"${r.id!.slice(0, 8)}", ...}.`);
     }
     case "brain_update_decision_outcome": {
+      const outcomeText = str(args["outcome"]);
+      if (args["confirm"] === true && !outcomeText) {
+        const c = confirmDecision(agentId, str(args["decision_id"]) ?? "", { goalId: str(args["goal_id"]), writerAgentId: opts.writerAgentId, ...(now ? { now } : {}) });
+        if (!c.ok) return err(c.error!);
+        return ok(`Decision confirmed${c.linkedGoal ? ` and linked to goal "${c.linkedGoal}" (progress logged)` : ""}.\n${formatDecision(c.decision!)}`);
+      }
+      if (!outcomeText || !str(args["outcome_status"])) return err("outcome and outcome_status are required (or pass confirm=true to confirm a draft)");
+      if (args["confirm"] === true || str(args["goal_id"])) {
+        const c = confirmDecision(agentId, str(args["decision_id"]) ?? "", { goalId: str(args["goal_id"]), writerAgentId: opts.writerAgentId, ...(now ? { now } : {}) });
+        if (!c.ok) return err(c.error!);
+      }
       const st = str(args["outcome_status"]) as OutcomeStatus;
       const r = updateDecisionOutcome(agentId, str(args["decision_id"]) ?? "", { outcome: str(args["outcome"]) ?? "", status: st, lesson: str(args["lesson"]), ...(now ? { now } : {}) });
       if (!r.ok) return err(r.error!);
@@ -166,10 +180,13 @@ export function dispatchContinuityTool(
       return ok(`Goal set: ${formatGoal(r.goal!)}${r.triggers?.length ? `\n  triggers: ${r.triggers.join(", ")}` : ""}`);
     }
     case "brain_update_goal": {
-      const action = str(args["action"]) as GoalAction;
+      const progressNote = str(args["progress"]);
+      const action = (str(args["action"]) ?? (progressNote ? "progress" : undefined)) as GoalAction;
+      if (!action) return err("action is required (or pass progress: \"note\")");
+      if (action === "progress" && !progressNote && !str(args["note"])) return err("progress needs a note: what concretely advanced the goal");
       const r = updateGoal(agentId, str(args["goal_id"]) ?? "", {
         action, title: str(args["title"]), description: str(args["description"]), priority: args["priority"], successCriteria: str(args["success_criteria"]),
-        keywords: strArr(args["keywords"]), reason: str(args["reason"]), note: str(args["note"]), triggers: args["triggers"] as TriggerSpec[] | undefined,
+        keywords: strArr(args["keywords"]), reason: str(args["reason"]), note: str(args["note"]) ?? progressNote, triggers: args["triggers"] as TriggerSpec[] | undefined,
         writerAgentId: opts.writerAgentId, ...(now ? { now } : {}),
       });
       if (!r.ok) return err(r.error!);

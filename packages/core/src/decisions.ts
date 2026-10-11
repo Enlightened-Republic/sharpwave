@@ -14,6 +14,7 @@ import { getDb, getMeta, setMeta, bumpWriteCounter } from "./db.js";
 import { writeNode, getNode, ftsSearchNodes } from "./nodes.js";
 import { writeEdge } from "./edges.js";
 import { parseConfidence, confidenceLevel, relativeTime } from "./belief-meta.js";
+import { fetchEmbeddingCached, cosineSimilarity, bufferToFloat32 } from "./embeddings.js";
 import type { ActivatedNode, BrainConfig, BrainNode, ConfidenceLevel, SourceType } from "./types.js";
 
 type Log = { info: (m: string) => void; warn: (m: string) => void };
@@ -40,6 +41,10 @@ export interface DecisionRow {
   merged_into: string | null;
   merge_count: number;
   auto_extracted: number;
+  /** v21: 'pending' | 'confirmed' | 'expired' for auto-extracted drafts; NULL for recorded decisions. */
+  draft_status: string | null;
+  confirmed_at: number | null;
+  expired_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -163,9 +168,9 @@ export function recordDecision(agentId: string, input: RecordDecisionInput): { o
     ...(input.evidence?.length ? { evidence: input.evidence.slice(0, 20) } : {}),
   });
   const db = getDb(agentId);
-  db.prepare(`INSERT INTO decisions (node_id, context, goal_id, options_json, chosen, rationale, predicted_outcome, predicted_confidence, auto_extracted, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    id, context, goal?.lineage_id ?? null, JSON.stringify(options), chosen, rationale, predicted, conf?.score ?? null, auto ? 1 : 0, now, now);
+  db.prepare(`INSERT INTO decisions (node_id, context, goal_id, options_json, chosen, rationale, predicted_outcome, predicted_confidence, auto_extracted, draft_status, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    id, context, goal?.lineage_id ?? null, JSON.stringify(options), chosen, rationale, predicted, conf?.score ?? null, auto ? 1 : 0, auto ? "pending" : null, now, now);
   if (now !== Date.now() && input.now !== undefined) db.prepare("UPDATE nodes SET created_at = ?, valid_from = ? WHERE id = ?").run(now, now, id);
   const w = { writerAgentId: input.writerAgentId ?? agentId };
   if (goal) writeEdge(agentId, id, goal.node_id, "advances", w);
@@ -207,8 +212,9 @@ export function updateDecisionOutcome(agentId: string, idOrPrefix: string, input
   const now = input.now ?? Date.now();
   const db = getDb(agentId);
   db.transaction(() => {
-    db.prepare("UPDATE decisions SET outcome = ?, outcome_status = ?, outcome_at = ?, lesson = COALESCE(?, lesson), updated_at = ? WHERE node_id = ?")
-      .run(outcome, input.status, now, lesson, now, d.node_id);
+    db.prepare(`UPDATE decisions SET outcome = ?, outcome_status = ?, outcome_at = ?, lesson = COALESCE(?, lesson), updated_at = ?,
+                  draft_status = CASE WHEN draft_status = 'pending' THEN 'confirmed' ELSE draft_status END, confirmed_at = COALESCE(confirmed_at, CASE WHEN draft_status = 'pending' THEN ? END)
+                WHERE node_id = ?`).run(outcome, input.status, now, lesson, now, now, d.node_id);
     const content = decisionContent({ ...d, outcome, outcome_status: input.status, lesson: lesson ?? d.lesson });
     db.prepare(`UPDATE nodes SET content = ?, updated_at = ?${input.status === "matched" ? ", verified_at = ?" : ""} WHERE id = ?`)
       .run(...(input.status === "matched" ? [content, now, now, d.node_id] : [content, now, d.node_id]));
@@ -220,6 +226,63 @@ export function updateDecisionOutcome(agentId: string, idOrPrefix: string, input
   }
   bumpWriteCounter(db);
   return { ok: true, decision: getDecision(agentId, d.node_id)!, ...(goalProgress ? { goalProgress } : {}) };
+}
+
+/**
+ * Confirm an auto-extracted draft ("yes, that was a real decision"): it stops
+ * being a draft (never expires), confidence goes to at least medium, and it
+ * can be linked to the goal it advances.
+ */
+export function confirmDecision(agentId: string, idOrPrefix: string, opts: { goalId?: string; now?: number; writerAgentId?: string } = {}): { ok: boolean; error?: string; decision?: DecisionView; linkedGoal?: string } {
+  const d = getDecision(agentId, idOrPrefix);
+  if (!d) return { ok: false, error: `decision ${idOrPrefix} not found (brain_query_decisions shows ids)` };
+  if (d.merged_into) return confirmDecision(agentId, d.merged_into, opts);
+  if (d.draft_status === "expired") return { ok: false, error: "that draft already expired; record it again with brain_record_decision if it was real" };
+  const goal = opts.goalId ? resolveGoalCurrent(agentId, opts.goalId) : null;
+  if (opts.goalId && !goal) return { ok: false, error: `goal ${opts.goalId} not found (brain_list_goals shows ids)` };
+  const now = opts.now ?? Date.now();
+  const db = getDb(agentId);
+  db.transaction(() => {
+    db.prepare(`UPDATE decisions SET draft_status = CASE WHEN auto_extracted = 1 THEN 'confirmed' ELSE draft_status END, confirmed_at = COALESCE(confirmed_at, ?),
+                  goal_id = COALESCE(?, goal_id), updated_at = ? WHERE node_id = ?`).run(now, goal?.lineage_id ?? null, now, d.node_id);
+    db.prepare("UPDATE nodes SET confidence_score = MAX(confidence_score, 0.6), verified_at = ?, updated_at = ? WHERE id = ?").run(now, now, d.node_id);
+    const sc = (db.prepare("SELECT confidence_score FROM nodes WHERE id = ?").get(d.node_id) as { confidence_score: number }).confidence_score;
+    db.prepare("UPDATE nodes SET confidence = ? WHERE id = ?").run(confidenceLevel(sc), d.node_id);
+  })();
+  if (goal) {
+    writeEdge(agentId, d.node_id, goal.node_id, "advances", { writerAgentId: opts.writerAgentId ?? agentId });
+    db.prepare("UPDATE goals SET last_progress_at = MAX(COALESCE(last_progress_at, 0), ?), drift_kind = NULL, drift_reason = NULL, updated_at = ? WHERE lineage_id = ? AND status = 'active'").run(now, now, goal.lineage_id);
+  }
+  bumpWriteCounter(db);
+  return { ok: true, decision: getDecision(agentId, d.node_id)!, ...(goal ? { linkedGoal: goal.title } : {}) };
+}
+
+const LINK_EDGES = ["advances", "conflicts_with_goal", "used_in", "led_to", "caused_by", "derived_from", "supports", "goal_of"];
+
+/**
+ * Sleep sweep: auto-extracted drafts that are still pending, low-confidence,
+ * outcome-less and unlinked after `decisionDraftTtlDays` are soft-retired:
+ * decisions.draft_status = 'expired', node status 'archived' (hidden from
+ * recall and queries; kept for as_of / audit). Never deletes.
+ */
+export function expireDecisionDrafts(agentId: string, config: Partial<BrainConfig>, now = Date.now()): string[] {
+  const ttl = config.decisionDraftTtlDays ?? 14;
+  if (!(ttl > 0)) return [];
+  const db = getDb(agentId);
+  const rows = db.prepare(`SELECT d.node_id FROM decisions d JOIN nodes n ON n.id = d.node_id
+                            WHERE d.auto_extracted = 1 AND d.draft_status = 'pending' AND d.outcome_at IS NULL AND d.confirmed_at IS NULL
+                              AND d.goal_id IS NULL AND d.merged_into IS NULL AND n.status = 'active' AND n.confidence_score < 0.5 AND d.created_at < ?
+                              AND NOT EXISTS (SELECT 1 FROM edges e WHERE (e.from_id = d.node_id OR e.to_id = d.node_id) AND e.type IN (${LINK_EDGES.map(() => "?").join(",")}))`)
+    .all(now - ttl * DAY, ...LINK_EDGES) as Array<{ node_id: string }>;
+  if (!rows.length) return [];
+  const reason = `expired: unconfirmed auto-extracted decision draft (no outcome, confirmation or link in ${ttl}d)`;
+  db.transaction(() => {
+    for (const r of rows) {
+      db.prepare("UPDATE decisions SET draft_status = 'expired', expired_at = ?, updated_at = ? WHERE node_id = ?").run(now, now, r.node_id);
+      db.prepare("UPDATE nodes SET status = 'archived', status_reason = ?, status_changed_at = ?, valid_until = COALESCE(valid_until, ?), updated_at = ? WHERE id = ?").run(reason, now, now, now, r.node_id);
+    }
+  })();
+  return rows.map((r) => r.node_id);
 }
 
 export interface QueryDecisionsInput { query?: string; goalId?: string; status?: "pending" | "resolved" | "all"; limit?: number; includeMerged?: boolean }
@@ -253,7 +316,8 @@ export function queryDecisions(agentId: string, input: QueryDecisionsInput = {})
 }
 
 export function formatDecision(d: DecisionView, now = Date.now()): string {
-  const L = [`${d.node_id} ${d.label} (${relativeTime(d.created_at, now)} · conf=${confidenceLevel(d.confidence_score)} src=${d.source_type}${d.auto_extracted ? " · auto-extracted draft" : ""}${d.merge_count > 1 ? ` · seen ${d.merge_count}×` : ""})`];
+  const draft = d.draft_status === "pending" ? " · auto-extracted draft (unconfirmed)" : d.draft_status === "confirmed" ? " · auto-extracted, confirmed" : d.draft_status === "expired" ? " · expired draft" : d.auto_extracted ? " · auto-extracted draft" : "";
+  const L = [`${d.node_id} ${d.label} (${relativeTime(d.created_at, now)} · conf=${confidenceLevel(d.confidence_score)} src=${d.source_type}${draft}${d.merge_count > 1 ? ` · seen ${d.merge_count}×` : ""})`];
   L.push(`  context: ${d.context}`);
   const others = d.options.filter((o) => o.option.toLowerCase() !== d.chosen.toLowerCase());
   L.push(`  chose: ${d.chosen}${others.length ? `  (over: ${others.map((o) => o.option + (o.predicted_outcome ? ` → ${o.predicted_outcome}` : "")).join("; ")})` : ""}`);
@@ -267,7 +331,10 @@ export function formatDecision(d: DecisionView, now = Date.now()): string {
 
 // ─── heuristic auto-extraction ─────────────────────────────────────────────
 
-const LEAD = String.raw`(?:I(?:'ll| will| am going to|'m going to)\s+(?:go with|choose|pick|use|take|opt for)|I(?:'ve| have)?\s*(?:decided|chosen|chose|opted)(?:\s+(?:to\s+(?:go with|use|take|pick)|for|on))?|I'm\s+(?:going with|choosing|picking|opting for)|(?:we'll|we will|let's)\s+(?:go with|use|pick|choose)|going with)`;
+const LEAD = String.raw`(?:I(?:'ll| will| am going to|'m going to)\s+(?:go with|choose|pick|use|take|opt for)|I(?:'ve| have)?\s*(?:decided|chosen|chose|opted)(?:\s+(?:to\s+(?:go with|use|take|pick)|for|on))?|I'm\s+(?:going with|choosing|picking|opting for)|(?:we'll|we will|let's)\s+(?:go with|use|pick|choose)|^going with)`;
+/** Conditional / hypothetical / hedged / reported framing: not a decision that was made. */
+const HEDGE = /\b(?:if|unless|whether|would|could|might|may|maybe|perhaps|probably|suppose|supposing|assuming|hypothetically|imagine|in theory|otherwise|when we|once we|until|should i|should we|i'd|we'd|you'd|wouldn't|not going to|won't|never|don't|didn't)\b/i;
+const REPORTED = /\b(?:said|says|saying|asked|told|tells|wrote|writes|suggested|suggests|recommended|recommends|according to|quote|quoted)\b/i;
 const OVER = new RegExp(String.raw`\b${LEAD}\s+(.{2,120}?)\s+(?:over|instead of|rather than)\s+(.{2,120}?)(?:\s*[,;—-]?\s*(?:because|since|as)\s+(.{3,240}?))?(?=[.!?\n]|$)`, "i");
 const BECAUSE = new RegExp(String.raw`\b${LEAD}\s+(.{2,120}?)\s*[,;—-]?\s*(?:because|since)\s+(.{3,240}?)(?=[.!?\n]|$)`, "i");
 
@@ -280,8 +347,10 @@ export interface DecisionCandidate { chosen: string; over: string[]; rationale: 
  */
 export function extractDecisionCandidates(text: string): DecisionCandidate[] {
   if (!text) return [];
-  const stripped = text.replace(/```[\s\S]*?```/g, " ").replace(/`[^`]*`/g, (m) => m.slice(1, -1));
-  const sentences = stripped.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter((s) => s && !s.startsWith(">") && !s.endsWith("?"));
+  const stripped = text.replace(/```[\s\S]*?```/g, " ").replace(/`[^`]*`/g, (m) => m.slice(1, -1))
+    // quoted speech is someone else's (or a hypothetical) choice, not ours
+    .replace(/"[^"\n]{0,400}"|“[^”\n]{0,400}”|«[^»\n]{0,400}»/g, " … ");
+  const sentences = stripped.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter((s) => s && !s.startsWith(">") && !s.endsWith("?") && !HEDGE.test(s) && !REPORTED.test(s));
   const out: DecisionCandidate[] = [];
   for (const s of sentences) {
     if (out.length >= 2) break;
@@ -338,10 +407,81 @@ export function jaccard(a: Set<string>, b: Set<string>): number {
   return i / (a.size + b.size - i);
 }
 
-export interface DecisionPassResult { merged: number; calibrated: number; promoted: number; promotedIds: string[] }
+export interface DecisionPassResult { merged: number; calibrated: number; promoted: number; promotedIds: string[]; lessonsMerged: number; mergedInto: string[]; draftsExpired: number }
 
-export function runDecisionPass(agentId: string, config: Partial<BrainConfig>, log?: Log, now = Date.now()): DecisionPassResult {
-  const res: DecisionPassResult = { merged: 0, calibrated: 0, promoted: 0, promotedIds: [] };
+/** Vectors for lesson similarity, keyed "d:<decision id>" (lesson text) and "s:<skill id>". */
+export type LessonVectors = Map<string, Float32Array>;
+
+interface SkillCand { id: string; text: string; lessonSkill: boolean }
+function skillCandidates(agentId: string): SkillCand[] {
+  const rows = getDb(agentId).prepare(`SELECT id, label, content, source FROM nodes WHERE type = 'skill' AND status = 'active' AND (valid_until IS NULL OR valid_until > ?) ORDER BY updated_at DESC LIMIT 300`).all(Date.now()) as
+    Array<{ id: string; label: string; content: string; source: string | null }>;
+  return rows.map((r) => {
+    const lessonSkill = r.source === "sws:decision-lesson" || r.label.startsWith("Lesson: ");
+    return { id: r.id, lessonSkill, text: lessonSkill ? r.content.replace(/\s*\(learned from \d+ decisions?[^)]*\)\s*$/, "") : `${r.label}. ${r.content.slice(0, 300)}` };
+  });
+}
+
+/**
+ * Similarity of two lessons / a lesson and a skill. Embedding cosine when both
+ * vectors exist; otherwise a lexical fallback (Jaccard, or containment of the
+ * shorter token set) scaled onto the same 0..1 range.
+ */
+export function lessonSimilarity(a: string, b: string, va?: Float32Array, vb?: Float32Array): { sim: number; method: "embedding" | "lexical" } {
+  if (va && vb && va.length === vb.length) return { sim: cosineSimilarity(va, vb), method: "embedding" };
+  const ta = tokenSet(a), tb = tokenSet(b);
+  if (!ta.size || !tb.size) return { sim: 0, method: "lexical" };
+  let i = 0;
+  for (const x of ta) if (tb.has(x)) i++;
+  const jac = i / (ta.size + tb.size - i);
+  const contain = Math.min(ta.size, tb.size) >= 3 ? i / Math.min(ta.size, tb.size) : 0;
+  return { sim: Math.max(jac, contain * 0.85), method: "lexical" };
+}
+const LEXICAL_MERGE = 0.5;
+
+/** Embed pending lessons + candidate skills for the lesson merge (async; sleep calls this before runDecisionPass). Missing provider → empty map → lexical fallback. */
+export async function prepareLessonVectors(agentId: string, config: Partial<BrainConfig>, log?: Log): Promise<LessonVectors> {
+  const out: LessonVectors = new Map();
+  if (config.decisionLedger === false || config.decisionLessonPromotion !== true || !config.embeddingModel) return out;
+  const db = getDb(agentId);
+  const lessons = db.prepare(`SELECT d.node_id, d.lesson FROM decisions d JOIN nodes n ON n.id = d.node_id WHERE d.merged_into IS NULL AND d.lesson IS NOT NULL AND d.lesson_node_id IS NULL AND d.outcome_at IS NOT NULL AND n.status = 'active'`).all() as Array<{ node_id: string; lesson: string }>;
+  if (!lessons.length) return out;
+  try {
+    for (const l of lessons) {
+      const v = await fetchEmbeddingCached(l.lesson, config as BrainConfig);
+      if (!v) return new Map(); // no provider / provider down → lexical for the whole pass (consistent)
+      out.set(`d:${l.node_id}`, v);
+    }
+    for (const s of skillCandidates(agentId)) {
+      const row = db.prepare("SELECT embedding FROM nodes WHERE id = ?").get(s.id) as { embedding: Buffer | null } | undefined;
+      let v: Float32Array | null = row?.embedding && !s.lessonSkill ? bufferToFloat32(row.embedding) : null;
+      if (!v || v.length !== out.values().next().value!.length) v = await fetchEmbeddingCached(s.text, config as BrainConfig);
+      if (v) out.set(`s:${s.id}`, v);
+    }
+  } catch (err) { log?.warn(`[xanima] lesson embeddings unavailable, using lexical match: ${String(err)}`); return new Map(); }
+  return out;
+}
+
+function mergeLessonIntoSkill(agentId: string, skillId: string, d: DecisionRow, sim: { sim: number; method: string }, now: number): void {
+  const db = getDb(agentId);
+  const sk = getNode(agentId, skillId)!;
+  const ev = new Set<string>([...(safeJson(sk.evidence) ?? []), d.node_id]);
+  const before = sk.confidence_score ?? 0.6;
+  const after = Math.min(0.95, before + 0.05);
+  const isLesson = sk.source === "sws:decision-lesson" || sk.label.startsWith("Lesson: ");
+  const n = (db.prepare("SELECT COUNT(*) AS n FROM decisions WHERE lesson_node_id = ?").get(skillId) as { n: number }).n + 1;
+  db.transaction(() => {
+    db.prepare(`UPDATE nodes SET evidence = ?, confidence_score = ?, confidence = ?, updated_at = ?${isLesson ? ", content = ?" : ""} WHERE id = ?`)
+      .run(...[JSON.stringify([...ev].slice(0, 50)), after, confidenceLevel(after), now, ...(isLesson ? [sk.content.replace(/\(learned from \d+ decisions?/, `(learned from ${n} decision${n === 1 ? "" : "s"}`)] : []), skillId]);
+    db.prepare("UPDATE decisions SET lesson_node_id = ?, updated_at = ? WHERE node_id = ?").run(skillId, now, d.node_id);
+    db.prepare("INSERT INTO lesson_merges (skill_id, decision_id, lesson, similarity, method, confidence_before, confidence_after, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(skillId, d.node_id, d.lesson!, Math.round(sim.sim * 1000) / 1000, sim.method, before, after, now);
+  })();
+  writeEdge(agentId, skillId, d.node_id, "derived_from", { writerAgentId: "system:sleep", meta: { lesson_merge: true, similarity: Math.round(sim.sim * 1000) / 1000, method: sim.method } });
+}
+
+export function runDecisionPass(agentId: string, config: Partial<BrainConfig>, log?: Log, now = Date.now(), opts: { vectors?: LessonVectors } = {}): DecisionPassResult {
+  const res: DecisionPassResult = { merged: 0, calibrated: 0, promoted: 0, promotedIds: [], lessonsMerged: 0, mergedInto: [], draftsExpired: 0 };
   if (config.decisionLedger === false) return res;
   const db = getDb(agentId);
   // 1. merge near-duplicates (same choice, similar context)
@@ -383,13 +523,34 @@ export function runDecisionPass(agentId: string, config: Partial<BrainConfig>, l
     res.calibrated++;
   }
   if (res.calibrated) setMeta(agentId, "decisions:calibrated", JSON.stringify([...done].slice(-5000)));
-  // 3. promote recurring / high-value lessons to skill nodes (flag)
+  // 3. lessons: merge into an existing matching skill, else promote recurring /
+  //    high-value ones to a new skill node (flag). Re-read state per lesson so a
+  //    lesson promoted (or merged) earlier in this pass is never promoted again.
   if (config.decisionLessonPromotion === true) {
-    const withLesson = db.prepare(`SELECT d.* FROM decisions d JOIN nodes n ON n.id = d.node_id WHERE d.merged_into IS NULL AND d.lesson IS NOT NULL AND d.lesson_node_id IS NULL AND d.outcome_at IS NOT NULL AND n.status = 'active'`).all() as DecisionRow[];
-    const all = db.prepare(`SELECT node_id, lesson FROM decisions WHERE lesson IS NOT NULL AND merged_into IS NULL`).all() as Array<{ node_id: string; lesson: string }>;
-    for (const d of withLesson) {
-      const lt = tokenSet(d.lesson!);
-      const similar = all.filter((o) => o.node_id !== d.node_id && jaccard(lt, tokenSet(o.lesson)) >= 0.5);
+    const vec = opts.vectors ?? new Map<string, Float32Array>();
+    const embThr = config.lessonMergeSimilarity ?? 0.86;
+    const withLesson = db.prepare(`SELECT d.* FROM decisions d JOIN nodes n ON n.id = d.node_id WHERE d.merged_into IS NULL AND d.lesson IS NOT NULL AND d.lesson_node_id IS NULL AND d.outcome_at IS NOT NULL AND n.status = 'active' ORDER BY d.outcome_at ASC`).all() as DecisionRow[];
+    const passes = (s: { sim: number; method: string }) => s.sim >= (s.method === "embedding" ? embThr : LEXICAL_MERGE);
+    for (const d0 of withLesson) {
+      const d = db.prepare("SELECT * FROM decisions WHERE node_id = ?").get(d0.node_id) as DecisionRow;
+      if (d.lesson_node_id || !d.lesson) continue;
+      const dv = vec.get(`d:${d.node_id}`);
+      // 3a. an existing skill (or a lesson promoted earlier) already says this → merge into it
+      let best: { id: string; s: { sim: number; method: "embedding" | "lexical" } } | null = null;
+      for (const sk of skillCandidates(agentId)) {
+        const s = lessonSimilarity(d.lesson, sk.text, dv, vec.get(`s:${sk.id}`));
+        if (passes(s) && (!best || s.sim > best.s.sim)) best = { id: sk.id, s };
+      }
+      if (best) {
+        mergeLessonIntoSkill(agentId, best.id, d, best.s, now);
+        res.lessonsMerged++;
+        res.mergedInto.push(best.id);
+        log?.info(`[xanima] lesson from decision ${d.node_id.slice(0, 8)} merged into skill ${best.id.slice(0, 8)} (${best.s.method} ${best.s.sim.toFixed(2)})`);
+        continue;
+      }
+      // 3b. new skill when recurring / high-value
+      const others = db.prepare(`SELECT node_id, lesson FROM decisions WHERE lesson IS NOT NULL AND merged_into IS NULL AND lesson_node_id IS NULL AND node_id != ?`).all(d.node_id) as Array<{ node_id: string; lesson: string }>;
+      const similar = others.filter((o) => passes(lessonSimilarity(d.lesson!, o.lesson, dv, vec.get(`d:${o.node_id}`))));
       const highValue = similar.length >= 1 || d.merge_count >= 2 || (d.outcome_status === "missed" && (d.predicted_confidence ?? 0) >= 0.7);
       if (!highValue) continue;
       const sources = [d.node_id, ...similar.map((s) => s.node_id)];
@@ -401,13 +562,16 @@ export function runDecisionPass(agentId: string, config: Partial<BrainConfig>, l
         writeEdge(agentId, skillId, s, "derived_from", { writerAgentId: "system:sleep" });
         db.prepare("UPDATE decisions SET lesson_node_id = ?, updated_at = ? WHERE node_id = ?").run(skillId, now, s);
       }
+      if (dv) vec.set(`s:${skillId}`, dv);
       res.promoted++;
       res.promotedIds.push(skillId);
     }
   }
-  if (res.merged || res.calibrated || res.promoted) {
+  // 4. expire stale unconfirmed drafts (soft)
+  try { res.draftsExpired = expireDecisionDrafts(agentId, config, now).length; } catch (err) { log?.warn(`[xanima] draft expiry failed: ${String(err)}`); }
+  if (res.merged || res.calibrated || res.promoted || res.lessonsMerged || res.draftsExpired) {
     bumpWriteCounter(db);
-    log?.info(`[xanima] decision pass: merged ${res.merged}, calibrated ${res.calibrated}, promoted ${res.promoted} lesson(s) (agent=${agentId})`);
+    log?.info(`[xanima] decision pass: merged ${res.merged}, calibrated ${res.calibrated}, promoted ${res.promoted} lesson(s), ${res.lessonsMerged} merged into existing skills, ${res.draftsExpired} draft(s) expired (agent=${agentId})`);
   }
   return res;
 }
@@ -417,13 +581,17 @@ function safeJson(s: string | null | undefined): string[] | null {
   try { const v = JSON.parse(s); return Array.isArray(v) ? v.map(String) : null; } catch { return null; }
 }
 
-export function decisionCounts(db: ReturnType<typeof getDb>): { total: number; pending: number; resolved: number; auto: number; lessonsPromoted: number } {
+export function decisionCounts(db: ReturnType<typeof getDb>): { total: number; pending: number; resolved: number; auto: number; lessonsPromoted: number; draftsPending: number; draftsExpired: number; lessonsMerged: number } {
+  const zero = { total: 0, pending: 0, resolved: 0, auto: 0, lessonsPromoted: 0, draftsPending: 0, draftsExpired: 0, lessonsMerged: 0 };
   try {
     const r = db.prepare(`SELECT COUNT(*) AS total, SUM(outcome_at IS NULL) AS pending, SUM(outcome_at IS NOT NULL) AS resolved, SUM(auto_extracted) AS auto,
-                                 COUNT(DISTINCT lesson_node_id) AS promoted
+                                 COUNT(DISTINCT lesson_node_id) AS promoted, SUM(draft_status = 'pending') AS drafts
                             FROM decisions d JOIN nodes n ON n.id = d.node_id WHERE d.merged_into IS NULL AND n.status = 'active'`).get() as Record<string, number | null>;
-    return { total: r["total"] ?? 0, pending: r["pending"] ?? 0, resolved: r["resolved"] ?? 0, auto: r["auto"] ?? 0, lessonsPromoted: r["promoted"] ?? 0 };
-  } catch { return { total: 0, pending: 0, resolved: 0, auto: 0, lessonsPromoted: 0 }; }
+    const x = db.prepare("SELECT COUNT(*) AS n FROM decisions WHERE draft_status = 'expired'").get() as { n: number };
+    let lm = 0;
+    try { lm = (db.prepare("SELECT COUNT(*) AS n FROM lesson_merges").get() as { n: number }).n; } catch { /* pre-v21 */ }
+    return { total: r["total"] ?? 0, pending: r["pending"] ?? 0, resolved: r["resolved"] ?? 0, auto: r["auto"] ?? 0, lessonsPromoted: r["promoted"] ?? 0, draftsPending: r["drafts"] ?? 0, draftsExpired: x.n, lessonsMerged: lm };
+  } catch { return zero; }
 }
 
 export type { BrainNode };

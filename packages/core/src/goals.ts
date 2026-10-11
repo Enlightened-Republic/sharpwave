@@ -195,7 +195,7 @@ export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoa
       db.prepare(`INSERT INTO goals (node_id, lineage_id, version, title, priority, status, success_criteria, keywords_json, tracked, last_checked_at, last_progress_at, alignment_summary, created_at, updated_at)
                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         sup.newId, cur.lineage_id, cur.version + 1, title, pr, cur.status === "paused" ? "paused" : "active", criteria, JSON.stringify(kw), cur.tracked,
-        cur.last_checked_at, Math.max(cur.last_progress_at ?? 0, now), cur.alignment_summary, now, now);
+        cur.last_checked_at, cur.last_progress_at ?? lineageStart(agentId, cur.lineage_id) ?? cur.created_at, cur.alignment_summary, now, now);
       // goal nodes are high-importance; carry it over
       db.prepare("UPDATE nodes SET importance = MAX(importance, 0.85) WHERE id = ?").run(sup.newId);
     })();
@@ -282,6 +282,31 @@ export function formatGoalHistory(h: GoalHistory, now = Date.now()): string {
 export interface DriftFlag { lineage_id: string; title: string; priority: number; kind: "stalled" | "conflict" | "priority"; reason: string; days: number }
 export interface DriftResult { checked: number; drifting: DriftFlag[]; onTrack: number; noteId: number | null; note: string | null }
 
+/** When the goal lineage was first set (v1 created_at). Re-wording a goal is not progress. */
+function lineageStart(agentId: string, lineageId: string): number | null {
+  const r = getDb(agentId).prepare("SELECT MIN(created_at) AS t FROM goals WHERE lineage_id = ?").get(lineageId) as { t: number | null } | undefined;
+  return r?.t ?? null;
+}
+
+/**
+ * Keywords that describe what DONE looks like, minus the goal's name: words
+ * from the success criteria that are not in any title of the lineage. Talking
+ * about "the Telegram bot for Gano" is not progress; "Gano answers" is.
+ */
+export function criteriaKeywords(criteria: string | null, titles: string[]): string[] {
+  if (!criteria) return [];
+  const named = new Set<string>();
+  for (const t of titles) for (const w of tokenSet(t)) named.add(w);
+  return deriveKeywords(criteria).filter((k) => !named.has(k));
+}
+
+/** Goal plumbing / goal talk: never progress evidence. */
+const GOAL_TALK = /\bbrain_(?:set_goal|update_goal|list_goals|turn_context|status)\b|\[BRAIN: goals\]|\bAlignment: |\bGoal (?:set|update|supersede|progress)\b/i;
+export function isGoalTalk(content: string): boolean {
+  const c = content.trim();
+  return GOAL_TALK.test(c) || c.endsWith("?");
+}
+
 function matchesKeywords(text: string, kws: string[]): number {
   const t = text.toLowerCase();
   let n = 0;
@@ -291,8 +316,11 @@ function matchesKeywords(text: string, kws: string[]): number {
 
 /**
  * Compare recent activity against active, tracked goals.
- *   progress = a decision that advances the goal (recorded or resolved), an
- *   explicit progress event, or episodes mentioning enough of its keywords.
+ *   progress = evidence of advancement only: a decision linked to the goal
+ *   (recorded, or a non-missed outcome), an explicit progress / done / resume
+ *   update (brain_update_goal action "progress"), or assistant/tool activity
+ *   matching the goal's SUCCESS CRITERIA minus its name. Setting, re-wording,
+ *   listing or merely discussing a goal, and alignment-note turns, never count.
  *   drift    = no progress in `driftDays`; a recent decision with a
  *   conflicts_with_goal edge; or recent decisions advancing only lower-priority
  *   goals while a higher-priority goal stalls.
@@ -309,14 +337,15 @@ export function runDriftPass(agentId: string, config: Partial<BrainConfig>, log?
   const recentDecisions = db.prepare(`SELECT d.node_id, d.chosen, d.goal_id, d.created_at, d.outcome_at FROM decisions d JOIN nodes n ON n.id = d.node_id
                                        WHERE d.merged_into IS NULL AND n.status = 'active' AND (d.created_at >= ? OR d.outcome_at >= ?)`).all(windowStart, windowStart) as
     Array<{ node_id: string; chosen: string; goal_id: string | null; created_at: number; outcome_at: number | null }>;
-  const recentEpisodes = db.prepare("SELECT content, created_at FROM episodes WHERE created_at >= ? ORDER BY created_at DESC LIMIT 3000").all(Math.min(windowStart, ...goals.map((g) => g.last_progress_at ?? g.created_at))) as Array<{ content: string; created_at: number }>;
+  const recentEpisodes = db.prepare("SELECT content, created_at FROM episodes WHERE created_at >= ? AND role IN ('assistant', 'tool') ORDER BY created_at DESC LIMIT 3000").all(Math.min(windowStart, ...goals.map((g) => g.last_progress_at ?? g.created_at))) as Array<{ content: string; created_at: number }>;
   const prioOf = new Map(goals.map((g) => [g.lineage_id, g.priority]));
 
   for (const g of goals) {
     res.checked++;
-    const kws = JSON.parse(g.keywords_json) as string[];
+    const titles = (db.prepare("SELECT title FROM goals WHERE lineage_id = ?").all(g.lineage_id) as Array<{ title: string }>).map((r) => r.title);
+    const kws = criteriaKeywords(g.success_criteria, titles);
     const need = kws.length <= 2 ? 1 : 2;
-    let last = g.last_progress_at ?? g.created_at;
+    let last = g.last_progress_at ?? lineageStart(agentId, g.lineage_id) ?? g.created_at;
     const lineageNodes = (db.prepare("SELECT node_id FROM goals WHERE lineage_id = ?").all(g.lineage_id) as Array<{ node_id: string }>).map((r) => r.node_id);
     const adv = db.prepare(`SELECT d.created_at, d.outcome_at, d.outcome_status FROM edges e JOIN decisions d ON d.node_id = e.from_id
                              WHERE e.type = 'advances' AND e.to_id IN (${lineageNodes.map(() => "?").join(",")})`).all(...lineageNodes) as Array<{ created_at: number; outcome_at: number | null; outcome_status: string | null }>;
@@ -327,7 +356,9 @@ export function runDriftPass(agentId: string, config: Partial<BrainConfig>, log?
     let evidence = "";
     for (const e of recentEpisodes) {
       if (e.created_at <= last) break;
-      if (kws.length && matchesKeywords(e.content, kws) >= need) { last = e.created_at; evidence = "recent conversation"; break; }
+      if (!kws.length) break;
+      if (isGoalTalk(e.content)) continue;
+      if (matchesKeywords(e.content, kws) >= need) { last = e.created_at; evidence = "activity matching its success criteria"; break; }
     }
     const days = Math.floor((now - last) / DAY);
     const flags: DriftFlag[] = [];
@@ -384,9 +415,21 @@ export function maybeRunDailyDrift(agentId: string, config: Partial<BrainConfig>
 
 export interface GoalTurnContext { text: string; noteId: number | null; triggered: Array<{ trigger_id: string; lineage_id: string; title: string; why: string }> }
 
+/** Safety valve: a note offered this many times without an ack is retired (e.g. a host that never acks). */
+export const ALIGNMENT_NOTE_MAX_OFFERS = 6;
+
 /**
- * Called once per agent turn (before the prompt is built). Delivers the
- * pending alignment note exactly once, fires due time triggers and matching
+ * Mark an alignment note delivered. Call it only after the note was injected
+ * into a prompt that produced a real assistant reply (not a tool-only turn).
+ */
+export function ackAlignmentNote(agentId: string, noteId: number, now = Date.now()): boolean {
+  const r = getDb(agentId).prepare("UPDATE alignment_notes SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL").run(now, noteId);
+  return r.changes > 0;
+}
+
+/**
+ * Called once per agent turn (before the prompt is built). Offers the
+ * pending alignment note (it stays pending until ackAlignmentNote), fires due time triggers and matching
  * keyword triggers (with cooldown), and returns one budget-capped block.
  * Mutates delivery / firing state; read-only otherwise.
  */
@@ -398,7 +441,15 @@ export function buildGoalTurnContext(agentId: string, prompt: string, config: Pa
   const lines: string[] = [];
   if (config.intentDriftCheck !== "off") {
     const n = db.prepare("SELECT id, text FROM alignment_notes WHERE delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get() as { id: number; text: string } | undefined;
-    if (n) { lines.push(n.text); out.noteId = n.id; db.prepare("UPDATE alignment_notes SET delivered_at = ? WHERE id = ?").run(now, n.id); }
+    if (n) {
+      // Offered, not delivered: the host acks (ackAlignmentNote) once a real reply came out of this prompt.
+      lines.push(n.text); out.noteId = n.id;
+      const c = db.prepare("UPDATE alignment_notes SET offered_at = ?, offered_count = offered_count + 1 WHERE id = ? RETURNING offered_count").get(now, n.id) as { offered_count: number };
+      if (c.offered_count >= ALIGNMENT_NOTE_MAX_OFFERS) {
+        db.prepare("UPDATE alignment_notes SET delivered_at = ? WHERE id = ?").run(now, n.id);
+        log?.info(`[xanima] alignment note ${n.id} retired after ${c.offered_count} offers without an ack (agent=${agentId})`);
+      }
+    }
   }
   if (config.goalTriggers !== false) {
     const trig = db.prepare(`SELECT t.*, g.title, g.priority, g.success_criteria FROM goal_triggers t
@@ -433,13 +484,13 @@ export function buildGoalTurnContext(agentId: string, prompt: string, config: Pa
   return out;
 }
 
-export function goalCounts(db: ReturnType<typeof getDb>): { active: number; tracked: number; paused: number; done: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null } {
+export function goalCounts(db: ReturnType<typeof getDb>): { active: number; tracked: number; paused: number; done: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null; pendingNoteOffers: number } {
   try {
     const cur = `g.version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id)`;
     const r = db.prepare(`SELECT SUM(status='active') AS active, SUM(status='active' AND tracked=1) AS tracked, SUM(status='paused') AS paused, SUM(status='done') AS done FROM goals g WHERE ${cur}`).get() as Record<string, number | null>;
     const drifting = (db.prepare(`SELECT lineage_id, title, drift_reason FROM goals g WHERE ${cur} AND status = 'active' AND drift_reason IS NOT NULL ORDER BY priority`).all() as Array<{ lineage_id: string; title: string; drift_reason: string }>)
       .map((d) => ({ id: d.lineage_id, title: d.title, reason: d.drift_reason }));
-    const n = db.prepare("SELECT text FROM alignment_notes WHERE delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get() as { text: string } | undefined;
-    return { active: r["active"] ?? 0, tracked: r["tracked"] ?? 0, paused: r["paused"] ?? 0, done: r["done"] ?? 0, drifting, pendingNote: n?.text ?? null };
-  } catch { return { active: 0, tracked: 0, paused: 0, done: 0, drifting: [], pendingNote: null }; }
+    const n = db.prepare("SELECT text, offered_count FROM alignment_notes WHERE delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get() as { text: string; offered_count: number } | undefined;
+    return { active: r["active"] ?? 0, tracked: r["tracked"] ?? 0, paused: r["paused"] ?? 0, done: r["done"] ?? 0, drifting, pendingNote: n?.text ?? null, pendingNoteOffers: n?.offered_count ?? 0 };
+  } catch { return { active: 0, tracked: 0, paused: 0, done: 0, drifting: [], pendingNote: null, pendingNoteOffers: 0 }; }
 }

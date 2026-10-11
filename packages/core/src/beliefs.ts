@@ -220,6 +220,8 @@ export interface SleepSummary {
   decisionsMerged?: number;
   decisionsCalibrated?: number;
   lessonsPromoted?: number;
+  lessonsMerged?: number;
+  draftsExpired?: number;
   goalsChecked?: number;
   goalsDrifting?: number;
   alignmentNoteQueued?: boolean;
@@ -237,8 +239,8 @@ export interface BrainStatus {
     byConfidence: Record<string, number>;
   };
   hotConflicts: Array<{ a: { id: string; label: string }; b: { id: string; label: string }; since: number }>;
-  decisions: { total: number; pending: number; resolved: number; auto: number; lessonsPromoted: number };
-  goals: { active: number; tracked: number; paused: number; done: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null };
+  decisions: { total: number; pending: number; resolved: number; auto: number; lessonsPromoted: number; draftsPending: number; draftsExpired: number; lessonsMerged: number };
+  goals: { active: number; tracked: number; paused: number; done: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null; pendingNoteOffers: number };
   lastSleep: { at: number | null; ago: string; summary: SleepSummary | null };
   injection: {
     budgetChars: number;
@@ -348,11 +350,12 @@ export function formatBrainStatus(s: BrainStatus, label = ""): string {
   if (src) L.push(`  sources: ${src}`);
   L.push(`  injection: ~${s.injection.estimatedTokens} tokens (header ${s.injection.headerChars} + recall cap ${s.injection.recallCapChars} chars; budget ${s.injection.budgetChars})`);
   const ss = s.lastSleep.summary;
-  L.push(`  last sleep: ${s.lastSleep.ago}${ss ? ` — nodes ${ss.nodesBefore}→${ss.nodesAfter}, edges ${ss.edgesBefore}→${ss.edgesAfter}, pruned ${ss.pruned}, new contradictions ${ss.newContradictions}, flagged ${ss.flaggedForReview}${ss.decisionsMerged || ss.decisionsCalibrated || ss.lessonsPromoted ? `, decisions merged ${ss.decisionsMerged ?? 0} / calibrated ${ss.decisionsCalibrated ?? 0} / lessons promoted ${ss.lessonsPromoted ?? 0}` : ""}${ss.goalsChecked ? `, goals checked ${ss.goalsChecked} (${ss.goalsDrifting ?? 0} drifting)` : ""}${ss.legacyNoiseFlagged ? ` (${ss.legacyNoiseFlagged} look like legacy heartbeat/NO_REPLY noise — review, then retire with xanima-server noise)` : ""}` : ""}`);
-  if (s.decisions.total) L.push(`  decisions: ${s.decisions.total} (${s.decisions.pending} awaiting outcome, ${s.decisions.resolved} resolved, ${s.decisions.auto} auto-extracted drafts, ${s.decisions.lessonsPromoted} lessons promoted)`);
+  L.push(`  last sleep: ${s.lastSleep.ago}${ss ? ` — nodes ${ss.nodesBefore}→${ss.nodesAfter}, edges ${ss.edgesBefore}→${ss.edgesAfter}, pruned ${ss.pruned}, new contradictions ${ss.newContradictions}, flagged ${ss.flaggedForReview}${ss.decisionsMerged || ss.decisionsCalibrated || ss.lessonsPromoted ? `, decisions merged ${ss.decisionsMerged ?? 0} / calibrated ${ss.decisionsCalibrated ?? 0} / lessons promoted ${ss.lessonsPromoted ?? 0}` : ""}${ss.lessonsMerged ? `, lessons merged into existing skills ${ss.lessonsMerged}` : ""}${ss.draftsExpired ? `, decision drafts expired ${ss.draftsExpired}` : ""}${ss.goalsChecked ? `, goals checked ${ss.goalsChecked} (${ss.goalsDrifting ?? 0} drifting)` : ""}${ss.legacyNoiseFlagged ? ` (${ss.legacyNoiseFlagged} look like legacy heartbeat/NO_REPLY noise — review, then retire with xanima-server noise)` : ""}` : ""}`);
+  if (s.decisions.total || s.decisions.draftsExpired) L.push(`  decisions: ${s.decisions.total} (${s.decisions.pending} awaiting outcome, ${s.decisions.resolved} resolved, ${s.decisions.lessonsPromoted} lessons promoted${s.decisions.lessonsMerged ? `, ${s.decisions.lessonsMerged} merged into existing skills` : ""})`);
+  if (s.decisions.draftsPending || s.decisions.draftsExpired) L.push(`  decision drafts: ${s.decisions.draftsPending} pending (auto-extracted, unconfirmed), ${s.decisions.draftsExpired} expired`);
   if (s.goals.active || s.goals.paused || s.goals.done) L.push(`  goals: ${s.goals.active} active (${s.goals.tracked} drift-checked), ${s.goals.paused} paused, ${s.goals.done} done`);
   for (const d of s.goals.drifting.slice(0, 3)) L.push(`    DRIFT ${d.id.slice(0, 8)}: ${d.reason}`);
-  if (s.goals.pendingNote) L.push(`  alignment note queued for next turn: ${s.goals.pendingNote}`);
+  if (s.goals.pendingNote) L.push(`  alignment note pending (${s.goals.pendingNoteOffers ? `offered ${s.goals.pendingNoteOffers}×, ` : ""}not yet delivered — consumed by the next real reply): ${s.goals.pendingNote}`);
   if (s.hotConflicts.length) {
     L.push(`  hot conflicts:`);
     for (const c of s.hotConflicts) L.push(`    [${c.a.id.slice(0, 8)}] ${c.a.label}  ⟂  [${c.b.id.slice(0, 8)}] ${c.b.label}  (${relativeTime(c.since)})`);

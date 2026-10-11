@@ -214,6 +214,10 @@ export interface BrainConfig {
   goalTriggers?: boolean;
   /** Token cap for the injected alignment note + goal trigger lines. Default 60 (~240 chars). */
   alignmentNoteMaxTokens?: number;
+  /** Days before an unconfirmed, unlinked, outcome-less auto-extracted decision draft expires (soft-retired by sleep). Default 14. */
+  decisionDraftTtlDays?: number;
+  /** Cosine similarity at/above which a new lesson merges into an existing skill (embedding path). Default 0.86. */
+  lessonMergeSimilarity?: number;
 }
 
 export const DEFAULT_CONFIG: BrainConfig = {
@@ -251,4 +255,6 @@ export const DEFAULT_CONFIG: BrainConfig = {
   driftDays: 7,
   goalTriggers: true,
   alignmentNoteMaxTokens: 60,
+  decisionDraftTtlDays: 14,
+  lessonMergeSimilarity: 0.86,
 };

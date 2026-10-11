@@ -394,8 +394,8 @@ function initSchema(db: Database.Database): void {
   }
 }
 
-/** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals). */
-export const SCHEMA_VERSION = 20;
+/** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
+export const SCHEMA_VERSION = 21;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -534,6 +534,37 @@ export function migrateV20(db: Database.Database): void {
     const ev = db.prepare(`INSERT INTO goal_events (lineage_id, version, node_id, at, action, reason) VALUES (?, 1, ?, ?, 'backfill', 'existing goal node (pre-0.2.0), not drift-checked until tracked')`);
     db.transaction(() => { for (const r of rows) { ins.run(r.id, r.id, r.label, r.created_at ?? now, now); ev.run(r.id, r.id, now); } })();
   } catch { /* nodes table missing on a degenerate DB */ }
+}
+
+/**
+ * v21 (Xanima 0.2.0 hardening, additive):
+ *   decisions.draft_status ('pending' | 'confirmed' | 'expired' for auto-extracted drafts, NULL otherwise), confirmed_at, expired_at
+ *   alignment_notes.offered_at / offered_count (offered ≠ delivered; delivered only on a real reply)
+ *   lesson_merges: history of lessons merged into an existing skill instead of a new one
+ */
+export function migrateV21(db: Database.Database): void {
+  const add = (t: string, c: string) => { try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* already exists */ } };
+  add("decisions", "draft_status TEXT");
+  add("decisions", "confirmed_at INTEGER");
+  add("decisions", "expired_at INTEGER");
+  add("alignment_notes", "offered_at INTEGER");
+  add("alignment_notes", "offered_count INTEGER NOT NULL DEFAULT 0");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lesson_merges (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      skill_id      TEXT NOT NULL,
+      decision_id   TEXT NOT NULL,
+      lesson        TEXT NOT NULL,
+      similarity    REAL NOT NULL,
+      method        TEXT NOT NULL,
+      confidence_before REAL,
+      confidence_after  REAL,
+      at            INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS lesson_merges_skill ON lesson_merges(skill_id);
+  `);
+  try { db.exec("UPDATE decisions SET draft_status = 'pending' WHERE auto_extracted = 1 AND draft_status IS NULL AND outcome_at IS NULL"); } catch { /* ok */ }
+  try { db.exec("UPDATE alignment_notes SET offered_count = 1, offered_at = delivered_at WHERE delivered_at IS NOT NULL AND offered_count = 0"); } catch { /* ok */ }
 }
 
 function runMigrations(db: Database.Database): void {
@@ -815,6 +846,10 @@ function runMigrations(db: Database.Database): void {
 
   if (current < 20) {
     migrateV20(db);
+  }
+
+  if (current < 21) {
+    migrateV21(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers
