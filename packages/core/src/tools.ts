@@ -111,7 +111,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
       type: "object",
       properties: {
         query: { type: "string", description: "Natural language search query" },
-        type:  { type: "string", description: "Filter by node type: identity|semantic|episodic|pattern|skill|goal|emotion|procedural|schema" },
+        type:  { type: "string", description: "Filter by node type: identity|semantic|episodic|pattern|skill|goal|emotion|procedural|schema|decision|reflection|hypothesis|question|assumption|commitment|plan" },
         limit: { type: "number", description: "Max results to return (default 10)" },
         as_of: { type: ["string", "number"], description: "Time travel: what did I believe at this time? ISO date/time (\"2026-10-01\", \"2026-10-01T14:00:00Z\"), \"yesterday\", \"3 days ago\", or epoch milliseconds. Includes beliefs later retracted or superseded (marked as such)." },
       },

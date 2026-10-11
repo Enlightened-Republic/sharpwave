@@ -363,3 +363,40 @@ describe("6. tool surface", () => {
     expect(r.text).toMatch(/Nothing to reflect on/);
   });
 });
+
+describe("v0.3.0 sandbox findings", () => {
+  it("brain_query can filter by the structured types (reflection, hypothesis, plan…)", async () => {
+    const { validateBrainQuery } = await import("../src/validation.js");
+    for (const t of ["reflection", "hypothesis", "question", "assumption", "commitment", "plan", "decision"]) expect(validateBrainQuery({ query: "x", type: t }).ok).toBe(true);
+    expect(JSON.stringify(validateBrainQuery({ query: "x", type: "bogus" }))).toMatch(/type must be one of/);
+  });
+
+  it("plan resume keeps the decision made while parked even when topic-matched node churn is newer", () => {
+    const a = fresh(); const now = Date.now();
+    const g = setGoal(a, { title: "Launch the newsletter", priority: 1, now: now - 10 * DAY }).goal!;
+    const p = createPlan(a, { title: "Newsletter issue 2", goalId: g.lineage_id, steps: ["draft", "send"], now: now - 5 * DAY }).plan!;
+    recordDecision(a, { context: "Send slot for newsletter issue 2", chosen: "Tuesday 9am", goalId: g.lineage_id, now: now - 2 * DAY });
+    for (let i = 0; i < 20; i++) writeNode(a, "semantic", `Newsletter issue note ${i}`, `newsletter issue detail number ${i}`, { deduplicate: false });
+    const ch = changesSince(a, { planId: p.node_id, since: now - 4 * DAY, until: now + 1000 }, 12);
+    expect(ch.changes.length).toBeLessThanOrEqual(12);
+    expect(ch.changes.some((c) => c.kind === "decision" && /Tuesday 9am/.test(c.text))).toBe(true);
+    expect(ch.changes.some((c) => c.kind.startsWith("updated "))).toBe(false);
+  });
+
+  it("a captured question that has surfaced counts as hot in brain_status", () => {
+    const a = fresh(); const now = Date.now();
+    autoExtractOpenItems(a, "Open question: does Gmail clip newsletters over 102KB?", cfg, { now });
+    expect(formatBrainStatus(computeBrainStatus(getDb(a), cfg))).not.toMatch(/HOT QUESTION/);
+    expect(surfaceOpenItem(a, "will Gmail clip the newsletter at 120KB?", cfg, now + 1000)?.line).toMatch(/Open question/);
+    expect(formatBrainStatus(computeBrainStatus(getDb(a), cfg))).toMatch(/HOT QUESTION [0-9a-f]{8}: does Gmail clip newsletters/);
+  });
+
+  it("a repeated failure still counts after sleep merged the near-duplicate decisions", () => {
+    const a = fresh(); const now = Date.now();
+    const { bad1, bad2 } = decided(a, now);
+    getDb(a).prepare("UPDATE decisions SET merged_into = ? WHERE node_id = ?").run(bad1, bad2);
+    const d = draftReflection(a, { now }, cfg);
+    expect("error" in d).toBe(false);
+    expect(JSON.stringify(d)).toMatch(/repeated failure \(2×\): free tier dyno/);
+  });
+});

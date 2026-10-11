@@ -1,5 +1,19 @@
 # Xanima (formerly Sharpwave)
 
+> **0.3.0 (pre-release, not published): reflection, replay, open items, commitments + plans, meta-tools.**
+> Twelve new tools: `brain_reflect` (on-demand, stored), `brain_replay`,
+> `brain_hypothesis`, `brain_question`, `brain_list_open`, `brain_commit`,
+> `brain_commitments`, `brain_plan` (park / resume with a briefing),
+> `brain_changes`, `brain_conflicts`, `brain_briefing`, `brain_forget_impact`
+> (read-only). Optional sleep reflection ("what worked / didn't / try next").
+> "I think … because …", "open question: …" and "I'm assuming …" in the
+> agent's replies become drafts that expire. A relevant open question or an
+> overdue commitment can add one line to `[BRAIN: goals]`. Schema v22 adds
+> tables only. Flags: `reflection` (`off`|`sleep`), `reflectionLlm`,
+> `reflectionWindowDays`, `openItemCapture`, `openItemDraftTtlDays`,
+> `openItemSurfacing`, `commitmentNudges`, `replayMaxChars`, `metaToolMaxChars`.
+> No LLM needed. See CHANGELOG.md.
+>
 > **0.2.0 (pre-release, not published): decision ledger + goals / drift.**
 > Six new tools: `brain_record_decision`, `brain_update_decision_outcome`,
 > `brain_query_decisions`, `brain_set_goal`, `brain_update_goal`,

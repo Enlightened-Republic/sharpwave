@@ -25,7 +25,7 @@ function topicIds(agentId: string, topic: string, limit = 60): Set<string> {
   try { return new Set(ftsSearchNodes(agentId, topic, limit).map((n) => n.id)); } catch { return new Set(); }
 }
 
-interface Scope { kind: "goal" | "plan" | "topic"; label: string; ids: Set<string>; goalLineage?: string; planId?: string; topic?: string }
+interface Scope { kind: "goal" | "plan" | "topic"; label: string; ids: Set<string>; /** directly linked ids (plan scope); topic-matched extras only report new / retired, not "updated" */ core?: Set<string>; goalLineage?: string; planId?: string; topic?: string }
 
 function resolveScope(agentId: string, args: { goalId?: string; planId?: string; topic?: string }): Scope | { error: string } {
   const db = getDb(agentId);
@@ -34,9 +34,10 @@ function resolveScope(agentId: string, args: { goalId?: string; planId?: string;
     if (!p) return { error: `plan ${args.planId} not found` };
     const ids = new Set<string>([p.node_id]);
     for (const r of db.prepare("SELECT from_id id FROM edges WHERE to_id = ? AND type IN ('about', 'advances', 'blocked_by') UNION SELECT to_id FROM edges WHERE from_id = ? AND type IN ('about', 'advances', 'blocked_by')").all(p.node_id, p.node_id) as Array<{ id: string }>) ids.add(r.id);
+    const core = new Set(ids);
     const kw = safeJsonArr(p.keywords_json).slice(0, 4).join(" ");
     if (kw) for (const id of topicIds(agentId, kw, 30)) ids.add(id);
-    return { kind: "plan", label: `plan "${p.title}"`, ids, planId: p.node_id, ...(p.goal_id ? { goalLineage: p.goal_id } : {}) };
+    return { kind: "plan", label: `plan "${p.title}"`, ids, core, planId: p.node_id, ...(p.goal_id ? { goalLineage: p.goal_id } : {}) };
   }
   if (args.goalId) {
     const g = currentGoalRow(agentId, args.goalId);
@@ -131,7 +132,7 @@ export function changesSince(agentId: string, args: { goalId?: string; planId?: 
       for (const n of rows) {
         if (inWin(n.created_at)) out.push({ at: n.created_at, kind: `new ${n.type}`, text: short(n.label, 90) });
         else if (n.status !== "active" && inWin(n.status_changed_at)) out.push({ at: n.status_changed_at!, kind: n.status, text: `${short(n.label, 70)}${n.status_reason ? ` — ${short(n.status_reason, 60)}` : ""}` });
-        else if (inWin(n.updated_at) && n.updated_at - n.created_at > 60_000 && !["episodic"].includes(n.type)) out.push({ at: n.updated_at, kind: `updated ${n.type}`, text: short(n.label, 90) });
+        else if ((!sc.core || sc.core.has(n.id)) && inWin(n.updated_at) && n.updated_at - n.created_at > 60_000 && !["episodic"].includes(n.type)) out.push({ at: n.updated_at, kind: `updated ${n.type}`, text: short(n.label, 90) });
       }
     }
   }
@@ -151,7 +152,11 @@ export function changesSince(agentId: string, args: { goalId?: string; planId?: 
   // dedupe identical lines, newest first
   const seen = new Set<string>();
   const res = out.sort((a, b) => b.at - a.at).filter((c) => { const k = `${c.kind}|${c.text}`; if (seen.has(k)) return false; seen.add(k); return true; });
-  return { scope: sc, changes: res.slice(0, limit) };
+  // over the limit: keep structured changes (decisions, outcomes, goal events, steps, open items, commitments) before node churn
+  if (res.length <= limit) return { scope: sc, changes: res };
+  const rank = (c: Change) => (/^updated /.test(c.kind) || /^new (semantic|episodic|skill|pattern|schema|identity|emotion|procedural)$/.test(c.kind) ? 1 : 0);
+  const keep = new Set([...res].sort((a, b) => rank(a) - rank(b) || b.at - a.at).slice(0, limit));
+  return { scope: sc, changes: res.filter((c) => keep.has(c)) };
 }
 
 export function formatChanges(scopeLabel: string, changes: Change[], since: number, config: Partial<BrainConfig>, now = Date.now()): string {

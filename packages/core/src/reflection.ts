@@ -66,6 +66,7 @@ export function draftReflection(agentId: string, input: ReflectInput, config: Pa
   const decs = (db.prepare(`SELECT d.* FROM decisions d JOIN nodes n ON n.id = d.node_id WHERE d.merged_into IS NULL AND n.status = 'active' AND d.outcome_at BETWEEN ? AND ? ORDER BY d.outcome_at`).all(since, until) as Dec[])
     .filter((d) => inScope(`${d.context} ${d.chosen} ${d.outcome ?? ""}`, d));
   const misses: Dec[] = [];
+  const mergedMisses = (id: string): number => (db.prepare("SELECT COUNT(*) n FROM decisions WHERE merged_into = ? AND outcome_status IN ('missed', 'worse')").get(id) as { n: number }).n;
   for (const d of decs) {
     sources.push(d.node_id);
     const what = `${short(d.chosen, 50)} for ${short(d.context, 60)}`;
@@ -84,7 +85,9 @@ export function draftReflection(agentId: string, input: ReflectInput, config: Pa
   for (const a of misses) {
     if (used.has(a.node_id)) continue;
     const group = misses.filter((b) => b === a || jaccard(tokenSet(`${a.context} ${a.chosen}`), tokenSet(`${b.context} ${b.chosen}`)) >= 0.4);
-    if (group.length >= 2) { group.forEach((g) => used.add(g.node_id)); didnt.unshift(`repeated failure (${group.length}×): ${short(a.chosen, 50)} for ${short(a.context, 60)}`); next.unshift(`change approach for ${short(a.context, 70)} — the same choice failed ${group.length} times`); }
+    // sleep may already have merged near-duplicate decisions: their misses still count as repeats
+    const times = group.reduce((n, g) => n + 1 + mergedMisses(g.node_id), 0);
+    if (times >= 2) { group.forEach((g) => used.add(g.node_id)); didnt.unshift(`repeated failure (${times}×): ${short(a.chosen, 50)} for ${short(a.context, 60)}`); next.unshift(`change approach for ${short(a.context, 70)} — the same choice failed ${times} times`); }
   }
   // hypotheses / assumptions resolved in the window
   for (const o of db.prepare("SELECT node_id, kind, text, status, load_bearing, contradicted_at FROM open_items WHERE updated_at BETWEEN ? AND ? AND status IN ('supported', 'refuted') OR (contradicted_at BETWEEN ? AND ?)").all(since, until, since, until) as Array<{ node_id: string; kind: string; text: string; status: string; load_bearing: number; contradicted_at: number | null }>) {

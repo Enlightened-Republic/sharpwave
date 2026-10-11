@@ -313,7 +313,7 @@ export function openItemCounts(db: ReturnType<typeof getDb>): {
     const act = "o.status IN ('open', 'supported') AND COALESCE(o.draft_status, '') != 'expired' AND n.status = 'active'";
     const c = db.prepare(`SELECT SUM(o.kind='hypothesis') h, SUM(o.kind='question') q, SUM(o.kind='assumption') a, SUM(o.draft_status='pending') d FROM open_items o JOIN nodes n ON n.id = o.node_id WHERE ${act}`).get() as Record<string, number | null>;
     const x = (db.prepare("SELECT COUNT(*) n FROM open_items WHERE draft_status = 'expired'").get() as { n: number }).n;
-    const hot = db.prepare(`SELECT o.node_id id, o.text FROM open_items o JOIN nodes n ON n.id = o.node_id WHERE ${act} AND o.kind = 'question' AND COALESCE(o.draft_status, '') != 'pending'
+    const hot = db.prepare(`SELECT o.node_id id, o.text FROM open_items o JOIN nodes n ON n.id = o.node_id WHERE ${act} AND o.kind = 'question' AND (COALESCE(o.draft_status, '') != 'pending' OR o.surfaced_count > 0)
                               ORDER BY COALESCE(o.last_surfaced_at, 0) + o.surfaced_count * 3600000 DESC, o.updated_at DESC LIMIT 2`).all() as Array<{ id: string; text: string }>;
     const contra = db.prepare(`SELECT o.node_id id, o.text, o.contradicted_at since FROM open_items o JOIN nodes n ON n.id = o.node_id
                                  WHERE o.kind = 'assumption' AND o.load_bearing = 1 AND o.contradicted_at IS NOT NULL AND o.status != 'closed' AND n.status = 'active' ORDER BY o.contradicted_at DESC LIMIT 3`).all() as Array<{ id: string; text: string; since: number }>;
