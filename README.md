@@ -180,12 +180,18 @@ Memory lands in `~/.sharpwave/` as a SQLite database. Nothing leaves your machin
 | `brain_stats` | Return brain statistics: node/edge/episode counts, neuromodulator state, consolidation status, embedding coverage, observability counters. |
 | `brain_history` | Search episode history (raw conversation turns) by keyword. |
 | `brain_expand` | Get full detail for a specific node: content, FSRS metrics, encoding context, and source episodes. |
-| `brain_review` | Apply an FSRS-6 spaced-repetition review to a node. Updates stability, retrievability, and SIGMA calibration. |
+| `brain_review` | Apply an FSRS-6 spaced-repetition review to a node (`node_id` + `quality`). With `action` (0.4.0): the pending-review queue for soul imports and merge conflicts (`list` / `show`; `accept` / `reject` need an admin). |
 | `brain_forget` | Physically delete a node from the brain. Refuses to delete nodes with active edges unless `force=true`. |
 | `brain_edges` | Get all active incoming and outgoing edges for a node. |
 | `brain_reset` | Wipe an agent's brain back to empty (a `.db` backup is taken first). `confirm` must equal the agent id. |
 
+| `brain_export_soul` | (0.4.0) Export your own Soul Package (`xanima-soul/1`): identity, values, goals, skills, lessons, key facts with provenance and a sha256 hash. Compact JSON or a summary. |
+
 In multi-agent mode every tool above also takes a required `agent` argument.
+
+### Soul Packages (0.4.0)
+
+Carry an agent's identity, goals, skills, lessons and key facts to a fresh brain on another machine or runtime, or fork it and merge the changes back with a three-way merge. Identity, values and goal changes from imports always wait in a review queue; nothing is overwritten. CLI: `xanima-server soul export | fork | import | diff | merge | review | validate | keygen`. Library: `exportSoul`, `importSoul`, `mergeSoul`, `validateSoul` from `xanima-core`. Format: [`packages/core/schema/xanima-soul-1.schema.json`](packages/core/schema/xanima-soul-1.schema.json). Guide: [docs/portability.md](docs/portability.md).
 
 ## Memory types
 

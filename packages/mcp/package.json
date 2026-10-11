@@ -1,6 +1,6 @@
 {
   "name": "xanima",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Xanima: a portable agent continuity layer. An MCP server that remembers across sessions, tracks what it believes and how sure it is, forgets what stops mattering, and consolidates the rest. Works with OpenClaw, Claude Code, Cursor, and any MCP client.",
   "type": "module",
   "main": "dist/index.js",
@@ -63,6 +63,6 @@
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0",
-    "xanima-core": "0.3.0"
+    "xanima-core": "0.4.0"
   }
 }
