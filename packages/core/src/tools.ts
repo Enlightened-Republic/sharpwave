@@ -112,7 +112,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
         query: { type: "string", description: "Natural language search query" },
         type:  { type: "string", description: "Filter by node type: identity|semantic|episodic|pattern|skill|goal|emotion|procedural|schema" },
         limit: { type: "number", description: "Max results to return (default 10)" },
-        as_of: { type: "string", description: "Time travel: what did I believe at this time? ISO date/time, epoch ms, or e.g. \"3 days ago\". Includes beliefs later retracted or superseded (marked as such)." },
+        as_of: { type: "string", description: "Time travel: what did I believe at this time? A string: ISO date/time (\"2026-10-01\", \"2026-10-01T14:00:00Z\"), \"yesterday\", or \"3 days ago\" (epoch ms also works if quoted). Includes beliefs later retracted or superseded (marked as such)." },
       },
       required: ["query"],
     },
