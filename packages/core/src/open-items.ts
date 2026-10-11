@@ -278,19 +278,23 @@ export function expireOpenItemDrafts(agentId: string, config: Partial<BrainConfi
   return rows.map((r) => r.node_id);
 }
 
+/** Question / auxiliary words that say nothing about what an item is about. */
+const FILLER = new Set("do does did doing done have has had having want wants should would could will can may might must is are was were be been being which what how why when where who whom whose there their they them this that these those about into from with does not".split(" "));
+
 /** One relevant open question / hypothesis / assumption for this turn (keyword match, 6 h cooldown each). */
 export function surfaceOpenItem(agentId: string, prompt: string, config: Partial<BrainConfig>, now = Date.now()): { id: string; line: string } | null {
   if (config.openItemSurfacing === false || !prompt.trim()) return null;
   const db = getDb(agentId);
-  const pt = tokenSet(prompt);
+  const stem = (w: string) => w.replace(/(?:ies)$/, "y").replace(/(?:es|s)$/, "");
+  const pt = new Set([...tokenSet(prompt)].map(stem));
   if (pt.size === 0) return null;
   const rows = db.prepare(`SELECT o.* FROM open_items o JOIN nodes n ON n.id = o.node_id WHERE o.status IN ('open', 'supported') AND COALESCE(o.draft_status, '') != 'expired' AND n.status = 'active'
                              AND (o.last_surfaced_at IS NULL OR o.last_surfaced_at < ?) ORDER BY o.load_bearing DESC, o.updated_at DESC LIMIT 300`).all(now - 6 * HOUR) as OpenItemRow[];
   let best: { r: OpenItemRow; s: number } | null = null;
   for (const r of rows) {
-    const kws = safeJsonArr(r.keywords_json);
-    const s = kws.filter((k) => pt.has(k)).length;
-    const need = kws.length <= 2 ? 1 : 2;
+    const kws = safeJsonArr(r.keywords_json).filter((k) => !FILLER.has(k));
+    const s = kws.filter((k) => pt.has(stem(k))).length;
+    const need = kws.length <= 1 ? 1 : 2; // one shared word (e.g. a name) is not "about" the item
     if (s >= need && (!best || s > best.s)) best = { r, s };
   }
   if (!best) return null;

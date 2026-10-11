@@ -182,6 +182,7 @@ describe("3. hypotheses, questions, assumptions", () => {
     const q = await dispatchBrainTool("brain_question", a, { action: "ask", question: "Which Telegram rate limit applies to group chats?" }, cfg);
     const id = /question ([0-9a-f-]{36})/.exec(q.text)![1]!;
     expect(buildGoalTurnContext(a, "what's for lunch", cfg, now).text).toBe("");
+    expect(buildGoalTurnContext(a, "what do you remember about Telegram?", cfg, now).text).toBe(""); // one shared word is not "about" it
     const t = buildGoalTurnContext(a, "Let's add the bot to the group chats today", cfg, now + 1);
     expect(t.text).toMatch(/Open question \(asked .*\): Which Telegram rate limit applies to group chats/);
     expect(t.openItemId).toBe(id);
