@@ -55,7 +55,7 @@ function seedSoul(a: string) {
 describe("format + export", () => {
   it("schema v23 adds the review / soul tables additively", () => {
     const a = fresh(); const db = getDb(a);
-    expect(SCHEMA_VERSION).toBe(23);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(23);
     for (const t of ["review_items", "soul_id_map", "soul_provenance", "soul_events"]) expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name = ?").get(t)).toBeTruthy();
   });
 
