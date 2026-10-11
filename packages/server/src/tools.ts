@@ -530,7 +530,15 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         const q = typeof args["query"] === "string" ? args["query"].slice(0, 4000) : "";
         const r = await ctx.brains.write(brain, () => buildGoalTurnContext(brain, q, cfg));
         if (r.noteIds.length || r.triggered.length || r.openItemId) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `notes=${r.noteIds.join(",") || "-"} open=${r.openItemId ?? "-"} triggers=${r.triggered.map((t) => t.trigger_id).join(",") || "-"}` });
-        return ok(JSON.stringify(r));
+        // Xanima 0.4.0: the remote host may show the brain's own identity (and top goals) the way local mode's
+        // never-compacted header does — this is how a soul loaded into a fresh brain reaches the agent's turns.
+        const sm = await ctx.brains.write(brain, () => {
+          const db = getDb(brain);
+          const identity = ((db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "").trim();
+          const goals = (db.prepare("SELECT title FROM goals WHERE status = 'active' ORDER BY priority ASC, created_at DESC LIMIT 3").all() as Array<{ title: string }>).map((g) => g.title);
+          return { identity: identity.slice(0, 400), goals };
+        });
+        return ok(JSON.stringify({ ...r, ...(sm.identity ? { identity: sm.identity } : {}), ...(sm.goals.length ? { activeGoals: sm.goals } : {}) }));
       }
       const { visibility: _v, writer_agent_id: _w, agent: _a, ...rest } = args;
       // Reads go through the serialized write connection too: core opens the brain by name (getDb).

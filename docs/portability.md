@@ -127,3 +127,11 @@ the normal supersede path (history kept); rejecting changes nothing.
 | `soulImportConfidence` | `0.5` | confidence cap for imported memories |
 | `soulMergeApplyTheirs` | `true` | apply theirs-only changes to skills / facts / lessons on merge |
 | `soulPackageOnExport` | `false` | `xanima-server backup now` also writes a compact package per private brain into `<backups>/<brain>/soul-packages/` (read from the snapshot, rotated with `backup.keep`) |
+
+## Seeing the soul in a remote agent's turns
+
+In remote mode the OpenClaw plugin does not inject local mode's full self-model header. From 0.4.0,
+`brain_turn_context` also returns the brain's identity (up to 400 chars) and its top 3 active goals, and the
+plugin's `soulHeader` setting decides what's shown: `"identity"` (default, adds `[BRAIN: identity] …` only
+when identity is non-empty and MEMORY.md / USER.md doesn't own identity), `"identity+goals"` (also
+`[BRAIN: active goals] a · b · c`), or `"off"`. Decision lessons arrive through normal recall.

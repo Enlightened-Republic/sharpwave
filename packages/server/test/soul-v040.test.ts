@@ -59,6 +59,10 @@ describe("soul tools on the service", () => {
       expect((await tool(h.url, c, "brain_review", { action: "accept", id })).text).toMatch(/needs the admin scope/);
       expect((await tool(h.url, cAdmin, "brain_review", { action: "accept", id })).text).toMatch(/^accepted/);
       expect((await tool(h.url, c, "brain_list_goals", {})).text).toMatch(/Launch the newsletter/);
+      // the accepted goal reaches the remote turn header (soulHeader); no identity yet → no identity field
+      const tc = JSON.parse((await tool(h.url, c, "brain_turn_context", { query: "hi" })).text);
+      expect(tc.activeGoals).toEqual(["Launch the newsletter"]);
+      expect(tc.identity).toBeUndefined();
       // the FSRS form of brain_review still works
       const w = await tool(h.url, a, "brain_write", { type: "semantic", label: "x", content: "something to review" });
       const nid = /node ([0-9a-f-]{36})/.exec(w.text)![1]!;
