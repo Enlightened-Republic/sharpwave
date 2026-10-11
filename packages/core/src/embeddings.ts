@@ -1,3 +1,4 @@
+import { envGet } from "./env.js";
 import { getDb } from "./db.js";
 import { edgeExists, writeEdge } from "./edges.js";
 import { updatePsHash } from "./nodes.js";
@@ -28,7 +29,7 @@ const MAX_EMBED_QUEUE = 200;
 const EMBEDDING_CACHE_DEFAULT_MAX = 1024;
 const embeddingCache: Map<string, Float32Array> = new Map();
 const embeddingCacheMax: number = (() => {
-  const raw = process.env["SHARPWAVE_EMBEDDING_CACHE_MAXSIZE"];
+  const raw = envGet("EMBEDDING_CACHE_MAXSIZE");
   const n = raw ? parseInt(raw, 10) : EMBEDDING_CACHE_DEFAULT_MAX;
   return Number.isFinite(n) && n > 0 ? n : EMBEDDING_CACHE_DEFAULT_MAX;
 })();
@@ -962,5 +963,5 @@ function structured(fields: StructuredFields): string {
   for (const [k, v] of Object.entries(fields)) {
     if (v !== undefined) filtered[k] = v;
   }
-  return `[sharpwave] ${JSON.stringify(filtered)}`;
+  return `[xanima] ${JSON.stringify(filtered)}`;
 }

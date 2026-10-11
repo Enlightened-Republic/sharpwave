@@ -191,7 +191,7 @@ export async function subconsciousTick(
     await new Promise<void>((r) => setImmediate(r));
     decayEligibilityTraces(agentId);
   } catch (err) {
-    log.warn(`[sharpwave] subconsciousTick error (agent=${agentId}): ${String(err)}`);
+    log.warn(`[xanima] subconsciousTick error (agent=${agentId}): ${String(err)}`);
   }
 }
 
@@ -205,7 +205,7 @@ export async function runConsolidation(
   const lastRaw = getMeta(agentId, "last_consolidation");
   const sinceMs = lastRaw ? parseInt(lastRaw, 10) : Date.now() - 86400000 * 7;
 
-  log.info(`[sharpwave] consolidation start (agent=${agentId})`);
+  log.info(`[xanima] consolidation start (agent=${agentId})`);
 
   // Phase 1: SWS — extract nodes from episodes (only those LLM hasn't seen)
   // SWS query filter `llm_extracted = 0` lives inside runSwsPhase so that
@@ -242,7 +242,7 @@ export async function runConsolidation(
   setMeta(agentId, "last_consolidation_episode_count", String(getEpisodeCount(agentId)));
   setLastConsolidationAt(new Date().toISOString());
   logObservabilityEvent("consolidate", { agentId });
-  log.info(`[sharpwave] consolidation complete (agent=${agentId})`);
+  log.info(`[xanima] consolidation complete (agent=${agentId})`);
 }
 
 // ── RecMem recurrence gate ──────────────────────────────────────────────────
@@ -391,7 +391,7 @@ async function runSwsPhase(agentId: string, episodes: Episode[], log: Logger): P
       AND NOT EXISTS (SELECT 1 FROM meta_kv m WHERE m.key = '${RETIRED_NODE_META_PREFIX}' || nodes.id)
   `).run(now, now - 86_400_000);
   if (downscaled.changes > 0) {
-    log.info(`[sharpwave] SWS downscale: -5% stability/retrievability on ${downscaled.changes} non-protected node(s)`);
+    log.info(`[xanima] SWS downscale: -5% stability/retrievability on ${downscaled.changes} non-protected node(s)`);
   }
 
   const bumpRipple = db.prepare("UPDATE episodes SET ripple_count = ripple_count + 1 WHERE id = ?");
@@ -443,13 +443,13 @@ async function runSwsPhase(agentId: string, episodes: Episode[], log: Logger): P
       }
       lastNodePerSession.set(ep.session_id, nodes[nodes.length - 1]);
 
-      log.info(`[sharpwave] SWS: ${nodes.length} node(s) from episode ${ep.id.slice(0, 8)}`);
+      log.info(`[xanima] SWS: ${nodes.length} node(s) from episode ${ep.id.slice(0, 8)}`);
     }
     // Yield after every episode — FTS search per sentence blocks event loop
     await new Promise<void>((r) => setImmediate(r));
   }
 
-  if (noiseSkipped > 0) log.info(`[sharpwave] SWS: skipped ${noiseSkipped} system-noise episode(s) (heartbeat/exec/cron wakes, NO_REPLY/HEARTBEAT_OK)`);
+  if (noiseSkipped > 0) log.info(`[xanima] SWS: skipped ${noiseSkipped} system-noise episode(s) (heartbeat/exec/cron wakes, NO_REPLY/HEARTBEAT_OK)`);
 
   // T1.3 — flip llm_extracted = 1 on every episode this pass consumed so
   // subsequent SWS passes (and any future drain) skip them.
@@ -458,7 +458,7 @@ async function runSwsPhase(agentId: string, episodes: Episode[], log: Logger): P
     db.transaction(() => {
       for (const id of consumedEpisodeIds) markExtracted.run(id);
     })();
-    log.info(`[sharpwave] SWS: marked ${consumedEpisodeIds.length} episode(s) as llm_extracted`);
+    log.info(`[xanima] SWS: marked ${consumedEpisodeIds.length} episode(s) as llm_extracted`);
   }
 
   // T4.4 — CLS two-store promotion. Run after extraction so newly written
@@ -477,7 +477,7 @@ async function runSwsPhase(agentId: string, episodes: Episode[], log: Logger): P
       AND retrievability >= 0.7
   `).run(Date.now(), Date.now());
   if (promotion.changes > 0) {
-    log.info(`[sharpwave] SWS: promoted ${promotion.changes} node(s) to consolidated (CLS cortical store)`);
+    log.info(`[xanima] SWS: promoted ${promotion.changes} node(s) to consolidated (CLS cortical store)`);
   }
 }
 
@@ -683,12 +683,12 @@ async function runClusterSchemaPhase(agentId: string, log: Logger): Promise<void
     })();
 
     written++;
-    log.info(`[sharpwave] NEXUS: schema node "${schemaLabel}" (${members.length} members)`);
+    log.info(`[xanima] NEXUS: schema node "${schemaLabel}" (${members.length} members)`);
     await new Promise<void>((r) => setImmediate(r));
   }
 
   if (written > 0) {
-    log.info(`[sharpwave] NEXUS: ${written} cluster schema node(s) written`);
+    log.info(`[xanima] NEXUS: ${written} cluster schema node(s) written`);
   }
 }
 
@@ -740,7 +740,7 @@ async function runReconsolidationPhase(agentId: string, sinceMs: number, log: Lo
     if (i % 5 === 4) await new Promise<void>((r) => setImmediate(r));
   }
 
-  log.info(`[sharpwave] reconsolidation: updated ${recentlyAccessed.length} recently-accessed nodes`);
+  log.info(`[xanima] reconsolidation: updated ${recentlyAccessed.length} recently-accessed nodes`);
 }
 
 async function runRemPhase(agentId: string, config: BrainConfig, log: Logger): Promise<void> {
@@ -757,10 +757,10 @@ async function runRemPhase(agentId: string, config: BrainConfig, log: Logger): P
       const generated = await runGenerativeRem(agentId, config, log);
       usedGenerative = generated > 0;
       if (generated > 0) {
-        log.info(`[sharpwave] REM (generative): ${generated} schema/pattern node(s) from subagent recombination`);
+        log.info(`[xanima] REM (generative): ${generated} schema/pattern node(s) from subagent recombination`);
       }
     } catch (err) {
-      log.warn(`[sharpwave] REM generative failed: ${String(err)} — falling back to keyword bucketing`);
+      log.warn(`[xanima] REM generative failed: ${String(err)} — falling back to keyword bucketing`);
     }
   }
   if (!usedGenerative) {
@@ -781,21 +781,21 @@ async function runRemPhase(agentId: string, config: BrainConfig, log: Logger): P
   } else {
     // Graceful degrade: keep v3 regex+Jaccard behavior when no subagent runner
     // is wired (isolated unit tests, ingestion-only deployments, etc.).
-    log.warn(`[sharpwave] REM: subagentRunner unavailable, falling back to regex+Jaccard contradiction detection for agent=${agentId}`);
+    log.warn(`[xanima] REM: subagentRunner unavailable, falling back to regex+Jaccard contradiction detection for agent=${agentId}`);
     await detectContradictionsViaRegex(agentId, semanticNodes, log);
   }
 
   // Entity merge: resolve coreferences
   const merged = mergeCoreferentNodes(agentId, log);
   if (merged > 0) {
-    log.info(`[sharpwave] REM: merged ${merged} coreference(s)`);
+    log.info(`[xanima] REM: merged ${merged} coreference(s)`);
   }
 
   // Skill evolution candidates
   if (config.skillEvolution) {
     const candidates = detectSkillCandidates(agentId, config);
     if (candidates.length > 0) {
-      log.info(`[sharpwave] REM: ${candidates.length} skill candidate(s) ready`);
+      log.info(`[xanima] REM: ${candidates.length} skill candidate(s) ready`);
     }
   }
 
@@ -817,7 +817,7 @@ async function runRemPhase(agentId: string, config: BrainConfig, log: Logger): P
       AND ABS(emotional_weight) > 0.01
   `).run(Date.now(), Date.now() - 7 * 86400000);
   if (affective.changes > 0) {
-    log.info(`[sharpwave] REM: affective decay (-10%) on ${affective.changes} aged node(s)`);
+    log.info(`[xanima] REM: affective decay (-10%) on ${affective.changes} aged node(s)`);
   }
 }
 
@@ -880,7 +880,7 @@ async function runGenerativeRem(agentId: string, config: BrainConfig, log: Logge
         responseText = await callOpenRouter(prompt, model, config.openRouterApiKey);
       }
     } catch (err) {
-      log.warn(`[sharpwave] REM generative cluster ${c} LLM error: ${String(err)}`);
+      log.warn(`[xanima] REM generative cluster ${c} LLM error: ${String(err)}`);
       continue;
     }
 
@@ -1021,7 +1021,7 @@ async function detectContradictionsViaSubagent(
       responseText = await callOpenRouter(prompt, model, config.openRouterApiKey);
     }
   } catch (err) {
-    log.warn(`[sharpwave] REM: contradiction LLM error: ${String(err)} — skipping this tick`);
+    log.warn(`[xanima] REM: contradiction LLM error: ${String(err)} — skipping this tick`);
     return;
   }
 
@@ -1035,7 +1035,7 @@ async function detectContradictionsViaSubagent(
     if (!pair) continue;
     if (!edgeExists(agentId, pair.a.id, pair.b.id, "contradicts")) {
       writeEdge(agentId, pair.a.id, pair.b.id, "contradicts", { weight: 0.8, writerAgentId: SYSTEM_SLEEP_WRITER });
-      log.info(`[sharpwave] REM: contradiction (subagent-confirmed): "${pair.a.label}" vs "${pair.b.label}" — ${c.reason.slice(0, 120)}`);
+      log.info(`[xanima] REM: contradiction (subagent-confirmed): "${pair.a.label}" vs "${pair.b.label}" — ${c.reason.slice(0, 120)}`);
     }
   }
 }
@@ -1108,7 +1108,7 @@ async function detectContradictionsViaRegex(
       if (sim > 0.5 && aNeg !== bNeg) {
         if (!edgeExists(agentId, a.id, b.id, "contradicts")) {
           writeEdge(agentId, a.id, b.id, "contradicts", { weight: 0.7, writerAgentId: SYSTEM_SLEEP_WRITER });
-          log.info(`[sharpwave] REM: contradiction (regex-fallback): "${a.label}" vs "${b.label}"`);
+          log.info(`[xanima] REM: contradiction (regex-fallback): "${a.label}" vs "${b.label}"`);
         }
       }
     }
@@ -1123,7 +1123,7 @@ async function runRemKeywordBuckets(agentId: string, log: Logger): Promise<void>
   // CHANGELOG.md:97 contract: emit a deprecation warning on every fallback run.
   // Keyword-bucket REM is the v3 14-word whitelist; v4 prefers generative
   // recombination via subagent (runGenerativeRem). v5 removes the fallback.
-  log.warn(`[sharpwave] REM keyword-bucket fallback running for agent=${agentId} — DEPRECATED, will be removed in v5; configure remGenerativeEnabled + subagentRunner to use the generative path`);
+  log.warn(`[xanima] REM keyword-bucket fallback running for agent=${agentId} — DEPRECATED, will be removed in v5; configure remGenerativeEnabled + subagentRunner to use the generative path`);
   const db = getDb(agentId);
   const episodicNodes = db.prepare(
     "SELECT * FROM nodes WHERE type = 'episodic' ORDER BY salience DESC LIMIT 100"
@@ -1168,7 +1168,7 @@ async function runRemKeywordBuckets(agentId: string, log: Logger): Promise<void>
       }
     }
 
-    log.info(`[sharpwave] REM: pattern "${patternLabel}" (${group.length} instances)`);
+    log.info(`[xanima] REM: pattern "${patternLabel}" (${group.length} instances)`);
   }
 }
 
@@ -1198,7 +1198,7 @@ async function runRemKeywordBuckets(agentId: string, log: Logger): Promise<void>
  * Identity and goal nodes are protected — same exclusion as v3. Nodes
  * referenced by any active edge (valid_until IS NULL) are also skipped so
  * we never orphan a live graph. Nodes held by the reversible retire registry
- * (meta_kv `retired:node:<id>`, sharpwave-server `noise retire`) are never
+ * (meta_kv `retired:node:<id>`, xanima-server `noise retire`) are never
  * pruned, so `noise unretire` can always restore them.
  *
  * Periodic PRAGMA wal_checkpoint(TRUNCATE) after a batch prune is what
@@ -1259,7 +1259,7 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): void {
   })();
 
   if (deleted > 0) {
-    log.info(`[sharpwave] Deep: physically pruned ${deleted} node(s)`);
+    log.info(`[xanima] Deep: physically pruned ${deleted} node(s)`);
   }
 
   // Reclaim disk space. WAL checkpoint(TRUNCATE) merges WAL back into the
@@ -1268,7 +1268,7 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): void {
   try {
     db.pragma("wal_checkpoint(TRUNCATE)");
   } catch (err) {
-    log.warn(`[sharpwave] Deep: wal_checkpoint failed: ${String(err)}`);
+    log.warn(`[xanima] Deep: wal_checkpoint failed: ${String(err)}`);
   }
 }
 
@@ -1347,7 +1347,7 @@ export function forgetNodeById(
   try {
     db.pragma("wal_checkpoint(TRUNCATE)");
   } catch (err) {
-    log.warn(`[sharpwave] forgetNodeById: wal_checkpoint failed: ${String(err)}`);
+    log.warn(`[xanima] forgetNodeById: wal_checkpoint failed: ${String(err)}`);
   }
 
   log.info(

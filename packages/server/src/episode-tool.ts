@@ -8,7 +8,7 @@
 //     visibility:"shared" it goes to the shared brain and needs `shared-write`.
 //   • writer_agent_id is stamped from the token (any client-supplied value is
 //     ignored and not advertised in the schema).
-//   • Uses sharpwave-core's appendEpisode — the same function local openwave
+//   • Uses xanima-core's appendEpisode — the same function local openwave
 //     calls — on the brain's serialized write queue, so SleepRunner's
 //     runConsolidation (shouldConsolidate episode-count gate, SWS
 //     pickSwsEpisodes, llm_extracted marking) sees these rows the same way.
@@ -16,7 +16,7 @@
 // Kept in its own file (plus two lines of registration in tools.ts) to stay
 // clear of other in-flight packages/server branches.
 
-import { appendEpisode, classifySystemTurn, scoreImportance } from "sharpwave-core";
+import { appendEpisode, classifySystemTurn, scoreImportance } from "xanima-core";
 
 import { SHARED_BRAIN } from "./brains.js";
 import type { Scope } from "./tokens.js";

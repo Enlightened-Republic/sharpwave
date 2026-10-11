@@ -275,7 +275,7 @@ export function mergeCoreferentNodes(agentId: string, log: Logger): number {
       if (edgeExists(agentId, dupId, canonical, "coreference_of")) continue;
       writeEdge(agentId, dupId, canonical, "coreference_of", { weight: 0.9 });
       merged++;
-      log.info(`[sharpwave] coreference merge: ${dupId.slice(0, 8)} -> canonical ${canonical.slice(0, 8)}`);
+      log.info(`[xanima] coreference merge: ${dupId.slice(0, 8)} -> canonical ${canonical.slice(0, 8)}`);
     }
   }
 

@@ -21,7 +21,7 @@ import { startService, tempRoot, tool } from "./helpers.js";
 
 const run = promisify(execFile);
 const SERVER_CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
-const CLIENT = fileURLToPath(new URL("../bin/sharpwave-client.mjs", import.meta.url));
+const CLIENT = fileURLToPath(new URL("../bin/xanima-client.mjs", import.meta.url));
 const SRC = process.env["SHARPWAVE_SNAPSHOT_DIR"] ?? "/workspace/brain-snap/main";
 const has = existsSync(join(SRC, "brain.db"));
 const [EN, EE, EP] = (process.env["SHARPWAVE_SNAPSHOT_EXPECT"] ?? (process.env["SHARPWAVE_SNAPSHOT_DIR"] ? "" : "533/1380/248")).split("/").map(Number);

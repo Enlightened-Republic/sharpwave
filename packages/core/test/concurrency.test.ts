@@ -155,7 +155,7 @@ describe("concurrency — C2.3: reconsolidation under concurrent content write (
 // NOTE (Step G): clawbrain-v4's C2.4 ("bootstrap cache LRU cap on 300 orphaned
 // sessions") was dropped. bootstrapCache / bootstrapInjected are plugin-runtime
 // state that lives in the OpenClaw plugin (packages/openwave), not in
-// sharpwave-core — the engine has no session cache. Its one real assertion was
+// xanima-core — the engine has no session cache. Its one real assertion was
 // an it.skip stub; the remaining case only exercised a throwaway local LRU class
 // with no engine involvement. This belongs to the openwave test suite.
 

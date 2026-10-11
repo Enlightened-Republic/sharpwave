@@ -2,7 +2,7 @@
 //
 // brain_provision_agent — create an agent's private brain and mint its bearer
 // token in one idempotent call, so a client (OpenWave) can onboard a new
-// OpenClaw agent without a human running `sharpwave-server token mint`.
+// OpenClaw agent without a human running `xanima-server token mint`.
 //
 // Security model:
 //   • Caller needs the narrow `provision` scope (or `admin`). `provision` grants

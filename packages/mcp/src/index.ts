@@ -7,7 +7,7 @@ import {
 
 import { randomUUID } from "node:crypto";
 
-// Engine surface — the entire brain engine lives in `sharpwave-core` now.
+// Engine surface — the entire brain engine lives in `xanima-core` now.
 // esbuild inlines its compiled dist/*.js into this single bundle (it is NOT in
 // the esbuild `external` list); only the native modules stay external.
 import {
@@ -18,8 +18,9 @@ import {
   // the unified brain_* tool surface — schemas AND handlers live in core so
   // this server and the openwave plugin can never drift apart.
   BRAIN_TOOL_DEFS, MCP_TOOL_NAMES, dispatchBrainTool,
-} from "sharpwave-core";
-import type { BrainConfig } from "sharpwave-core";
+  envGet,
+} from "xanima-core";
+import type { BrainConfig } from "xanima-core";
 
 // Injected from package.json at build time by esbuild.mjs — never hardcode it.
 // A stale constant misreports the server over MCP and makes checkForUpdate
@@ -40,9 +41,9 @@ const config: BrainConfig = { ...DEFAULT_CONFIG };
 // agents. Every brain_* call MUST carry an `agent` argument — the calling
 // agent's own id. Each id maps to its own `<dataDir>/<agentId>/brain.db`.
 // `SHARPWAVE_AGENTS` (comma list), when set, is an allowlist.
-const PINNED_AGENT_ID = process.env["SHARPWAVE_AGENT_ID"]?.trim() || undefined;
+const PINNED_AGENT_ID = envGet("AGENT_ID")?.trim() || undefined;
 const MULTI = !PINNED_AGENT_ID;
-const AGENT_ALLOWLIST = (process.env["SHARPWAVE_AGENTS"] ?? "")
+const AGENT_ALLOWLIST = (envGet("AGENTS") ?? "")
   .split(",").map((s) => s.trim()).filter(Boolean);
 const AGENT_ID_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
 
@@ -88,7 +89,7 @@ setInterval(() => {
 
 // ─── Tool definitions ───────────────────────────────────────────────────────
 //
-// Schemas come straight from `sharpwave-core`'s BRAIN_TOOL_DEFS. This server
+// Schemas come straight from `xanima-core`'s BRAIN_TOOL_DEFS. This server
 // publishes exactly the 11 names in MCP_TOOL_NAMES, in that order — the
 // published surface of the `sharpwave` npm package is frozen.
 
@@ -169,7 +170,7 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 
 process.stderr.write(
-  `[sharpwave] started — v${VERSION} agentId="${PINNED_AGENT_ID ?? "(multi-agent)"}" session="${SESSION_ID}"` +
+  `[xanima] started — v${VERSION} agentId="${PINNED_AGENT_ID ?? "(multi-agent)"}" session="${SESSION_ID}"` +
     (purged > 0 ? ` (cleared ${purged} stale working-memory row${purged === 1 ? "" : "s"})` : "") +
     "\n",
 );

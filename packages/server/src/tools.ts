@@ -13,7 +13,7 @@
 //     the shared brain and requires the `shared-write` scope.
 //   • brain_reset needs the `admin` scope AND `allowReset: true` in config.
 //
-// Argument validation reuses sharpwave-core's validators; mutations run on the
+// Argument validation reuses xanima-core's validators; mutations run on the
 // brain's serialized write queue; pure reads use read-only WAL connections.
 
 import type Database from "better-sqlite3";
@@ -25,9 +25,9 @@ import {
   validateBrainQuery, validateBrainWrite, validateBrainLink, validateBrainSupersede,
   validateBrainHistory, validateBrainExpand, validateBrainEdges, formatValidationErrors,
   getDb, forgetNodeById,
-} from "sharpwave-core";
+} from "xanima-core";
 import { createHash } from "node:crypto";
-import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "sharpwave-core";
+import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "xanima-core";
 
 import { SHARED_BRAIN, type BrainManager } from "./brains.js";
 import type { AuditLog } from "./audit.js";
@@ -35,7 +35,7 @@ import type { Principal, Scope } from "./tokens.js";
 import { PROVISION_TOOL_DEF, PROVISION_TOOL_NAME, provisionAgent, type ProvisionRateLimiter, type ProvisioningConfig } from "./provision.js";
 import { EPISODE_TOOL_DEF, EPISODE_TOOL_NAME, callEpisodeAppend } from "./episode-tool.js";
 
-export const WRITE_SOURCE = "sharpwave-server";
+export const WRITE_SOURCE = "xanima-server";
 
 export interface ToolContext {
   principal: Principal;
@@ -110,7 +110,7 @@ export const SERVICE_TOOLS = [
   {
     name: "brain_seed",
     description:
-      "ADMIN ONLY (operator tooling, normally driven by `sharpwave-client seed`). Idempotent bulk import of pre-chunked " +
+      "ADMIN ONLY (operator tooling, normally driven by `xanima-client seed`). Idempotent bulk import of pre-chunked " +
       "notes from one source file into your private brain (default) or the shared brain. Every node gets " +
       "source=\"seed:<source>#<content-hash>\", so re-importing the same chunk is a no-op. " +
       "mode: import | dry-run (count new vs existing, write nothing) | remove (delete every node from this source) | " +

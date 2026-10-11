@@ -29,7 +29,7 @@ import { spreadActivation } from "../src/activation.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 import type { BrainNode, NeuromodState } from "../src/types.js";
 
-// sharpwave-core's db.ts does not export SCHEMA_VERSION — assert against the
+// xanima-core's db.ts does not export SCHEMA_VERSION — assert against the
 // known current migration target (mirrors packages/core/test/db.test.ts).
 const SCHEMA_VERSION = 18;
 
@@ -479,7 +479,7 @@ describe("Test 3 — Dream context feeds bootstrap without brain_query (no-looku
     const ctx = await buildBootstrapContext(agentId, session, DEFAULT_CONFIG);
 
     // Header always present
-    expect(ctx).toContain("[SharpWave");
+    expect(ctx).toContain("[Xanima");
 
     // Dream layer injected (getDreamContext age-gate: 30 min — this is fresh)
     expect(ctx).toContain("[BRAIN: subconscious");
@@ -731,7 +731,7 @@ describe("Test 5 — Full v2→v5 round-trip: migrate, activate, dream, Hebbian 
     // Goals are present (directly queried via getActiveGoals, no brain_query)
     const p8HasGoals = p8Ctx.includes("[BRAIN: active goals]") || p8Ctx.includes("Explore memory");
     expect(p8HasGoals).toBe(true);                      // CHECKPOINT 8c: goals present
-    expect(p8Ctx).toContain("[SharpWave");             // CHECKPOINT 8d: header present
+    expect(p8Ctx).toContain("[Xanima");             // CHECKPOINT 8d: header present
 
     cleanupAgent(agentName);
   });

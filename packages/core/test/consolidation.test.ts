@@ -17,8 +17,8 @@ import { DEFAULT_CONFIG } from "../src/types.js";
 // NOTE (Task 3): the clawbrain-v4 consolidation.test.ts also imported
 // `handleCompaction` from src/compaction.js and had one case
 // ("compaction handleCompaction queues embeddings for extracted nodes").
-// `compaction` is NOT yet ported to sharpwave-core (it belongs to a later task
-// in the openwave/sharpwave-core split plan), so that import and its single
+// `compaction` is NOT yet ported to xanima-core (it belongs to a later task
+// in the openwave/xanima-core split plan), so that import and its single
 // test case were removed here. Re-add both from clawbrain-v4 when compaction.ts
 // lands in packages/core/src.
 
@@ -208,7 +208,7 @@ describe("consolidation", () => {
   // keeps recent and unextracted ones". That exercised the Deep-phase
   // "hygiene sweep" (clawbrain Fable-5 audit follow-up 2026-07-12) that runs
   // `DELETE FROM episodes WHERE created_at < ? AND llm_extracted = 1` plus the
-  // working_memory / node_associations sweeps. sharpwave-core's runDeepPhase
+  // working_memory / node_associations sweeps. xanima-core's runDeepPhase
   // (src/consolidation.ts) never received that block — it only physically
   // prunes near-zero-retrievability *nodes*, never raw `episodes` rows. The
   // case was removed rather than left failing. Re-add it if the episode/WM/
@@ -220,7 +220,7 @@ describe("consolidation", () => {
     const db = getDb(id);
 
     // 5 orphan nodes with vanishingly-low retrievability and no edges.
-    // Content must be pairwise-distinct (Jaccard < 0.8): sharpwave-core's REM
+    // Content must be pairwise-distinct (Jaccard < 0.8): xanima-core's REM
     // entity-merge (mergeCoreferentNodes → deduplicateExisting, threshold 0.8)
     // would otherwise wire `coreference_of` edges between near-identical nodes,
     // and runDeepPhase skips any node touched by a live edge. clawbrain-v4's
@@ -368,7 +368,7 @@ describe("consolidation", () => {
     const db = getDb(id);
 
     // Seed 6 episodic nodes with ripple_count > 0 so they cluster for REM.
-    // `deduplicate: false` — sharpwave-core's writeNode runs a trigram-Jaccard
+    // `deduplicate: false` — xanima-core's writeNode runs a trigram-Jaccard
     // near-duplicate gate by default (threshold 0.85); "body of seed episode
     // number N" strings collapse to a single row otherwise, starving the
     // generative-REM candidate gate (needs >= 3). clawbrain-v4's writeNode had

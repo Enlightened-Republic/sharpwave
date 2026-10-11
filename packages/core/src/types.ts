@@ -1,3 +1,4 @@
+import { envGet } from "./env.js";
 export type NodeType =
   | "identity" | "semantic" | "episodic" | "pattern"
   | "skill" | "goal" | "emotion" | "procedural" | "schema";
@@ -163,8 +164,8 @@ export const DEFAULT_CONFIG: BrainConfig = {
   consolidationEpisodeGate: 10,
   pruneAfterDays: 90,
   ingestionModel: "openrouter/deepseek/deepseek-v4-flash",
-  openRouterApiKey: process.env["OPENROUTER_API_KEY"] ?? process.env["SHARPWAVE_OPENROUTER_API_KEY"] ?? "",
-  embeddingModel: process.env["SHARPWAVE_EMBEDDING_MODEL"] ?? "ollama/qwen3-embedding:0.6b",
+  openRouterApiKey: process.env["OPENROUTER_API_KEY"] ?? envGet("OPENROUTER_API_KEY") ?? "",
+  embeddingModel: envGet("EMBEDDING_MODEL") ?? "ollama/qwen3-embedding:0.6b",
   llmExtractionEnabled: false,
   llmExtractionMinImportance: 0.4,
   skillEvolution: false,

@@ -707,7 +707,7 @@ export async function dispatchBrainTool(
 
     // ── brain_generate_skill (clawbrain-v4) ───────────────────────────────
     //
-    // DEGRADED in sharpwave-core: `detectSkillCandidates` / `generateSkill`
+    // DEGRADED in xanima-core: `detectSkillCandidates` / `generateSkill`
     // are stubs here (they return [] / null — see skill-evolution.ts). The
     // ported control flow therefore reports "no candidates" or an honest
     // generation failure. It never fabricates a skill file.

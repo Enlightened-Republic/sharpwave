@@ -13,7 +13,7 @@ await build({
   entryPoints: ["src/index.ts"],
   define: { __SHARPWAVE_VERSION__: JSON.stringify(version) },
   outfile: "dist/index.js",
-  // `sharpwave-core` is deliberately NOT in sharedEsbuild.external — esbuild
+  // `xanima-core` is deliberately NOT in sharedEsbuild.external — esbuild
   // inlines its compiled dist/*.js into this single bundle. Only the native
   // modules (better-sqlite3 / sqlite-vec*) and node:* stay external.
   banner: {

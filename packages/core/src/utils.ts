@@ -164,7 +164,7 @@ export function importanceForType(type: NodeType | string): number {
  * Returns the balanced slice starting at the first `open` character, or null
  * when no balanced value exists.
  *
- * Ported verbatim from clawbrain-v4/src/utils.ts (openwave / sharpwave-core
+ * Ported verbatim from clawbrain-v4/src/utils.ts (openwave / xanima-core
  * split, Task 6d) — used by extraction.ts to parse the fact-extraction payload.
  */
 export function extractBalancedJson(text: string, open: "{" | "[" = "{"): string | null {
