@@ -182,6 +182,8 @@ describe("auth + health", () => {
       "brain_query", "brain_write", "brain_link", "brain_supersede", "brain_stats",
       "brain_history", "brain_expand", "brain_review", "brain_forget", "brain_edges", "brain_reset",
       "brain_retract", "brain_status",
+      "brain_record_decision", "brain_update_decision_outcome", "brain_query_decisions",
+      "brain_set_goal", "brain_update_goal", "brain_list_goals", "brain_turn_context",
       "brain_episode_append",
     ]);
     // writer_agent_id is not even advertised

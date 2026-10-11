@@ -1,4 +1,6 @@
 import { runBeliefReviewPass, saveSleepSummary, countNodesEdges } from "./beliefs.js";
+import { runDecisionPass } from "./decisions.js";
+import { runDriftPass } from "./goals.js";
 import { getDb, getMeta, setMeta, bumpWriteCounter } from "./db.js";
 import { decayEligibilityTraces, decayRetrievability, writeNode, ftsSearchNodes } from "./nodes.js";
 import { queueEmbedding, vectorSearchNodes, bufferToFloat32, cosineSimilarity, upsertNodeVector } from "./embeddings.js";
@@ -240,6 +242,17 @@ export async function runConsolidation(
     try { review = runBeliefReviewPass(agentId, config, log); } catch (err) { log.warn(`[xanima] belief review failed (agent=${agentId}): ${String(err)}`); }
   }
 
+  // Xanima 0.2.0: decision ledger pass (merge near-duplicates, calibrate
+  // confidence from outcomes, optionally promote lessons) + goal drift pass.
+  let decisionsPass = { merged: 0, calibrated: 0, promoted: 0, promotedIds: [] as string[] };
+  let drift: { checked: number; drifting: unknown[]; noteId: number | null } = { checked: 0, drifting: [], noteId: null };
+  if (config.decisionLedger !== false) {
+    try { decisionsPass = runDecisionPass(agentId, config, log); } catch (err) { log.warn(`[xanima] decision pass failed (agent=${agentId}): ${String(err)}`); }
+  }
+  if ((config.intentDriftCheck ?? "sleep") === "sleep") {
+    try { drift = runDriftPass(agentId, config, log); } catch (err) { log.warn(`[xanima] drift pass failed (agent=${agentId}): ${String(err)}`); }
+  }
+
   // Phase 4: Deep — physically prune near-zero retrievability orphans
   const pruned = runDeepPhase(agentId, config, log);
 
@@ -256,6 +269,8 @@ export async function runConsolidation(
       nodesBefore: before.nodes, nodesAfter: after.nodes, edgesBefore: before.edges, edgesAfter: after.edges,
       pruned, newContradictions: review.newContradictions, flaggedForReview: review.flagged,
       lowConfidence: review.lowConfidence, contradicted: review.contradicted, legacyNoiseFlagged: review.legacyNoiseFlagged,
+      decisionsMerged: decisionsPass.merged, decisionsCalibrated: decisionsPass.calibrated, lessonsPromoted: decisionsPass.promoted,
+      goalsChecked: drift.checked, goalsDrifting: drift.drifting.length, alignmentNoteQueued: drift.noteId !== null,
     });
   } catch { /* summary is best-effort */ }
 

@@ -1,7 +1,8 @@
 import { envGet } from "./env.js";
 export type NodeType =
   | "identity" | "semantic" | "episodic" | "pattern"
-  | "skill" | "goal" | "emotion" | "procedural" | "schema";
+  | "skill" | "goal" | "emotion" | "procedural" | "schema"
+  | "decision"; // Xanima 0.2.0 decision ledger (structured row in `decisions`)
 
 // EdgeType: `associates` is the canonical Hebbian/similarity edge type since
 // v4.0.0 (CHANGELOG.md [4.0.0] Changed). `associated_with` is retained ONLY
@@ -14,6 +15,7 @@ export type EdgeType =
   | "attaches_to" | "contradicts" | "supersedes" | "coreference_of"
   | "generated_skill" | "drives"
   | "used_in" | "led_to" | "derived_from" // Xanima 0.1.0 lightweight causal links
+  | "advances" | "conflicts_with_goal" // Xanima 0.2.0 decision → goal
   | "associated_with"; // legacy — read only
 
 export interface BrainNode {
@@ -195,6 +197,23 @@ export interface BrainConfig {
   lowConfidenceThreshold?: number;
   /** Sleep pass that flags low-confidence / contradicted nodes for review (and protects them from pruning). Default true. */
   sleepBeliefReview?: boolean;
+  // ── Xanima 0.2.0 continuity flags (all heuristic; no LLM needed) ─────────
+  /** Decision ledger tools + decision recall boost + sleep decision pass. Default true. */
+  decisionLedger?: boolean;
+  /** Draft low-confidence decisions from the agent's own "I'll go with X over Y because…" text. Default true. */
+  decisionAutoExtract?: boolean;
+  /** Promote recurring / high-value lessons from resolved decisions to skill nodes during sleep. Default false. */
+  decisionLessonPromotion?: boolean;
+  /** Activation multiplier for decision nodes that match the current context. Default 1.2. */
+  decisionBoost?: number;
+  /** Drift check against active tracked goals: "sleep" (during consolidation, default), "daily" (at most once a day, at turn time), "off". */
+  intentDriftCheck?: "off" | "daily" | "sleep";
+  /** Days without progress before a goal counts as drifting. Default 7. */
+  driftDays?: number;
+  /** Time / keyword triggers that surface a goal when relevant. Default true. */
+  goalTriggers?: boolean;
+  /** Token cap for the injected alignment note + goal trigger lines. Default 60 (~240 chars). */
+  alignmentNoteMaxTokens?: number;
 }
 
 export const DEFAULT_CONFIG: BrainConfig = {
@@ -224,4 +243,12 @@ export const DEFAULT_CONFIG: BrainConfig = {
   relativeTimeLabels: true,
   lowConfidenceThreshold: 0.4,
   sleepBeliefReview: true,
+  decisionLedger: true,
+  decisionAutoExtract: true,
+  decisionLessonPromotion: false,
+  decisionBoost: 1.2,
+  intentDriftCheck: "sleep",
+  driftDays: 7,
+  goalTriggers: true,
+  alignmentNoteMaxTokens: 60,
 };

@@ -2,6 +2,23 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
+## 0.2.0 (Xanima) — unreleased
+
+Decision ledger + goals / drift (design: Xanima phase 2). Stacks on 0.1.0. Everything is heuristic; no LLM is needed.
+
+- **Schema v20 (additive, new tables only):** `decisions`, `goals` (one row per goal version), `goal_events` (history), `goal_triggers`, `alignment_notes`. Node/edge/episode counts never change. Existing live `goal` nodes get a version-1 goals row with `tracked = 0` (still shown in the header, never drift-checked until tracked). New node type `decision`; new edge types `advances`, `conflicts_with_goal`.
+- **Decision ledger tools:** `brain_record_decision` (context, options with predicted outcomes, chosen, rationale, prediction + confidence, goal / conflicting goals / skills / evidence links; uses the 0.1.0 belief metadata), `brain_update_decision_outcome` (matched / partial / missed + lesson; a non-missed outcome logs goal progress), `brain_query_decisions` (text or JSON, by query / goal / pending / resolved).
+- **Auto-extraction:** first-person choices in the agent's own replies ("I'll go with X over Y because …", "I decided to use X because …") become low-confidence `self_observation` decision drafts. Quotes, code, questions and third-person text are ignored; max 2 per message; deduped per day. On xanima-server this runs on `brain_episode_append` for assistant turns in the private brain.
+- **Sleep decision pass:** merges near-duplicate decisions (same choice, similar context; the duplicate is kept as superseded history), calibrates confidence once per outcome (matched +0.15, missed −0.2), and with `decisionLessonPromotion: true` promotes recurring / high-value lessons to `skill` nodes (`Lesson: …`, `derived_from` the decisions).
+- **Recall:** decisions in the recall set get a light ×`decisionBoost` (1.2) activation boost (local and service recall).
+- **Goals:** `brain_set_goal`, `brain_update_goal` (update / supersede → new node version via supersede, old kept for `as_of`; pause / resume / done / archive / progress / track / untrack, all in `goal_events`), `brain_list_goals` (with full history per goal). The header's active goals respect goal status and priority.
+- **Drift pass** (`intentDriftCheck`: `sleep` default, `daily` at turn time at most once a day, `off`): progress = decisions advancing the goal, non-missed outcomes, explicit progress, or recent episodes mentioning its keywords. Flags "no progress on goal Y in N days" (`driftDays`, 7), "recent decisions advanced lower-priority X while Y stalled", and explicit `conflicts_with_goal` decisions. Writes `alignment_summary` and one alignment note, injected once on the next turn, capped by `alignmentNoteMaxTokens` (60), not repeated for the same drift within 24 h.
+- **Triggers** (`goalTriggers`, default on): keyword triggers (word-boundary match, 6 h cooldown) and time triggers (`at` and/or `every_days`) surface a goal line in the same capped `[BRAIN: goals]` block.
+- **brain_status:** decision counts, goals (active / tracked / paused / done), DRIFT lines, queued alignment note; sleep summary includes the decision and drift passes.
+- **xanima-server:** the six tools work on the caller's private brain (read scope for list/query, write scope for the rest; `visibility: shared` is refused). New plumbing tool `brain_turn_context` (write scope) returns the alignment note + triggers for the plugin.
+- **Flags (BrainConfig and service config.json `brain`):** `decisionLedger` (true), `decisionAutoExtract` (true), `decisionLessonPromotion` (false), `decisionBoost` (1.2), `intentDriftCheck` ("sleep"), `driftDays` (7), `goalTriggers` (true), `alignmentNoteMaxTokens` (60).
+- **0.1.0 compatibility:** the `SHARPWAVE_*` env aliases stay through 0.2.x (now "stop working in 0.3.0"), because 0.1.0 never shipped to a live install.
+
 ## 0.1.0 (Xanima) — unreleased
 
 Rename + belief foundation (design: Xanima phase 1).
@@ -13,6 +30,7 @@ Rename + belief foundation (design: Xanima phase 1).
 - **Injection:** recall lines carry relative time and a `(?)` low-confidence / `disputed` / `confirm before acting` marker; an optional one-line `[BRAIN: status]` footer when something needs attention.
 - **Sleep:** belief review pass stamps contradictions, flags low-confidence / disputed beliefs for review and exempts them (and retracted/superseded history) from the Deep prune; records a sleep summary. `xanima-server sleep now`.
 - **Flags (BrainConfig, and service config.json `brain`):** `beliefMetadata`, `relativeTimeLabels`, `selfStatus`, `lowConfidenceThreshold`, `sleepBeliefReview`.
+- **Follow-ups:** `as_of` accepts epoch-ms numbers as well as strings; `xanima-server migrate` no longer prints the "old data folder" warning (it is the fix); the first sleep on a migrated brain flags legacy heartbeat / NO_REPLY nodes for review (`brain_status` says so; nothing is retired automatically).
 
 ## [Unreleased]
 

@@ -301,3 +301,18 @@ export type {
 export { SCHEMA_VERSION, migrateV19 } from "./db.js";
 export { buildStatusFooter } from "./context-assembly.js";
 export { parseBeliefArgs } from "./tools.js";
+
+// ── Xanima 0.2.0: decision ledger, goals, drift, triggers ──────────────────
+export { migrateV20 } from "./db.js";
+export {
+  recordDecision, updateDecisionOutcome, queryDecisions, getDecision, formatDecision, extractDecisionCandidates,
+  autoExtractDecisions, applyDecisionBoost, runDecisionPass, decisionCounts, resolveGoalCurrent, OUTCOME_STATUSES,
+} from "./decisions.js";
+export type { DecisionView, DecisionRow, DecisionOption, OutcomeStatus, RecordDecisionInput, DecisionCandidate, DecisionPassResult } from "./decisions.js";
+export {
+  setGoal, updateGoal, listGoals, goalHistory, formatGoal, formatGoalHistory, runDriftPass, maybeRunDailyDrift,
+  buildGoalTurnContext, goalCounts, parsePriority, deriveKeywords, currentGoalRow, GOAL_ACTIONS, GOAL_STATUSES,
+} from "./goals.js";
+export type { GoalRow, GoalStatus, GoalAction, TriggerSpec, DriftFlag, DriftResult, GoalTurnContext, GoalHistory } from "./goals.js";
+export { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } from "./continuity-tools.js";
+export type { ContinuityResult, ContinuityToolDef } from "./continuity-tools.js";

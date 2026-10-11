@@ -102,7 +102,7 @@ export function loadKey(opts: { keyFile?: string; keyEnv?: string; env?: NodeJS.
   if (envName === DEFAULT_KEY_ENV) {
     const legacy = env[LEGACY_KEY_ENV];
     if (legacy && legacy.trim()) {
-      deprecationWarnOnce(`env:${LEGACY_KEY_ENV}`, `${LEGACY_KEY_ENV} is deprecated; set ${DEFAULT_KEY_ENV} instead (the old name stops working in 0.2.0).`);
+      deprecationWarnOnce(`env:${LEGACY_KEY_ENV}`, `${LEGACY_KEY_ENV} is deprecated; set ${DEFAULT_KEY_ENV} instead (the old name stops working in 0.3.0).`);
       return parseKeyText(legacy, `env ${LEGACY_KEY_ENV}`);
     }
   }

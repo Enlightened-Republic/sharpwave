@@ -1,5 +1,17 @@
 # Xanima (formerly Sharpwave)
 
+> **0.2.0 (pre-release, not published): decision ledger + goals / drift.**
+> Six new tools: `brain_record_decision`, `brain_update_decision_outcome`,
+> `brain_query_decisions`, `brain_set_goal`, `brain_update_goal`,
+> `brain_list_goals`. Sleep merges near-duplicate decisions, calibrates
+> confidence from outcomes, optionally promotes lessons to skills, and checks
+> active goals for drift; one short alignment note is injected on the next
+> turn. Keyword / time triggers surface a goal when relevant. Schema v20 adds
+> tables only. Flags: `decisionLedger`, `decisionAutoExtract`,
+> `decisionLessonPromotion`, `decisionBoost`, `intentDriftCheck`
+> (`sleep`|`daily`|`off`), `driftDays`, `goalTriggers`,
+> `alignmentNoteMaxTokens`. See CHANGELOG.md.
+>
 > **0.1.0 (pre-release, not published):** the packages are now `xanima-core`,
 > `xanima` (MCP server; `sharpwave` bin kept as an alias) and `xanima-server`
 > (`sharpwave-server` bin alias). `XANIMA_*` env vars replace `SHARPWAVE_*`

@@ -13,7 +13,7 @@ import { recordInjection } from "./valor.js";
 import type { BrainConfig } from "./types.js";
 
 const BRAIN_HEADER =
-  "[Xanima active] Your memory is pre-loaded below — no manual lookup needed. brain_write to record new facts, brain_retract / brain_supersede (with a reason) to correct wrong ones, brain_status for a memory self-check, brain_reflect to review identity/goals, brain_query only for deep dives (as_of for 'what did I believe then'). Memory consolidates automatically in the background (awake replay every 30 min; deeper consolidation once enough new experience accumulates). Use brain_docs section='memo' for full system overview." +
+  "[Xanima active] Your memory is pre-loaded below — no manual lookup needed. brain_write to record new facts, brain_retract / brain_supersede (with a reason) to correct wrong ones, brain_status for a memory self-check, brain_record_decision / brain_update_decision_outcome to log choices and what happened, brain_set_goal / brain_list_goals for standing goals, brain_reflect to review identity/goals, brain_query only for deep dives (as_of for 'what did I believe then'). Memory consolidates automatically in the background (awake replay every 30 min; deeper consolidation once enough new experience accumulates). Use brain_docs section='memo' for full system overview." +
   " (compat: ClawBrain v3)";
 
 export function getDreamContext(agentId: string): string {

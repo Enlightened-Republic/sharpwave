@@ -28,7 +28,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const BOOL = new Set(["json", "shared", "force", "help", "h", "version", "dry-run", "offline", "remove", "list", "prune"]);
 const MULTI = new Set(["map", "type", "tag"]);
 
@@ -82,7 +82,7 @@ function env(k) {
   if (v) return v;
   const old = process.env[`SHARPWAVE_${k}`];
   if (old) {
-    if (!warnedEnv.has(k)) { warnedEnv.add(k); process.stderr.write(`[xanima] DEPRECATED: SHARPWAVE_${k} is deprecated; set XANIMA_${k} instead (the old name stops working in 0.2.0).\n`); }
+    if (!warnedEnv.has(k)) { warnedEnv.add(k); process.stderr.write(`[xanima] DEPRECATED: SHARPWAVE_${k} is deprecated; set XANIMA_${k} instead (the old name stops working in 0.3.0).\n`); }
     return old;
   }
   return undefined;

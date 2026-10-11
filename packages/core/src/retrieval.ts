@@ -1,3 +1,4 @@
+import { applyDecisionBoost } from "./decisions.js";
 import { getDb } from "./db.js";
 import { ftsSearchNodes, getTopByType, touchNode } from "./nodes.js";
 import { fetchEmbedding, vectorSearchNodes, rrfFuse, drainEmbeddingQueue } from "./embeddings.js";
@@ -56,7 +57,7 @@ export async function hybridRetrieve(
     activationMap,
   );
 
-  const topNodes = activated.slice(0, limit);
+  const topNodes = applyDecisionBoost(activated, config).slice(0, limit);
 
   for (const node of topNodes) {
     touchNode(agentId, node.id);
