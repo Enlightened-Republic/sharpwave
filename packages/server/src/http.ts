@@ -104,7 +104,7 @@ export function createHandler(deps: HttpDeps) {
       // Loopback = arrived on the 127.0.0.1 listener AND from a loopback peer (tailnet listener → false).
       const loopback = isLoopbackAddress(req.socket.localAddress) && isLoopbackAddress(req.socket.remoteAddress);
       const ctx = deps.makeContext(principal, { loopback });
-      const server = new Server({ name: "sharpwave-server", version: VERSION }, { capabilities: { tools: {} } });
+      const server = new Server({ name: "xanima-server", version: VERSION }, { capabilities: { tools: {} } });
       server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolsFor(principal) }));
       server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const r = await callTool(ctx, request.params.name, (request.params.arguments as Record<string, unknown>) ?? {});

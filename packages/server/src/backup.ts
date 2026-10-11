@@ -8,8 +8,8 @@
 //
 //   <backupsDir>/<brain>/<brain>-<UTC timestamp>.db
 //
-// This is intentionally independent of sharpwave-core's getDb(): the
-// `sharpwave-server backup now` CLI runs in a separate process next to a live
+// This is intentionally independent of xanima-core's getDb(): the
+// `xanima-server backup now` CLI runs in a separate process next to a live
 // service and must never open a write connection or run migrations.
 //
 // Off-PC encryption + upload happens after this, in offsite.ts (see backup-job.ts).

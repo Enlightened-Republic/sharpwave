@@ -8,8 +8,8 @@
 // has no cancellation); the budget is checked between brains. Only one cycle
 // runs at a time.
 
-import { runConsolidation, shouldConsolidate } from "sharpwave-core";
-import type { BrainConfig } from "sharpwave-core";
+import { runConsolidation, shouldConsolidate } from "xanima-core";
+import type { BrainConfig } from "xanima-core";
 
 import type { BrainManager } from "./brains.js";
 import type { AuditLog } from "./audit.js";
@@ -35,6 +35,8 @@ export class SleepRunner {
     private readonly respectGate: boolean,
     private readonly log: Logger,
     private readonly audit: AuditLog,
+    /** Restrict cycles to these brains (CLI `sleep now --brain`). Default: every brain on disk. */
+    private readonly only?: string[],
   ) {}
 
   runCycle(opts: { force?: boolean } = {}): Promise<SleepReport> {
@@ -46,7 +48,7 @@ export class SleepRunner {
   private async cycle(opts: { force?: boolean }): Promise<SleepReport> {
     const t0 = Date.now();
     const report: SleepReport = { startedAt: new Date(t0).toISOString(), ran: [], skippedGate: [], deferred: [], failed: [], elapsedMs: 0 };
-    const all = this.brains.listBrains();
+    const all = this.only ? this.brains.listBrains().filter((b) => this.only!.includes(b)) : this.brains.listBrains();
     const n = all.length;
     const order = all.map((_, i) => all[(this.cursor + i) % n]!);
     let visited = 0;

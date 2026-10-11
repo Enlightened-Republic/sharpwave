@@ -1,6 +1,6 @@
 // packages/server/src/restore.ts
 //
-// `sharpwave-server backup restore <artifact> --out <path> [--force]`
+// `xanima-server backup restore <artifact> --out <path> [--force]`
 //
 //   1. refuse to clobber: an existing --out needs --force; a LIVE brain path
 //      (anything under <root>/brains, or any file named brain.db) additionally
@@ -108,7 +108,7 @@ export async function restoreBackup(o: RestoreOptions): Promise<RestoreResult> {
   if (live) {
     if (!o.force) fail(`${out} is a live brain path — refusing without --force (and the service must be stopped)`);
     const running = await (o.serviceRunning ?? (async () => false))();
-    if (running) fail(`the SharpWave service is running — stop it first (Stop-ScheduledTask -TaskName "SharpWave Brain Service"), then retry with --force`);
+    if (running) fail(`the Xanima service is running — stop it first (Stop-ScheduledTask -TaskName "Xanima Brain Service"), then retry with --force`);
   }
 
   const tmp = join(dirname(out), `.restore-${randomBytes(6).toString("hex")}.db`);

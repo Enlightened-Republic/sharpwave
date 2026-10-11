@@ -1,8 +1,8 @@
+import { envGet, resolveDataDir } from "./env.js";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { executeWithWalRetrySync } from "./wal-retry.js";
 import { bumpCounter, logObservabilityEvent } from "./observability.js";
 
@@ -15,7 +15,7 @@ let _writeCount = 0;
 // Default threshold matches the Python reference (every 100 writes). Operators
 // can override via SHARPWAVE_FTS_OPTIMIZE_EVERY.
 const _ftsOptimizeEvery = (() => {
-  const raw = process.env["SHARPWAVE_FTS_OPTIMIZE_EVERY"];
+  const raw = envGet("FTS_OPTIMIZE_EVERY");
   const n = raw ? parseInt(raw, 10) : 100;
   return Number.isFinite(n) && n > 0 ? n : 100;
 })();
@@ -128,10 +128,9 @@ export function getFtsOptimizeEvery(): number {
 }
 
 function resolveDbPath(agentId: string): string {
-  const explicit = process.env["SHARPWAVE_DB_PATH"];
+  const explicit = envGet("DB_PATH");
   if (explicit) return explicit;
-  const dataDir = process.env["SHARPWAVE_DATA_DIR"]
-    ?? join(homedir(), ".sharpwave");
+  const dataDir = resolveDataDir();
   return join(dataDir, agentId, "brain.db");
 }
 
@@ -157,7 +156,7 @@ export function resolveBusyTimeoutMs(override?: number): number {
     return Math.min(Math.floor(n), MAX_BUSY_TIMEOUT_MS);
   };
   return pick(override)
-    ?? pick(process.env["SHARPWAVE_BUSY_TIMEOUT_MS"])
+    ?? pick(envGet("BUSY_TIMEOUT_MS"))
     ?? DEFAULT_BUSY_TIMEOUT_MS;
 }
 
@@ -395,8 +394,279 @@ function initSchema(db: Database.Database): void {
   }
 }
 
+/** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
+export const SCHEMA_VERSION = 22;
+
+/**
+ * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
+ * defaults is O(1) in SQLite: existing rows read the default, nothing is
+ * rewritten), so node/edge/episode counts never change. Backfill semantics:
+ *   • source_type   'legacy'  (origin unknown — written before Xanima)
+ *   • confidence    'medium' / confidence_score 0.6
+ *   • status        'active', except nodes that were already closed
+ *                   (valid_until in the past): 'superseded' when a supersedes
+ *                   edge points at them, else 'archived' (e.g. noise-retired).
+ *                   This is the only UPDATE and it touches closed rows only.
+ *   • sensitivity   'normal'
+ * Idempotent: safe to re-run (every step swallows "duplicate column").
+ * Exported so `xanima-server migrate` and tests can call it directly.
+ */
+export function migrateV19(db: Database.Database): void {
+  const add = (sql: string) => { try { db.exec(sql); } catch { /* already exists */ } };
+  add("ALTER TABLE nodes ADD COLUMN confidence TEXT NOT NULL DEFAULT 'medium'");
+  add("ALTER TABLE nodes ADD COLUMN confidence_score REAL NOT NULL DEFAULT 0.6");
+  add("ALTER TABLE nodes ADD COLUMN source_type TEXT NOT NULL DEFAULT 'legacy'");
+  add("ALTER TABLE nodes ADD COLUMN verified_at INTEGER");
+  add("ALTER TABLE nodes ADD COLUMN contradicted_at INTEGER");
+  add("ALTER TABLE nodes ADD COLUMN evidence TEXT");
+  add("ALTER TABLE nodes ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+  add("ALTER TABLE nodes ADD COLUMN status_reason TEXT");
+  add("ALTER TABLE nodes ADD COLUMN status_changed_at INTEGER");
+  add("ALTER TABLE nodes ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'normal'");
+  add("ALTER TABLE nodes ADD COLUMN review_flagged_at INTEGER");
+  add("CREATE INDEX IF NOT EXISTS nodes_status ON nodes(status)");
+  add("CREATE INDEX IF NOT EXISTS nodes_review ON nodes(review_flagged_at) WHERE review_flagged_at IS NOT NULL");
+  try {
+    db.prepare(`
+      UPDATE nodes SET
+        status = CASE WHEN EXISTS (
+            SELECT 1 FROM edges e WHERE e.to_id = nodes.id AND e.type = 'supersedes'
+          ) THEN 'superseded' ELSE 'archived' END,
+        status_changed_at = valid_until
+      WHERE status = 'active' AND valid_until IS NOT NULL AND valid_until <= ?
+    `).run(Date.now());
+  } catch { /* edges table missing on a degenerate DB — leave active */ }
+}
+
+/**
+ * v20 — Xanima 0.2.0 decision ledger + goals/drift. New tables only
+ * (CREATE TABLE IF NOT EXISTS); nodes/edges/episodes are never touched, so
+ * their counts cannot change. Existing `goal` nodes that are still active get
+ * a goals row (version 1, priority 3) with tracked = 0: they keep showing in
+ * the header as before but are not drift-checked until the agent (or Hailey)
+ * opts them in with brain_update_goal action "track". Idempotent.
+ */
+export function migrateV20(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS decisions (
+      node_id              TEXT PRIMARY KEY,
+      context              TEXT NOT NULL,
+      goal_id              TEXT,
+      options_json         TEXT NOT NULL DEFAULT '[]',
+      chosen               TEXT NOT NULL,
+      rationale            TEXT,
+      predicted_outcome    TEXT,
+      predicted_confidence REAL,
+      outcome              TEXT,
+      outcome_status       TEXT,
+      outcome_at           INTEGER,
+      lesson               TEXT,
+      lesson_node_id       TEXT,
+      merged_into          TEXT,
+      merge_count          INTEGER NOT NULL DEFAULT 1,
+      auto_extracted       INTEGER NOT NULL DEFAULT 0,
+      created_at           INTEGER NOT NULL,
+      updated_at           INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS decisions_goal ON decisions(goal_id);
+    CREATE INDEX IF NOT EXISTS decisions_created ON decisions(created_at);
+    CREATE TABLE IF NOT EXISTS goals (
+      node_id           TEXT PRIMARY KEY,
+      lineage_id        TEXT NOT NULL,
+      version           INTEGER NOT NULL,
+      title             TEXT NOT NULL,
+      priority          INTEGER NOT NULL DEFAULT 3,
+      status            TEXT NOT NULL DEFAULT 'active',
+      success_criteria  TEXT,
+      keywords_json     TEXT NOT NULL DEFAULT '[]',
+      tracked           INTEGER NOT NULL DEFAULT 1,
+      last_checked_at   INTEGER,
+      last_progress_at  INTEGER,
+      alignment_summary TEXT,
+      drift_kind        TEXT,
+      drift_reason      TEXT,
+      drift_at          INTEGER,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS goals_lineage ON goals(lineage_id, version);
+    CREATE INDEX IF NOT EXISTS goals_status ON goals(status);
+    CREATE TABLE IF NOT EXISTS goal_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      lineage_id  TEXT NOT NULL,
+      version     INTEGER NOT NULL,
+      node_id     TEXT NOT NULL,
+      at          INTEGER NOT NULL,
+      action      TEXT NOT NULL,
+      change_json TEXT,
+      reason      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS goal_events_lineage ON goal_events(lineage_id, at);
+    CREATE TABLE IF NOT EXISTS goal_triggers (
+      id            TEXT PRIMARY KEY,
+      lineage_id    TEXT NOT NULL,
+      kind          TEXT NOT NULL,
+      spec_json     TEXT NOT NULL,
+      next_at       INTEGER,
+      cooldown_ms   INTEGER NOT NULL DEFAULT 21600000,
+      last_fired_at INTEGER,
+      fire_count    INTEGER NOT NULL DEFAULT 0,
+      enabled       INTEGER NOT NULL DEFAULT 1,
+      created_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS goal_triggers_lineage ON goal_triggers(lineage_id);
+    CREATE TABLE IF NOT EXISTS alignment_notes (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at       INTEGER NOT NULL,
+      text             TEXT NOT NULL,
+      lineage_ids_json TEXT NOT NULL DEFAULT '[]',
+      delivered_at     INTEGER,
+      superseded_at    INTEGER
+    );
+  `);
+  try {
+    const now = Date.now();
+    const statusCol = (db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>).some((c) => c.name === "status");
+    const rows = db.prepare(`SELECT id, label, created_at FROM nodes WHERE type = 'goal' AND (valid_until IS NULL OR valid_until > ?)${statusCol ? " AND status = 'active'" : ""}
+                              AND id NOT IN (SELECT node_id FROM goals)`).all(now) as Array<{ id: string; label: string; created_at: number }>;
+    const ins = db.prepare(`INSERT OR IGNORE INTO goals (node_id, lineage_id, version, title, priority, status, keywords_json, tracked, created_at, updated_at)
+                            VALUES (?, ?, 1, ?, 3, 'active', '[]', 0, ?, ?)`);
+    const ev = db.prepare(`INSERT INTO goal_events (lineage_id, version, node_id, at, action, reason) VALUES (?, 1, ?, ?, 'backfill', 'existing goal node (pre-0.2.0), not drift-checked until tracked')`);
+    db.transaction(() => { for (const r of rows) { ins.run(r.id, r.id, r.label, r.created_at ?? now, now); ev.run(r.id, r.id, now); } })();
+  } catch { /* nodes table missing on a degenerate DB */ }
+}
+
+/**
+ * v21 (Xanima 0.2.0 hardening, additive):
+ *   decisions.draft_status ('pending' | 'confirmed' | 'expired' for auto-extracted drafts, NULL otherwise), confirmed_at, expired_at
+ *   alignment_notes.offered_at / offered_count (offered ≠ delivered; delivered only on a real reply)
+ *   lesson_merges: history of lessons merged into an existing skill instead of a new one
+ */
+export function migrateV21(db: Database.Database): void {
+  const add = (t: string, c: string) => { try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* already exists */ } };
+  add("decisions", "draft_status TEXT");
+  add("decisions", "confirmed_at INTEGER");
+  add("decisions", "expired_at INTEGER");
+  add("alignment_notes", "offered_at INTEGER");
+  add("alignment_notes", "offered_count INTEGER NOT NULL DEFAULT 0");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lesson_merges (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      skill_id      TEXT NOT NULL,
+      decision_id   TEXT NOT NULL,
+      lesson        TEXT NOT NULL,
+      similarity    REAL NOT NULL,
+      method        TEXT NOT NULL,
+      confidence_before REAL,
+      confidence_after  REAL,
+      at            INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS lesson_merges_skill ON lesson_merges(skill_id);
+  `);
+  try { db.exec("UPDATE decisions SET draft_status = 'pending' WHERE auto_extracted = 1 AND draft_status IS NULL AND outcome_at IS NULL"); } catch { /* ok */ }
+  try { db.exec("UPDATE alignment_notes SET offered_count = 1, offered_at = delivered_at WHERE delivered_at IS NOT NULL AND offered_count = 0"); } catch { /* ok */ }
+}
+
+/**
+ * v22 (Xanima 0.3.0, additive, new tables + one column set):
+ *   reflections, open_items (hypothesis | question | assumption), commitments,
+ *   plans + plan_steps, dependencies (blocked-by between any two nodes),
+ *   alignment_notes.kind / ref_id (the note queue also carries commitment nudges).
+ */
+export function migrateV22(db: Database.Database): void {
+  const add = (t: string, c: string) => { try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* already exists */ } };
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reflections (
+      node_id       TEXT PRIMARY KEY,
+      scope_kind    TEXT NOT NULL,
+      scope_ref     TEXT,
+      since         INTEGER NOT NULL,
+      until         INTEGER NOT NULL,
+      worked_json   TEXT NOT NULL DEFAULT '[]',
+      didnt_json    TEXT NOT NULL DEFAULT '[]',
+      next_json     TEXT NOT NULL DEFAULT '[]',
+      sources_json  TEXT NOT NULL DEFAULT '[]',
+      origin        TEXT NOT NULL,
+      method        TEXT NOT NULL,
+      merge_count   INTEGER NOT NULL DEFAULT 1,
+      history_json  TEXT NOT NULL DEFAULT '[]',
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS reflections_scope ON reflections(scope_kind, scope_ref);
+    CREATE TABLE IF NOT EXISTS open_items (
+      node_id         TEXT PRIMARY KEY,
+      kind            TEXT NOT NULL,
+      text            TEXT NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'open',
+      load_bearing    INTEGER NOT NULL DEFAULT 0,
+      evidence_for    TEXT NOT NULL DEFAULT '[]',
+      evidence_against TEXT NOT NULL DEFAULT '[]',
+      answer          TEXT,
+      close_reason    TEXT,
+      auto_extracted  INTEGER NOT NULL DEFAULT 0,
+      draft_status    TEXT,
+      keywords_json   TEXT NOT NULL DEFAULT '[]',
+      contradicted_at INTEGER,
+      last_surfaced_at INTEGER,
+      surfaced_count  INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL,
+      closed_at       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS open_items_status ON open_items(kind, status);
+    CREATE TABLE IF NOT EXISTS commitments (
+      node_id       TEXT PRIMARY KEY,
+      title         TEXT NOT NULL,
+      owner         TEXT NOT NULL,
+      counterparty  TEXT NOT NULL DEFAULT 'user',
+      status        TEXT NOT NULL DEFAULT 'open',
+      due_at        INTEGER,
+      note          TEXT,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      done_at       INTEGER,
+      last_nudged_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS commitments_status ON commitments(status, due_at);
+    CREATE TABLE IF NOT EXISTS plans (
+      node_id       TEXT PRIMARY KEY,
+      title         TEXT NOT NULL,
+      goal_id       TEXT,
+      status        TEXT NOT NULL DEFAULT 'active',
+      keywords_json TEXT NOT NULL DEFAULT '[]',
+      parked_at     INTEGER,
+      park_note     TEXT,
+      resumed_at    INTEGER,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS plan_steps (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id    TEXT NOT NULL,
+      idx        INTEGER NOT NULL,
+      text       TEXT NOT NULL,
+      status     TEXT NOT NULL DEFAULT 'todo',
+      note       TEXT,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS plan_steps_plan ON plan_steps(plan_id, idx);
+    CREATE TABLE IF NOT EXISTS dependencies (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      blocked_id  TEXT NOT NULL,
+      blocker_id  TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      resolved_at INTEGER,
+      UNIQUE(blocked_id, blocker_id)
+    );
+    CREATE INDEX IF NOT EXISTS dependencies_blocked ON dependencies(blocked_id);
+  `);
+  add("alignment_notes", "kind TEXT NOT NULL DEFAULT 'alignment'");
+  add("alignment_notes", "ref_id TEXT");
+}
+
 function runMigrations(db: Database.Database): void {
-  const TARGET = 18;
+  const TARGET = SCHEMA_VERSION;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
   const current = row?.version ?? 0;
 
@@ -666,6 +936,22 @@ function runMigrations(db: Database.Database): void {
     try { db.exec("ALTER TABLE episodes ADD COLUMN writer_agent_id TEXT"); } catch { /* already exists */ }
     try { db.exec("ALTER TABLE edges ADD COLUMN writer_agent_id TEXT"); } catch { /* already exists */ }
     try { db.exec("CREATE INDEX IF NOT EXISTS nodes_writer_agent ON nodes(writer_agent_id)"); } catch { /* ok */ }
+  }
+
+  if (current < 19) {
+    migrateV19(db);
+  }
+
+  if (current < 20) {
+    migrateV20(db);
+  }
+
+  if (current < 21) {
+    migrateV21(db);
+  }
+
+  if (current < 22) {
+    migrateV22(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

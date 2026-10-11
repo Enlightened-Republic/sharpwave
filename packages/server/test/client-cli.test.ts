@@ -1,4 +1,4 @@
-// End-to-end: the dependency-free sharpwave-client against a live test server,
+// End-to-end: the dependency-free xanima-client against a live test server,
 // run as a child process with plain `node` (as Chief of Staff would on Windows).
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { startService } from "./helpers.js";
 
 const run = promisify(execFile);
-const CLIENT = fileURLToPath(new URL("../bin/sharpwave-client.mjs", import.meta.url));
+const CLIENT = fileURLToPath(new URL("../bin/xanima-client.mjs", import.meta.url));
 const SERVER_CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
 let h: Awaited<ReturnType<typeof startService>>;
@@ -35,7 +35,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await h.stop(); });
 
-describe("sharpwave-client", () => {
+describe("xanima-client", () => {
   it("write → search → read → stats round trip (token via --token)", async () => {
     const w = await client(["write", "Quarterly", "report", "is", "due", "on", "the", "fifth", "--label", "Report cadence", "--url", h.url, "--token", token, "--json"]);
     expect(w.code, w.stderr).toBe(0);

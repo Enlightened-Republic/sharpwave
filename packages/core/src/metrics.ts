@@ -270,7 +270,7 @@ export function formatPrometheusMetrics(metrics: MetricsSnapshot): string {
 export function formatMetricsAsText(metrics: MetricsSnapshot): string {
   const lines: string[] = [];
 
-  lines.push(`=== Sharpwave Metrics (${new Date(metrics.timestamp).toISOString()}) ===`);
+  lines.push(`=== Xanima Metrics (${new Date(metrics.timestamp).toISOString()}) ===`);
   lines.push(`Agent: ${metrics.agent_id}`);
   lines.push("");
 
