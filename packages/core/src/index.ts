@@ -314,8 +314,9 @@ export {
   setGoal, updateGoal, listGoals, goalHistory, formatGoal, formatGoalHistory, runDriftPass, maybeRunDailyDrift,
   buildGoalTurnContext, goalCounts, parsePriority, deriveKeywords, currentGoalRow, GOAL_ACTIONS, GOAL_STATUSES,
   ackAlignmentNote, criteriaKeywords, isGoalTalk, ALIGNMENT_NOTE_MAX_OFFERS,
+  normGoalTitle, GOAL_TITLE_MAX, looksLikeChatFragment, listLegacyGoals, pauseLegacyGoals, resumeLegacyGoals,
 } from "./goals.js";
-export type { GoalRow, GoalStatus, GoalAction, TriggerSpec, DriftFlag, DriftResult, GoalTurnContext, GoalHistory } from "./goals.js";
+export type { GoalRow, GoalStatus, GoalAction, TriggerSpec, DriftFlag, DriftResult, GoalTurnContext, GoalHistory, LegacyGoal, LegacyPauseResult } from "./goals.js";
 export { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } from "./continuity-tools.js";
 export type { ContinuityResult, ContinuityToolDef } from "./continuity-tools.js";
 export { CONTINUITY_READ_ONLY_TOOLS } from "./continuity-tools.js";

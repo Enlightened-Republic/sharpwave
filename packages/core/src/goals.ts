@@ -12,6 +12,7 @@
 import { maybeRunCommitmentCheck } from "./plans.js";
 import { surfaceOpenItem } from "./open-items.js";
 import { randomUUID } from "node:crypto";
+import type Database from "better-sqlite3";
 import { getDb, getMeta, setMeta, bumpWriteCounter } from "./db.js";
 import { writeNode, getNode } from "./nodes.js";
 import { supersedeNode } from "./beliefs.js";
@@ -47,6 +48,9 @@ export interface GoalRow {
 
 export interface TriggerSpec { kind: "time" | "keyword"; at?: string | number; every_days?: number; keywords?: string[]; cooldown_hours?: number }
 
+/** 0.5.1: the one normal form for a goal title (setGoal / updateGoal store it; soul export / import / diff compare it). */
+export const GOAL_TITLE_MAX = 200;
+export const normGoalTitle = (s: unknown): string => (typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, GOAL_TITLE_MAX) : "");
 const clean = (s: unknown, max: number): string => (typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, max) : "");
 
 /** "critical|high|medium|low" or 1..5 (1 = highest). */
@@ -92,7 +96,7 @@ export interface SetGoalInput {
 }
 
 export function setGoal(agentId: string, input: SetGoalInput): { ok: boolean; error?: string; goal?: GoalRow; triggers?: string[] } {
-  const title = clean(input.title, 200);
+  const title = normGoalTitle(input.title);
   if (!title) return { ok: false, error: "title is required" };
   const pr = input.priority === undefined ? 3 : parsePriority(input.priority);
   if (pr === null) return { ok: false, error: "priority must be 1..5 (1 = highest) or critical|high|medium|low|someday" };
@@ -175,7 +179,7 @@ export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoa
     if (input.action === "supersede" && !reason) return { ok: false, error: "supersede needs a reason (why the goal changed)" };
     const pr = input.priority === undefined ? cur.priority : parsePriority(input.priority);
     if (pr === null) return { ok: false, error: "priority must be 1..5 or critical|high|medium|low|someday" };
-    const title = clean(input.title, 200) || cur.title;
+    const title = normGoalTitle(input.title) || cur.title;
     const node = getNode(agentId, cur.node_id);
     const oldDesc = node?.content.match(/^Goal \(P\d\): .*?\. (.*?)(?:\. Success: .*)?$/)?.[1] ?? null;
     const description = input.description !== undefined ? clean(input.description, 1000) || null : oldDesc && !oldDesc.startsWith("Success:") ? oldDesc : null;
@@ -501,13 +505,77 @@ export function buildGoalTurnContext(agentId: string, prompt: string, config: Pa
   return out;
 }
 
-export function goalCounts(db: ReturnType<typeof getDb>): { active: number; tracked: number; paused: number; done: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null; pendingNoteOffers: number } {
+export function goalCounts(db: ReturnType<typeof getDb>): { active: number; tracked: number; untracked: number; paused: number; done: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null; pendingNoteOffers: number } {
   try {
     const cur = `g.version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id)`;
-    const r = db.prepare(`SELECT SUM(status='active') AS active, SUM(status='active' AND tracked=1) AS tracked, SUM(status='paused') AS paused, SUM(status='done') AS done FROM goals g WHERE ${cur}`).get() as Record<string, number | null>;
-    const drifting = (db.prepare(`SELECT lineage_id, title, drift_reason FROM goals g WHERE ${cur} AND status = 'active' AND drift_reason IS NOT NULL ORDER BY priority`).all() as Array<{ lineage_id: string; title: string; drift_reason: string }>)
+    const r = db.prepare(`SELECT SUM(status='active' AND tracked=1) AS active, SUM(status='active' AND tracked=1) AS tracked, SUM(status='active' AND tracked=0) AS untracked, SUM(status='paused') AS paused, SUM(status='done') AS done FROM goals g WHERE ${cur}`).get() as Record<string, number | null>;
+    const drifting = (db.prepare(`SELECT lineage_id, title, drift_reason FROM goals g WHERE ${cur} AND status = 'active' AND tracked = 1 AND drift_reason IS NOT NULL ORDER BY priority`).all() as Array<{ lineage_id: string; title: string; drift_reason: string }>)
       .map((d) => ({ id: d.lineage_id, title: d.title, reason: d.drift_reason }));
     const n = db.prepare("SELECT text, offered_count FROM alignment_notes WHERE COALESCE(kind, 'alignment') = 'alignment' AND delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get() as { text: string; offered_count: number } | undefined;
-    return { active: r["active"] ?? 0, tracked: r["tracked"] ?? 0, paused: r["paused"] ?? 0, done: r["done"] ?? 0, drifting, pendingNote: n?.text ?? null, pendingNoteOffers: n?.offered_count ?? 0 };
-  } catch { return { active: 0, tracked: 0, paused: 0, done: 0, drifting: [], pendingNote: null, pendingNoteOffers: 0 }; }
+    return { active: r["active"] ?? 0, tracked: r["tracked"] ?? 0, untracked: r["untracked"] ?? 0, paused: r["paused"] ?? 0, done: r["done"] ?? 0, drifting, pendingNote: n?.text ?? null, pendingNoteOffers: n?.offered_count ?? 0 };
+  } catch { return { active: 0, tracked: 0, untracked: 0, paused: 0, done: 0, drifting: [], pendingNote: null, pendingNoteOffers: 0 }; }
+}
+
+// ─── 0.5.1: legacy untracked goals ──────────────────────────────────────────
+// Pre-0.2.0 goal nodes were backfilled as untracked goals. On real brains most of
+// them are chat fragments the old sleep minted from "I want to …" messages. They
+// are no longer injected; these helpers let an operator pause them for good
+// (reversible: resumeLegacyGoals restores exactly the goals of one batch).
+
+/** Heuristic: does this goal title read like a captured chat fragment rather than a goal? */
+export function looksLikeChatFragment(title: string): string | null {
+  const t = title.trim();
+  if (!t) return "empty title";
+  if (/^[^\p{L}\p{N}]/u.test(t)) return "starts with punctuation / markdown";
+  if (/^\p{Ll}/u.test(t)) return "starts lower-case";
+  if (/\*\*|`/.test(t)) return "contains markdown";
+  if (/\b(i|we)\s+(want|wanna|need|said|think|thought|gotta|have to)\b/i.test(t)) return "first-person chat phrasing";
+  if (/\b(you|your|u)\b/i.test(t)) return "addresses someone";
+  if (t.length > 120) return "too long for a goal title";
+  return null;
+}
+
+export interface LegacyGoal { lineage_id: string; node_id: string; title: string; priority: number; created_at: number; fragment: string | null }
+
+/** Current-version, active, untracked goals (read-only). */
+export function listLegacyGoals(db: Database.Database): LegacyGoal[] {
+  const rows = db.prepare(`SELECT lineage_id, node_id, title, priority, created_at FROM goals g
+                           WHERE status = 'active' AND tracked = 0 AND version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id)
+                           ORDER BY created_at, lineage_id`).all() as Array<Omit<LegacyGoal, "fragment">>;
+  return rows.map((r) => ({ ...r, fragment: looksLikeChatFragment(r.title) }));
+}
+
+export interface LegacyPauseResult { batch: string; dryRun: boolean; paused: LegacyGoal[]; kept: LegacyGoal[] }
+
+/** Pause untracked legacy goals that look like chat fragments (or all of them with `all`). */
+export function pauseLegacyGoals(db: Database.Database, opts: { all?: boolean; dryRun?: boolean; now?: number; batch?: string } = {}): LegacyPauseResult {
+  const now = opts.now ?? Date.now();
+  const batch = opts.batch ?? `goals-${new Date(now).toISOString().replace(/[:.]/g, "-")}`;
+  const legacy = listLegacyGoals(db);
+  const paused = legacy.filter((g) => opts.all || g.fragment);
+  const kept = legacy.filter((g) => !paused.includes(g));
+  if (!opts.dryRun && paused.length) {
+    const up = db.prepare("UPDATE goals SET status = 'paused', updated_at = ? WHERE node_id = ? AND status = 'active' AND tracked = 0");
+    const ev = db.prepare("INSERT INTO goal_events (lineage_id, version, node_id, at, action, change_json, reason) SELECT lineage_id, version, node_id, ?, 'pause', ?, ? FROM goals WHERE node_id = ?");
+    db.transaction(() => {
+      for (const g of paused) {
+        up.run(now, g.node_id);
+        ev.run(now, JSON.stringify({ status: { from: "active", to: "paused" }, batch }), `legacy-pause ${batch}: ${g.fragment ?? "untracked legacy goal"}`, g.node_id);
+      }
+    })();
+  }
+  return { batch, dryRun: !!opts.dryRun, paused, kept };
+}
+
+/** Undo one pause-legacy batch (only goals still paused by it). */
+export function resumeLegacyGoals(db: Database.Database, batch: string, opts: { dryRun?: boolean; now?: number } = {}): { batch: string; resumed: string[] } {
+  const now = opts.now ?? Date.now();
+  const ids = (db.prepare("SELECT DISTINCT node_id FROM goal_events WHERE action = 'pause' AND reason LIKE ?").all(`legacy-pause ${batch}:%`) as Array<{ node_id: string }>).map((r) => r.node_id)
+    .filter((id) => (db.prepare("SELECT status FROM goals WHERE node_id = ?").get(id) as { status?: string } | undefined)?.status === "paused");
+  if (!opts.dryRun && ids.length) {
+    const up = db.prepare("UPDATE goals SET status = 'active', updated_at = ? WHERE node_id = ? AND status = 'paused'");
+    const ev = db.prepare("INSERT INTO goal_events (lineage_id, version, node_id, at, action, change_json, reason) SELECT lineage_id, version, node_id, ?, 'resume', ?, ? FROM goals WHERE node_id = ?");
+    db.transaction(() => { for (const id of ids) { up.run(now, id); ev.run(now, JSON.stringify({ status: { from: "paused", to: "active" }, batch }), `legacy-resume ${batch}`, id); } })();
+  }
+  return { batch, resumed: ids };
 }

@@ -701,9 +701,11 @@ export function getActiveGoals(agentId: string): BrainNode[] {
     // v20: goals with a goals row are filtered by goal status (paused / done /
     // archived / superseded versions are not "active") and never fade out of
     // the header; ordered by priority (1 = highest), then salience.
+    // 0.5.1: untracked goals (backfilled pre-0.2.0 goal nodes, often chat
+    // fragments minted by the old sleep) are not "active goals" for the header.
     `SELECT n.* FROM nodes n LEFT JOIN goals g ON g.node_id = n.id
       WHERE n.type = 'goal' AND n.status = 'active' AND (n.valid_until IS NULL OR n.valid_until > ?)
-        AND (g.node_id IS NULL OR g.status = 'active')
+        AND (g.node_id IS NULL OR (g.status = 'active' AND g.tracked = 1))
         AND (n.retrievability > 0.1 OR g.tracked = 1)
       ORDER BY COALESCE(g.priority, 3) ASC, n.salience DESC LIMIT 10`
   ).all(Date.now()) as BrainNode[];
