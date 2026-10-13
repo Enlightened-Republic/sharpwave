@@ -224,7 +224,7 @@ function prospectiveReplay(
   db: ReturnType<typeof getDb>,
 ): number {
   const goals = db.prepare(
-    "SELECT id FROM nodes WHERE type = 'goal' AND retrievability > 0.1 ORDER BY salience DESC LIMIT 5"
+    "SELECT id FROM nodes WHERE type = 'goal' AND retrievability > 0.1 AND NOT EXISTS (SELECT 1 FROM goals g WHERE g.node_id = nodes.id AND (g.tracked = 0 OR g.status != 'active')) ORDER BY salience DESC LIMIT 5"
   ).all() as { id: string }[];
 
   if (goals.length === 0) return 0;

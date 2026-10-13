@@ -130,7 +130,7 @@ export function getNeuromodulatorState(agentId: string): NeuromodState {
     "SELECT MAX(importance) as m FROM episodes WHERE created_at > ?"
   ).get(now - oneDayMs) as { m: number | null }).m ?? 0;
   const activeGoals = (db.prepare(
-    "SELECT COUNT(*) as n FROM nodes WHERE type = 'goal' AND retrievability > 0.1"
+    "SELECT COUNT(*) as n FROM nodes WHERE type = 'goal' AND retrievability > 0.1 AND NOT EXISTS (SELECT 1 FROM goals g WHERE g.node_id = nodes.id AND (g.tracked = 0 OR g.status != 'active'))"
   ).get() as { n: number }).n;
   const norepinephrine = Math.min(1, recentPeak * 0.7 + Math.min(activeGoals / 5, 1) * 0.3);
 

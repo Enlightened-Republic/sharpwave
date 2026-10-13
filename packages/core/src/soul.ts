@@ -22,7 +22,7 @@ import { writeNode } from "./nodes.js";
 import { writeEdge } from "./edges.js";
 import { supersedeNode, retractNode } from "./beliefs.js";
 import { updateSelfModelField } from "./self-model.js";
-import { setGoal, updateGoal, currentGoalRow } from "./goals.js";
+import { setGoal, updateGoal, currentGoalRow, normGoalTitle } from "./goals.js";
 import { recordDecision, decisionContent } from "./decisions.js";
 import { createOpenItem } from "./open-items.js";
 import { INJECTION_RE, applyQuarantinedOp, describeQuarantineOp, type QuarantineOp } from "./quarantine.js";
@@ -200,13 +200,13 @@ export function exportSoul(db: Database.Database, o: ExportSoulOptions): SoulPac
   const values = (db.prepare(`SELECT ${NODE_COLS} FROM nodes WHERE type = 'identity' AND ${live} ORDER BY importance DESC, id`).all() as NodeRow[]).map((r) => nodeItem(db, r, cap, "value"));
 
   const goalRows = db.prepare(`SELECT g.*, n.writer_agent_id, n.source_type, n.confidence_score FROM goals g JOIN nodes n ON n.id = g.node_id
-                               WHERE g.status = 'active' AND n.status = 'active'${sensN} ORDER BY g.priority, g.lineage_id`).all() as Array<Record<string, unknown>>;
+                               WHERE g.status = 'active' AND g.tracked = 1 AND n.status = 'active'${sensN} ORDER BY g.priority, g.lineage_id`).all() as Array<Record<string, unknown>>;
   const evQ = db.prepare("SELECT version, at, action, reason, change_json FROM goal_events WHERE lineage_id = ? ORDER BY at, id");
   const goals: SoulGoal[] = goalRows.map((g) => {
     let hist = (evQ.all(g["lineage_id"]) as Array<{ version: number; at: number; action: string; reason: string | null; change_json: string | null }>).map((e) => ({
       version: e.version, at: iso(e.at), action: e.action, reason: e.reason ?? null, change: e.change_json ? safeParse(e.change_json) : null }));
     if (compact) hist = hist.slice(-3);
-    return { id: originIdOf(db, String(g["lineage_id"]), "goal"), version: Number(g["version"]), title: String(g["title"]), priority: Number(g["priority"]), status: String(g["status"]),
+    return { id: originIdOf(db, String(g["lineage_id"]), "goal"), version: Number(g["version"]), title: normGoalTitle(String(g["title"])), priority: Number(g["priority"]), status: String(g["status"]),
       success_criteria: (g["success_criteria"] as string | null) ?? null, keywords: (safeParse(String(g["keywords_json"] ?? "[]")) as string[]) ?? [],
       provenance: prov({ writer_agent_id: g["writer_agent_id"] as string | null, source_type: String(g["source_type"]), confidence_score: Number(g["confidence_score"]), created_at: Number(g["created_at"]), updated_at: Number(g["updated_at"]) }), history: hist };
   });
@@ -399,7 +399,7 @@ type AnyItem = SoulItem | SoulGoal | SoulLesson | { id: string; text: string };
 function digest(section: SoulSection, x: AnyItem | undefined): string | null {
   if (!x) return null;
   if (section === "identity") return sha256((x as { text: string }).text.trim());
-  if (section === "goals") { const g = x as SoulGoal; return sha256(canonicalJson([g.title, g.priority, g.status, g.success_criteria ?? null])); }
+  if (section === "goals") { const g = x as SoulGoal; return sha256(canonicalJson([normGoalTitle(g.title), g.priority, g.status, g.success_criteria ?? null])); }
   if (section === "lessons") { const l = x as SoulLesson; return sha256(canonicalJson([l.context, l.chosen, l.outcome_status ?? null, l.lesson])); }
   const n = x as SoulItem;
   if (section === "open_items" || section === "commitments") return sha256(canonicalJson([n.content, n.status ?? null]));
@@ -495,7 +495,7 @@ function localIdFor(db: Database.Database, originId: string, section: SoulSectio
 }
 function matchByLabel(db: Database.Database, section: SoulSection, x: AnyItem): string | null {
   if (section === "identity") return null;
-  if (section === "goals") return (db.prepare("SELECT lineage_id FROM goals WHERE status = 'active' AND lower(title) = lower(?) LIMIT 1").get((x as SoulGoal).title) as { lineage_id: string } | undefined)?.lineage_id ?? null;
+  if (section === "goals") return (db.prepare("SELECT lineage_id FROM goals WHERE status = 'active' AND lower(trim(title)) = lower(?) LIMIT 1").get(normGoalTitle((x as SoulGoal).title)) as { lineage_id: string } | undefined)?.lineage_id ?? null;
   if (section === "lessons") return (db.prepare("SELECT node_id FROM decisions WHERE lower(lesson) = lower(?) AND merged_into IS NULL LIMIT 1").get((x as SoulLesson).lesson) as { node_id: string } | undefined)?.node_id ?? null;
   const n = x as SoulItem;
   return (db.prepare("SELECT id FROM nodes WHERE status = 'active' AND type = ? AND lower(label) = lower(?) LIMIT 1").get(n.type, n.label) as { id: string } | undefined)?.id ?? null;
@@ -507,7 +507,7 @@ function localItem(db: Database.Database, section: SoulSection, localId: string,
   if (section === "identity") { const t = identityText(db); return t ? { id: "identity", text: t } : undefined; }
   if (section === "goals") {
     const g = db.prepare("SELECT * FROM goals WHERE lineage_id = ? AND status != 'superseded' ORDER BY version DESC LIMIT 1").get(localId) as Record<string, unknown> | undefined;
-    return g ? ({ id: originId, version: Number(g["version"]), title: String(g["title"]), priority: Number(g["priority"]), status: String(g["status"]), success_criteria: (g["success_criteria"] as string | null) ?? null, keywords: [], history: [] } as unknown as SoulGoal) : undefined;
+    return g ? ({ id: originId, version: Number(g["version"]), title: normGoalTitle(String(g["title"])), priority: Number(g["priority"]), status: String(g["status"]), success_criteria: (g["success_criteria"] as string | null) ?? null, keywords: [], history: [] } as unknown as SoulGoal) : undefined;
   }
   if (section === "lessons") {
     const d = db.prepare("SELECT * FROM decisions WHERE node_id = ?").get(localId) as Record<string, unknown> | undefined;
