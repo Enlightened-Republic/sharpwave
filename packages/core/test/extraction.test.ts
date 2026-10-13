@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { queueEpisodeForExtraction, drainExtractionQueue } from "../src/extraction.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
-// ── API drift (openwave / sharpwave-core split, Task 6d) ───────────────────────
+// ── API drift (openwave / xanima-core split, Task 6d) ───────────────────────
 // clawbrain-v4's DEFAULT_CONFIG shipped `llmExtractionEnabled: true`; sharpwave's
 // DEFAULT_CONFIG ships it `false` (opt-in). The clawbrain suite implicitly relied
 // on the enabled default for every non-"disabled" case. Each of those cases now

@@ -47,13 +47,13 @@ export async function awakeReplayTick(
     buildDreamContext(agentId, db, replayed);
     await new Promise<void>((r) => setImmediate(r));
     if (replayed > 0) {
-      log.info(`[sharpwave] awake replay: ${replayed} nodes stabilized (agent=${agentId})`);
+      log.info(`[xanima] awake replay: ${replayed} nodes stabilized (agent=${agentId})`);
     }
     if (prospectivelyActivated > 0) {
-      log.info(`[sharpwave] awake replay: ${prospectivelyActivated} prospective node(s) pre-activated (agent=${agentId})`);
+      log.info(`[xanima] awake replay: ${prospectivelyActivated} prospective node(s) pre-activated (agent=${agentId})`);
     }
   } catch (err) {
-    log.warn(`[sharpwave] awakeReplayTick error (agent=${agentId}): ${String(err)}`);
+    log.warn(`[xanima] awakeReplayTick error (agent=${agentId}): ${String(err)}`);
   }
 }
 
@@ -195,7 +195,7 @@ function formHebbianEdgesSync(
   }
 
   if (formed > 0) {
-    log.info(`[sharpwave] Hebbian: ${formed} associate edge(s) formed (agent=${agentId})`);
+    log.info(`[xanima] Hebbian: ${formed} associate edge(s) formed (agent=${agentId})`);
   }
 }
 
@@ -224,7 +224,7 @@ function prospectiveReplay(
   db: ReturnType<typeof getDb>,
 ): number {
   const goals = db.prepare(
-    "SELECT id FROM nodes WHERE type = 'goal' AND retrievability > 0.1 ORDER BY salience DESC LIMIT 5"
+    "SELECT id FROM nodes WHERE type = 'goal' AND retrievability > 0.1 AND NOT EXISTS (SELECT 1 FROM goals g WHERE g.node_id = nodes.id AND (g.tracked = 0 OR g.status != 'active')) ORDER BY salience DESC LIMIT 5"
   ).all() as { id: string }[];
 
   if (goals.length === 0) return 0;

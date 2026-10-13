@@ -19,10 +19,10 @@ import { getDb, closeDb } from "../src/db.js";
 import { writeNode, getNode, ftsSearchNodes } from "../src/nodes.js";
 import { searchEpisodes } from "../src/episodes.js";
 
-// sharpwave-core's db.ts keeps the migration target module-local (TARGET = 18)
+// xanima-core's db.ts keeps the migration target module-local (TARGET = 18)
 // and does NOT export a SCHEMA_VERSION symbol — assert against the known value
 // (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 24; // v24 = Xanima 0.5.0 rooms (room_items / room_conflicts) + nodes.scope_tags
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 // sharpwave's db.ts resolves the per-agent path as
@@ -30,7 +30,7 @@ const SCHEMA_VERSION = 18;
 // under CLAWBRAIN_DATA_DIR/<agentId>/brain.db.
 
 function agentDir(agentId: string): string {
-  return join(process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".sharpwave"), agentId);
+  return join(process.env["XANIMA_DATA_DIR"] || process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".xanima"), agentId);
 }
 
 function agentDbPath(agentId: string): string {

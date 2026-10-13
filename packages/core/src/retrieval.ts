@@ -1,5 +1,6 @@
+import { applyDecisionBoost } from "./decisions.js";
 import { getDb } from "./db.js";
-import { ftsSearchNodes, getTopByType, touchNode } from "./nodes.js";
+import { ftsSearchNodes, getTopByType, getActiveGoals, touchNode } from "./nodes.js";
 import { fetchEmbedding, vectorSearchNodes, rrfFuse, drainEmbeddingQueue } from "./embeddings.js";
 import { spreadActivation, workingMemoryBoost, updateWorkingMemory } from "./activation.js";
 import { getNeuromodulatorState } from "./consolidation.js";
@@ -56,7 +57,7 @@ export async function hybridRetrieve(
     activationMap,
   );
 
-  const topNodes = activated.slice(0, limit);
+  const topNodes = applyDecisionBoost(activated, config).slice(0, limit);
 
   for (const node of topNodes) {
     touchNode(agentId, node.id);
@@ -84,7 +85,7 @@ export async function bootstrapRetrieve(
   const db = getDb(agentId);
 
   const identityNodes = getTopByType(agentId, "identity", 3);
-  const goalNodes = getTopByType(agentId, "goal", 3);
+  const goalNodes = getActiveGoals(agentId).slice(0, 3); // 0.5.1: tracked goals only (no untracked legacy fragments)
   const seeds: BrainNode[] = [...identityNodes, ...goalNodes];
 
   const currentNeuromodState = getNeuromodulatorState(agentId);

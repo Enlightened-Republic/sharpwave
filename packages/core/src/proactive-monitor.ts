@@ -43,7 +43,7 @@ function structured(fields: StructuredFields): string {
   for (const [k, v] of Object.entries(fields)) {
     if (v !== undefined) out[k] = v;
   }
-  return `[sharpwave] ${JSON.stringify(out)}`;
+  return `[xanima] ${JSON.stringify(out)}`;
 }
 
 function contextMatchBonus(enc: NeuromodState, cur: NeuromodState): number {

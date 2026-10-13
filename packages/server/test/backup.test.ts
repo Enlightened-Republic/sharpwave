@@ -50,7 +50,7 @@ describe("backups", () => {
     expect(existsSync(join(dir, "notes.txt"))).toBe(true);
   });
 
-  it("`sharpwave-server backup now` CLI snapshots every brain under the root", async () => {
+  it("`xanima-server backup now` CLI snapshots every brain under the root", async () => {
     const h = await startService();
     const tok = h.mint("bob");
     await tool(h.url, tok, "brain_write", { type: "semantic", label: "cli backup", content: "cli backup payload" });

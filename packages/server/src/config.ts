@@ -7,6 +7,8 @@
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { defaultDataHome, envGet } from "xanima-core";
+import type { BrainConfig } from "xanima-core";
 import { defaultOffsiteConfig, type OffsiteConfig } from "./offsite.js";
 import { defaultProvisioningConfig, type ProvisioningConfig } from "./provision.js";
 
@@ -70,7 +72,7 @@ export interface ServiceConfig {
   allowedOrigins: string[];
   /**
    * brain_episode_append does not store OpenClaw system-noise turns (heartbeat
-   * polls, exec/cron wakes, NO_REPLY / HEARTBEAT_OK replies; sharpwave-core
+   * polls, exec/cron wakes, NO_REPLY / HEARTBEAT_OK replies; xanima-core
    * isSystemNoiseEpisode). Default true. Guards older clients (openwave <= 0.1.3).
    */
   skipSystemNoiseEpisodes: boolean;
@@ -82,10 +84,20 @@ export interface ServiceConfig {
   provisioning: ProvisioningConfig;
   /** Optional log file (append). When unset logs go to stderr. */
   logFile?: string;
+  /**
+   * Engine settings passed to xanima-core (BrainConfig), e.g. the Xanima
+   * 0.1.0 flags { "beliefMetadata": true, "selfStatus": true,
+   * "relativeTimeLabels": true, "lowConfidenceThreshold": 0.4,
+   * "sleepBeliefReview": true }. Unset keys use core's DEFAULT_CONFIG.
+   */
+  brain?: Partial<BrainConfig>;
 }
 
+/** Default service root: <data home>/service, where the data home is ~/.xanima (or ~/.sharpwave if not migrated yet). */
 export function defaultRoot(): string {
-  return join(homedir(), ".sharpwave", "service");
+  const env = envGet("SERVICE_ROOT");
+  if (env) return env;
+  return join(defaultDataHome(), "service");
 }
 
 export function defaultConfig(root = defaultRoot()): ServiceConfig {
@@ -123,9 +135,9 @@ export function expandHome(p: string): string {
   return p;
 }
 
-/** Default key file: ~/.sharpwave/backup.key (i.e. %USERPROFILE%\\.sharpwave\\backup.key). */
+/** Default key file: <data home>/backup.key (~/.xanima/backup.key, or ~/.sharpwave/backup.key if not migrated). */
 export function defaultKeyFile(): string {
-  return join(homedir(), ".sharpwave", "backup.key");
+  return join(defaultDataHome(), "backup.key");
 }
 
 export type Partialish = Partial<Omit<ServiceConfig, "sleep" | "backup" | "offsiteBackup" | "provisioning">> & {

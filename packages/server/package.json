@@ -1,13 +1,15 @@
 {
-  "name": "sharpwave-server",
-  "version": "0.1.0",
+  "name": "xanima-server",
+  "version": "0.5.0",
   "private": true,
-  "description": "SharpWave brain service: one process that owns every brain (shared + one private per agent), served over MCP Streamable HTTP with per-agent bearer tokens.",
+  "description": "Xanima brain service: one process that owns every brain (shared + one private per agent), served over MCP Streamable HTTP with per-agent bearer tokens.",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
+    "xanima-server": "dist/cli.js",
+    "xanima-client": "bin/xanima-client.mjs",
     "sharpwave-server": "dist/cli.js",
-    "sharpwave-client": "bin/sharpwave-client.mjs"
+    "sharpwave-client": "bin/xanima-client.mjs"
   },
   "scripts": {
     "build": "node esbuild.mjs",
@@ -32,7 +34,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
-    "sharpwave-core": "^0.4.5",
+    "xanima-core": "0.5.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },

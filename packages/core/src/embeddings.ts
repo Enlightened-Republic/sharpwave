@@ -1,3 +1,4 @@
+import { envGet } from "./env.js";
 import { getDb } from "./db.js";
 import { edgeExists, writeEdge } from "./edges.js";
 import { updatePsHash } from "./nodes.js";
@@ -28,7 +29,7 @@ const MAX_EMBED_QUEUE = 200;
 const EMBEDDING_CACHE_DEFAULT_MAX = 1024;
 const embeddingCache: Map<string, Float32Array> = new Map();
 const embeddingCacheMax: number = (() => {
-  const raw = process.env["SHARPWAVE_EMBEDDING_CACHE_MAXSIZE"];
+  const raw = envGet("EMBEDDING_CACHE_MAXSIZE");
   const n = raw ? parseInt(raw, 10) : EMBEDDING_CACHE_DEFAULT_MAX;
   return Number.isFinite(n) && n > 0 ? n : EMBEDDING_CACHE_DEFAULT_MAX;
 })();
@@ -816,8 +817,8 @@ function checkReconsolidation(
     const decayedRetrievability = Math.max(0.05, other.retrievability * 0.85);
     const now = Date.now();
     db.prepare(
-      "UPDATE nodes SET retrievability = ?, is_consolidated = 0, valid_until = ?, updated_at = ? WHERE id = ?",
-    ).run(decayedRetrievability, now, now, other.id);
+      "UPDATE nodes SET retrievability = ?, is_consolidated = 0, valid_until = ?, updated_at = ?, status = 'superseded', status_reason = 'reconsolidation: newer near-duplicate', status_changed_at = ? WHERE id = ?",
+    ).run(decayedRetrievability, now, now, now, other.id);
 
     reconsolidated++;
     log?.info(
@@ -879,8 +880,8 @@ function checkNoveltyGate(
     ).run(mergedImportance, now, other.id);
 
     db.prepare(
-      "UPDATE nodes SET valid_until = ?, updated_at = ? WHERE id = ?",
-    ).run(now, now, nodeId);
+      "UPDATE nodes SET valid_until = ?, updated_at = ?, status = 'archived', status_reason = 'coreference: merged into an existing node', status_changed_at = ? WHERE id = ?",
+    ).run(now, now, now, nodeId);
 
     if (!edgeExists(agentId, nodeId, other.id, "coreference_of")) {
       writeEdge(agentId, nodeId, other.id, "coreference_of", { weight: sim });
@@ -962,5 +963,5 @@ function structured(fields: StructuredFields): string {
   for (const [k, v] of Object.entries(fields)) {
     if (v !== undefined) filtered[k] = v;
   }
-  return `[sharpwave] ${JSON.stringify(filtered)}`;
+  return `[xanima] ${JSON.stringify(filtered)}`;
 }

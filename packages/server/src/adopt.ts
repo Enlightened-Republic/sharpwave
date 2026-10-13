@@ -1,6 +1,6 @@
 // packages/server/src/adopt.ts
 //
-// `sharpwave-server brain adopt` — make an EXISTING per-agent brain.db (e.g. a
+// `xanima-server brain adopt` — make an EXISTING per-agent brain.db (e.g. a
 // legacy OpenWave / sharpwave-MCP brain at ~/.sharpwave/<agent>/brain.db) the
 // service's private brain for that agent:
 //
@@ -19,7 +19,7 @@
 //     Default mode is `copy`: the source stays where it is, byte-identical, so
 //     OpenWave local mode (or the sharpwave MCP) keeps working as a rollback.
 //     `move` renames the source files aside (never deletes) after success.
-//   • The adopted copy is opened through sharpwave-core's getDb(), which runs
+//   • The adopted copy is opened through xanima-core's getDb(), which runs
 //     the additive schema migrations (… → 18, writer_agent_id with NO backfill).
 //     Optional `--backfill-writer` stamps NULL writers afterwards.
 //   • Verification: PRAGMA integrity_check = ok, node/edge/episode counts equal
@@ -38,14 +38,14 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { closeDb, getDb } from "sharpwave-core";
+import { SCHEMA_VERSION, closeDb, getDb, envDelete, envRestore, envSet, envSnapshot } from "xanima-core";
 
 import { AuditLog } from "./audit.js";
 import { snapshotStamp } from "./backup.js";
 import { validateAgentId } from "./tokens.js";
 
 /** Minimum schema the adopted brain must reach (core v18 = writer_agent_id). */
-export const ADOPT_MIN_SCHEMA = 18;
+export const ADOPT_MIN_SCHEMA = SCHEMA_VERSION;
 /** Sidecar files that belong to a SQLite database file. */
 const SIDECARS = ["-wal", "-shm", "-journal"] as const;
 
@@ -221,15 +221,15 @@ function moveDbAside(dbFile: string, tag: string): Array<[string, string]> {
 }
 
 function withCoreDataDir<T>(brainsDir: string, fn: () => T): T {
-  const prevDir = process.env["SHARPWAVE_DATA_DIR"];
-  const prevPath = process.env["SHARPWAVE_DB_PATH"];
-  delete process.env["SHARPWAVE_DB_PATH"];
-  process.env["SHARPWAVE_DATA_DIR"] = brainsDir;
+  const prevDir = envSnapshot("DATA_DIR");
+  const prevPath = envSnapshot("DB_PATH");
+  envDelete("DB_PATH");
+  envSet("DATA_DIR", brainsDir);
   try {
     return fn();
   } finally {
-    if (prevDir === undefined) delete process.env["SHARPWAVE_DATA_DIR"]; else process.env["SHARPWAVE_DATA_DIR"] = prevDir;
-    if (prevPath !== undefined) process.env["SHARPWAVE_DB_PATH"] = prevPath;
+    envRestore("DATA_DIR", prevDir);
+    envRestore("DB_PATH", prevPath);
   }
 }
 
@@ -306,7 +306,7 @@ export async function adoptBrain(opts: AdoptOptions): Promise<AdoptResult> {
     actions.push(`pre-adopt backup (VACUUM INTO, WAL included) -> ${backupPath}`);
     if (t.state !== "absent") actions.push(`move existing ${t.state} target aside -> ${target}.${asideTag}`);
     actions.push(`copy backup -> ${target}`);
-    actions.push(`open via sharpwave-core (migrate schema ${before.schema} -> ${Math.max(before.schema, ADOPT_MIN_SCHEMA)})`);
+    actions.push(`open via xanima-core (migrate schema ${before.schema} -> ${Math.max(before.schema, ADOPT_MIN_SCHEMA)})`);
     actions.push(backfillWriter ? `backfill NULL writer_agent_id -> "${backfillWriter}"` : "leave writer_agent_id NULL on existing rows");
     actions.push("verify integrity_check, counts, schema; checkpoint WAL");
     if (mode === "move") actions.push(`rename source files aside (${basename(source)}.adopted-${stamp})`);

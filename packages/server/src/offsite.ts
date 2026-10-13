@@ -24,11 +24,11 @@ export interface OffsiteConfig {
   enabled: boolean;
   /** Key file (outside the repo), e.g. %USERPROFILE%\.sharpwave\backup.key. */
   keyFile?: string;
-  /** Env var holding the key (base64/hex); wins over keyFile when set. Default SHARPWAVE_BACKUP_KEY. */
+  /** Env var holding the key (base64/hex); wins over keyFile when set. Default XANIMA_BACKUP_KEY (SHARPWAVE_BACKUP_KEY still read in 0.1.x). */
   keyEnv: string;
   /** Local staging dir for encrypted artifacts. Default <root>/offsite-outbox. */
   outboxDir?: string;
-  /** Destination (a): folder, e.g. "G:\\My Drive\\SharpWave". Artifacts go to <folder>/<brain>/. */
+  /** Destination (a): folder, e.g. "G:\\My Drive\\Xanima". Artifacts go to <folder>/<brain>/. */
   folder?: string;
   /**
    * Destination (b): argv, run without a shell after each artifact. Placeholders:
@@ -44,7 +44,7 @@ export interface OffsiteConfig {
 }
 
 export function defaultOffsiteConfig(): OffsiteConfig {
-  return { enabled: false, keyEnv: "SHARPWAVE_BACKUP_KEY", commandTimeoutMs: 10 * 60_000, keepDaily: 7, keepWeekly: 8 };
+  return { enabled: false, keyEnv: "XANIMA_BACKUP_KEY", commandTimeoutMs: 10 * 60_000, keepDaily: 7, keepWeekly: 8 };
 }
 
 // ---------- retention ----------

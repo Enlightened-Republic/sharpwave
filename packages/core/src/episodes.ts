@@ -54,7 +54,7 @@ export function getEpisodesSince(agentId: string, sinceMs: number, minImportance
  * Groups episodes by session_id and returns one summary line per session,
  * with a relative timestamp and the first user message as a topic hint.
  * Ported from clawbrain-v4/src/episodes.ts to restore the wake-up recap layer
- * (openwave / sharpwave-core split, Task 2). Read-only; no schema change.
+ * (openwave / xanima-core split, Task 2). Read-only; no schema change.
  */
 export function getSessionSummaries(
   agentId: string,

@@ -11,7 +11,7 @@ import { tempRoot } from "./helpers.js";
 const run = promisify(execFile);
 const SERVER_CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
-describe("sharpwave-server fatal errors", () => {
+describe("xanima-server fatal errors", () => {
   it("are appended to --log-file as well as stderr", async () => {
     const root = tempRoot();
     const log = join(root, "logs", "service.log");
@@ -21,7 +21,7 @@ describe("sharpwave-server fatal errors", () => {
       expect(err?.code).toBe(1);
       expect(err?.stderr).toContain("missing.json");
       const text = readFileSync(log, "utf8");
-      expect(text).toMatch(/\[sharpwave-server\] fatal sharpwave-server: .*missing\.json/);
+      expect(text).toMatch(/\[xanima-server\] fatal xanima-server: .*missing\.json/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

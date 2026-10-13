@@ -1,3 +1,4 @@
+import { envGet } from "./env.js";
 import { getMeta, setMeta } from "./db.js";
 
 /**
@@ -17,7 +18,7 @@ import { getMeta, setMeta } from "./db.js";
  * endpoint. No identifiers are sent, nothing is uploaded.
  */
 
-const REGISTRY_URL = "https://registry.npmjs.org/sharpwave/latest";
+const REGISTRY_URL = "https://registry.npmjs.org/xanima/latest";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 3000;
 const LAST_CHECK_KEY = "update_check:last_run";
@@ -28,7 +29,7 @@ export function updateCheckDisabled(env: NodeJS.ProcessEnv = process.env): boole
     v !== undefined && v !== "" && v !== "0" && v.toLowerCase() !== "false";
 
   return (
-    truthy(env["SHARPWAVE_NO_UPDATE_CHECK"]) ||
+    truthy(envGet("NO_UPDATE_CHECK", env)) ||
     truthy(env["NO_UPDATE_NOTIFIER"]) ||
     truthy(env["CI"]) ||
     env["NODE_ENV"] === "test"
@@ -124,8 +125,8 @@ export async function checkForUpdate(
   if (!latest || !isNewer(latest, currentVersion)) return null;
 
   write(
-    `[sharpwave] update available: ${currentVersion} → ${latest}` +
-      `  (npm install sharpwave@latest — set SHARPWAVE_NO_UPDATE_CHECK=1 to silence)\n`,
+    `[xanima] update available: ${currentVersion} → ${latest}` +
+      `  (npm install xanima@latest — set XANIMA_NO_UPDATE_CHECK=1 to silence)\n`,
   );
   return latest;
 }

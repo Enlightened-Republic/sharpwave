@@ -13,7 +13,7 @@
   "offsiteBackup": {
     "enabled": false,
     "keyFile": "%USERPROFILE%\\.sharpwave\\backup.key",
-    "folder": "G:\\My Drive\\SharpWave",
+    "folder": "G:\\My Drive\\Xanima",
     "keepDaily": 7,
     "keepWeekly": 8
   }

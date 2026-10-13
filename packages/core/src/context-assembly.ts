@@ -6,12 +6,15 @@ import { detectSkillCandidates } from "./skill-evolution.js";
 import { bootstrapRetrieve } from "./retrieval.js";
 import { hybridRetrieve } from "./retrieval.js";
 import { getNeuromodulatorState } from "./consolidation.js";
-import { getMeta } from "./db.js";
+import { getMeta, getDb } from "./db.js";
+import { beliefTag, relativeTime } from "./belief-meta.js";
+import { computeBrainStatus, statusFooter } from "./beliefs.js";
 import { recordInjection } from "./valor.js";
 import type { BrainConfig } from "./types.js";
+import { applyInjectionControls, tickFocus, injectionCategories } from "./injection-control.js";
 
 const BRAIN_HEADER =
-  "[SharpWave active] Your memory is pre-loaded below — no manual lookup needed. brain_write to record new facts, brain_reflect to review identity/goals, brain_query only for deep dives. Memory consolidates automatically in the background (awake replay every 30 min; deeper consolidation once enough new experience accumulates). Use brain_docs section='memo' for full system overview." +
+  "[Xanima active] Your memory is pre-loaded below — no manual lookup needed. brain_write to record new facts, brain_retract / brain_supersede (with a reason) to correct wrong ones, brain_status for a memory self-check, brain_record_decision / brain_update_decision_outcome to log choices and what happened, brain_set_goal / brain_list_goals for standing goals, brain_reflect for what worked / didn't, brain_hypothesis / brain_question for open items, brain_commit / brain_plan for commitments and plans (resume gives a briefing), brain_changes / brain_conflicts / brain_briefing to catch up, brain_query only for deep dives (as_of for 'what did I believe then'). Memory consolidates automatically in the background (awake replay every 30 min; deeper consolidation once enough new experience accumulates). Use brain_docs section='memo' for full system overview." +
   " (compat: ClawBrain v3)";
 
 export function getDreamContext(agentId: string): string {
@@ -71,10 +74,11 @@ export async function buildSelfModelHeader(
   opts: ContextAssemblyOptions = {},
 ): Promise<string> {
   const isVoice = surface === "voice";
+  const cats = injectionCategories(_config ?? {});
   const parts: string[] = [];
   if (!isVoice) {
     parts.push(
-      "[SharpWave] Identity, goals, and neuromodulator state pre-loaded. Use brain_query for deep recall.",
+      "[Xanima] Identity, goals, and neuromodulator state pre-loaded. Use brain_query for deep recall.",
     );
   }
 
@@ -83,7 +87,7 @@ export async function buildSelfModelHeader(
   if (!opts.externalMemoryActive) {
     try {
       const selfModel = getSelfModel(agentId);
-      if (selfModel?.identity) {
+      if (selfModel?.identity && cats.identity) {
         const max = isVoice ? 200 : 400;
         parts.push(`[identity] ${selfModel.identity.trim().slice(0, max)}`);
       }
@@ -101,16 +105,16 @@ export async function buildSelfModelHeader(
         } catch { /* malformed user_model */ }
       }
     } catch (err) {
-      log?.warn(`[sharpwave] selfModelHeader identity failed: ${String(err)}`);
+      log?.warn(`[xanima] selfModelHeader identity failed: ${String(err)}`);
     }
 
     try {
-      const goals = getActiveGoals(agentId).slice(0, 3);
+      const goals = cats.goals ? getActiveGoals(agentId).slice(0, 3) : [];
       if (goals.length > 0) {
         parts.push(`[goals] ${goals.map((g) => g.label).join(" · ")}`);
       }
     } catch (err) {
-      log?.warn(`[sharpwave] selfModelHeader goals failed: ${String(err)}`);
+      log?.warn(`[xanima] selfModelHeader goals failed: ${String(err)}`);
     }
   }
 
@@ -123,7 +127,7 @@ export async function buildSelfModelHeader(
         `acetylcholine=${neuro.acetylcholine.toFixed(2)} norepinephrine=${neuro.norepinephrine.toFixed(2)} — ${neuro.interpretation}`,
       );
     } catch (err) {
-      log?.warn(`[sharpwave] selfModelHeader neuro failed: ${String(err)}`);
+      log?.warn(`[xanima] selfModelHeader neuro failed: ${String(err)}`);
     }
   }
 
@@ -153,7 +157,7 @@ export async function buildBootstrapContext(
     const dreamBlock = getDreamContext(agentId);
     if (dreamBlock) { blocks.push(dreamBlock); used += dreamBlock.length; }
   } catch (err) {
-    log?.warn(`[sharpwave] bootstrap dream failed: ${String(err)}`);
+    log?.warn(`[xanima] bootstrap dream failed: ${String(err)}`);
   }
 
   // Self model prose — skipped when a host curated tier already owns durable
@@ -167,7 +171,7 @@ export async function buildBootstrapContext(
         if (selfBlock) { blocks.push(selfBlock); used += selfBlock.length; }
       }
     } catch (err) {
-      log?.warn(`[sharpwave] bootstrap self-model failed: ${String(err)}`);
+      log?.warn(`[xanima] bootstrap self-model failed: ${String(err)}`);
     }
   }
 
@@ -181,7 +185,7 @@ export async function buildBootstrapContext(
         used += morningBlock.length;
       }
     } catch (err) {
-      log?.warn(`[sharpwave] bootstrap morning-brief failed: ${String(err)}`);
+      log?.warn(`[xanima] bootstrap morning-brief failed: ${String(err)}`);
     }
   }
 
@@ -198,7 +202,7 @@ export async function buildBootstrapContext(
         used += goalBlock.length;
       }
     } catch (err) {
-      log?.warn(`[sharpwave] bootstrap goals failed: ${String(err)}`);
+      log?.warn(`[xanima] bootstrap goals failed: ${String(err)}`);
     }
   }
 
@@ -209,14 +213,14 @@ export async function buildBootstrapContext(
       if (topNodes.length > 0) {
         const cap = isVoice ? 3 : 8;
         const knowLines = topNodes.slice(0, cap).map((n) =>
-          `[${n.type}] ${n.label}: ${n.content.slice(0, 120)}`
+          `[${n.type}] ${n.label}: ${n.content.slice(0, 120)}${config.relativeTimeLabels === false ? "" : ` (${relativeTime(n.created_at)})`}`
         ).join("\n");
         const knowBlock = `[BRAIN: know]\n${knowLines}`;
         blocks.push(knowBlock);
         used += knowBlock.length;
       }
     } catch (err) {
-      log?.warn(`[sharpwave] bootstrap retrieval failed: ${String(err)}`);
+      log?.warn(`[xanima] bootstrap retrieval failed: ${String(err)}`);
     }
   }
 
@@ -233,7 +237,7 @@ export async function buildBootstrapContext(
       if (used + epBlock.length < budgetChars) { blocks.push(epBlock); used += epBlock.length; }
     }
   } catch (err) {
-    log?.warn(`[sharpwave] bootstrap episodes failed: ${String(err)}`);
+    log?.warn(`[xanima] bootstrap episodes failed: ${String(err)}`);
   }
 
   // Review queue + skill candidates — chat-surface only. Both are FSRS/skill-
@@ -250,11 +254,11 @@ export async function buildBootstrapContext(
         if (used + reviewBlock.length < budgetChars) blocks.push(reviewBlock);
       }
     } catch (err) {
-      log?.warn(`[sharpwave] bootstrap review-queue failed: ${String(err)}`);
+      log?.warn(`[xanima] bootstrap review-queue failed: ${String(err)}`);
     }
 
     try {
-      // skill-evolution is a stub in sharpwave-core (returns `unknown[]`), so the
+      // skill-evolution is a stub in xanima-core (returns `unknown[]`), so the
       // section stays empty until it is de-stubbed. Cast keeps the .map typed;
       // guarded by `.length > 0` which is always false for the stub.
       const candidates = detectSkillCandidates(agentId, config) as Array<{
@@ -266,7 +270,7 @@ export async function buildBootstrapContext(
         if (used + candBlock.length < budgetChars) blocks.push(candBlock);
       }
     } catch (err) {
-      log?.warn(`[sharpwave] bootstrap skill-candidates failed: ${String(err)}`);
+      log?.warn(`[xanima] bootstrap skill-candidates failed: ${String(err)}`);
     }
   }
 
@@ -305,16 +309,29 @@ export async function buildRecallContext(
 ): Promise<string> {
   if (!query || query.length < 3) return "";
 
-  const results = await hybridRetrieve(agentId, query, sessionId, config);
+  const raw = await hybridRetrieve(agentId, query, sessionId, config);
+  if (raw.length === 0) return "";
+  // Xanima 0.5.0: injection controls (category switches, sensitivity, brain_focus for this turn).
+  let focus = null;
+  try { focus = tickFocus(getDb(agentId)); } catch { /* pre-v24 / read-only */ }
+  const results = applyInjectionControls(raw, { query, focus, config }).items;
   if (results.length === 0) return "";
 
   // Voice: cap to top 3 query-relevant nodes, shorter content. Chat: full.
   const cap = surface === "voice" ? 3 : results.length;
   const contentMax = surface === "voice" ? 120 : 200;
   const injected = results.slice(0, cap);
+  const now = Date.now();
   const lines = injected.map((n) => {
     const tag = provenanceTag(n.source);
-    return `[${n.type}${tag ? "·" + tag : ""}] ${n.label}: ${n.content.slice(0, contentMax)}`;
+    const belief = config.beliefMetadata === false && config.relativeTimeLabels === false
+      ? ""
+      : beliefTag(n, {
+          now,
+          relativeTime: config.relativeTimeLabels !== false,
+          lowThreshold: config.beliefMetadata === false ? -1 : config.lowConfidenceThreshold,
+        });
+    return `[${n.type}${tag ? "·" + tag : ""}] ${n.label}: ${n.content.slice(0, contentMax)}${belief ? ` (${belief})` : ""}`;
   });
 
   // VALOR: remember exactly what was injected so llm_output can score the
@@ -353,7 +370,9 @@ export function buildProceduralContext(
   agentId: string,
   sessionId: string,
   excludeIds: Set<string> = new Set(),
+  config?: Partial<BrainConfig>,
 ): string {
+  if (config && !injectionCategories(config).rules) return "";
   const nodes = getOperationalProcedures(agentId, PROCEDURAL_MAX_NODES)
     .filter((n) => !excludeIds.has(n.id));
   if (nodes.length === 0) return "";
@@ -375,6 +394,21 @@ export function buildProceduralContext(
   recordInjection(agentId, sessionId, injected);
 
   return `[BRAIN: operational rules — verified on THIS machine, follow them over your priors]\n${lines.join("\n")}`;
+}
+
+/**
+ * Xanima self-status footer: one line, only when something needs attention
+ * (disputed beliefs, items flagged by sleep, sleep overdue, budget overrun).
+ * Empty string otherwise, so a healthy brain adds zero injection overhead.
+ * Read-only.
+ */
+export function buildStatusFooter(agentId: string, config: BrainConfig): string {
+  if (config.selfStatus === false) return "";
+  try {
+    return statusFooter(computeBrainStatus(getDb(agentId), config));
+  } catch {
+    return "";
+  }
 }
 
 export { BRAIN_HEADER };

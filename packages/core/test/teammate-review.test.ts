@@ -29,9 +29,9 @@ import { spreadActivation } from "../src/activation.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 import type { BrainNode, NeuromodState } from "../src/types.js";
 
-// sharpwave-core's db.ts does not export SCHEMA_VERSION — assert against the
+// xanima-core's db.ts does not export SCHEMA_VERSION — assert against the
 // known current migration target (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 24; // v24 = Xanima 0.5.0 rooms (room_items / room_conflicts) + nodes.scope_tags
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -162,14 +162,14 @@ function applyMigrationV3toV4(db: Database.Database): void {
  * So we write directly to the real ~/.openclaw/agents/<agentName>/brain.db.
  */
 function makeRealAgentPath(agentName: string): string {
-  const dir = join(process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".sharpwave"), agentName);
+  const dir = join(process.env["XANIMA_DATA_DIR"] || process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".xanima"), agentName);
   mkdirSync(dir, { recursive: true });
   return join(dir, "brain.db");
 }
 
 function cleanupAgent(agentName: string): void {
   closeDb(agentName);
-  const dbPath = join(process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".sharpwave"), agentName, "brain.db");
+  const dbPath = join(process.env["XANIMA_DATA_DIR"] || process.env["SHARPWAVE_DATA_DIR"] || join(homedir(), ".xanima"), agentName, "brain.db");
   try { if (existsSync(dbPath)) rmSync(dbPath); } catch { /* ok */ }
 }
 
@@ -479,7 +479,7 @@ describe("Test 3 — Dream context feeds bootstrap without brain_query (no-looku
     const ctx = await buildBootstrapContext(agentId, session, DEFAULT_CONFIG);
 
     // Header always present
-    expect(ctx).toContain("[SharpWave");
+    expect(ctx).toContain("[Xanima");
 
     // Dream layer injected (getDreamContext age-gate: 30 min — this is fresh)
     expect(ctx).toContain("[BRAIN: subconscious");
@@ -731,7 +731,7 @@ describe("Test 5 — Full v2→v5 round-trip: migrate, activate, dream, Hebbian 
     // Goals are present (directly queried via getActiveGoals, no brain_query)
     const p8HasGoals = p8Ctx.includes("[BRAIN: active goals]") || p8Ctx.includes("Explore memory");
     expect(p8HasGoals).toBe(true);                      // CHECKPOINT 8c: goals present
-    expect(p8Ctx).toContain("[SharpWave");             // CHECKPOINT 8d: header present
+    expect(p8Ctx).toContain("[Xanima");             // CHECKPOINT 8d: header present
 
     cleanupAgent(agentName);
   });

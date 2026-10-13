@@ -6,15 +6,15 @@ import { getDb, getMeta, closeDb } from "../src/db.js";
 import { awakeReplayTick, recordCoactivations } from "../src/awake-replay.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
-// sharpwave-core's db.ts does not export a `SCHEMA_VERSION` symbol; assert
+// xanima-core's db.ts does not export a `SCHEMA_VERSION` symbol; assert
 // against the known current value (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 24; // v24 = Xanima 0.5.0 rooms (room_items / room_conflicts) + nodes.scope_tags
 
-// sharpwave-core's writeNode dedupes on near-identical content by default
+// xanima-core's writeNode dedupes on near-identical content by default
 // (trigram-Jaccard >= 0.85, type-scoped) — clawbrain-v4's writeNode did not.
 // Fixtures below that create sibling nodes with near-identical placeholder
 // content pass `{ deduplicate: false }` to keep distinct rows. Assertions are
-// unchanged. (openwave/sharpwave-core split, Task 6C.)
+// unchanged. (openwave/xanima-core split, Task 6C.)
 
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 const log = { info: () => {}, warn: () => {} };

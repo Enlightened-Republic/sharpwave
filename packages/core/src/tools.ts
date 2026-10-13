@@ -23,12 +23,39 @@
 // would create an import cycle.
 
 import { randomUUID } from "node:crypto";
+import { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } from "./continuity-tools.js";
+import { SOUL_TOOL_DEFS, REVIEW_QUEUE_PROPS, dispatchSoulTool, isReviewQueueCall } from "./soul-tools.js";
+import { gateWrite, gateToolCall, gateNotice, GATED_TOOLS } from "./quarantine.js";
+import { setFocus, readFocus, describeFocus } from "./injection-control.js";
+
+/** Xanima 0.5.0 brain_focus (local mode and the service). */
+export const FOCUS_TOOL_DEF: BrainToolDef = {
+  description: "Shape what gets injected as recall for the next turns (or until a task ends): suppress or boost a topic, project, room or memory type. The header (identity, goals, rules) is never affected. Examples: {\"suppress\":[\"project:alpha\"],\"ttl\":2}, {\"suppress\":[\"room:team\"],\"ttl\":\"task\",\"task\":\"write the report\"}, {\"boost\":[\"type:decision\"]}, {\"clear\":true}, {\"show\":true}.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      suppress: { type: "array", items: { type: "string" }, description: "Entries like \"topic:billing\", \"project:alpha\", \"room:team\", \"type:decision\" (a bare word = topic)." },
+      boost: { type: "array", items: { type: "string" }, description: "Same forms; boosted items rank higher in recall." },
+      ttl: { type: ["number", "string"], description: "Turns (1–50) or \"task\" (until cleared). Default focusDefaultTtl (3)." },
+      task: { type: "string", description: "Task name for ttl \"task\"." },
+      clear: { type: "boolean", description: "Remove the focus now." },
+      show: { type: "boolean", description: "Only show the current focus." },
+    },
+  },
+};
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { writeNode, getNode, touchNode, getActiveGoals } from "./nodes.js";
-import { writeEdge, closeEdgesFromNode, closeEdgesToNode } from "./edges.js";
+import { writeEdge } from "./edges.js";
+import {
+  retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
+} from "./beliefs.js";
+import {
+  parseAsOf, relativeTime, beliefTag, parseConfidence, isSourceType, isSensitivity,
+} from "./belief-meta.js";
+import type { SourceType, Sensitivity } from "./types.js";
 import { getSelfModel, updateSelfModelField } from "./self-model.js";
 import { searchEpisodes, getEpisodesByIds } from "./episodes.js";
 import { getDb } from "./db.js";
@@ -103,8 +130,9 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
       type: "object",
       properties: {
         query: { type: "string", description: "Natural language search query" },
-        type:  { type: "string", description: "Filter by node type: identity|semantic|episodic|pattern|skill|goal|emotion|procedural|schema" },
+        type:  { type: "string", description: "Filter by node type: identity|semantic|episodic|pattern|skill|goal|emotion|procedural|schema|decision|reflection|hypothesis|question|assumption|commitment|plan" },
         limit: { type: "number", description: "Max results to return (default 10)" },
+        as_of: { type: ["string", "number"], description: "Time travel: what did I believe at this time? ISO date/time (\"2026-10-01\", \"2026-10-01T14:00:00Z\"), \"yesterday\", \"3 days ago\", or epoch milliseconds. Includes beliefs later retracted or superseded (marked as such)." },
       },
       required: ["query"],
     },
@@ -121,6 +149,11 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
         importance:       { type: "number", description: "0.0–1.0, default 0.5" },
         emotional_weight: { type: "number", description: "-1.0 to 1.0 (emotional salience)" },
         writer_agent_id:  { type: "string", description: "Optional provenance stamp (defaults to the `agent` arg / pinned agent). Who created this memory." },
+        confidence:       { type: "string", description: "How sure: low|medium|high|certain, or a number 0–1. Default depends on source_type." },
+        source_type:      { type: "string", description: "Where it came from: user|self_observation|inference|tool|agent. Default self_observation." },
+        sensitivity:      { type: "string", description: "normal (default) | sensitive | confirm_before_acting" },
+        evidence:         { type: "array", items: { type: "string" }, description: "Optional ids of supporting episodes/nodes." },
+        tags:             { type: "array", items: { type: "string" }, description: "Optional project / category tags (brain_focus can suppress or boost them, e.g. \"project:alpha\")." },
       },
       required: ["type", "label", "content"],
     },
@@ -140,13 +173,16 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
   },
   brain_supersede: {
     description:
-      "Replace an outdated node with updated content. Closes old edges, writes a supersedes edge, preserving the memory graph's temporal integrity.",
+      "Replace an outdated node with updated content. Closes old edges, writes a supersedes edge, preserving the memory graph's temporal integrity. The old version is kept as history (as_of still finds it) but is never injected again. Returns related downstream nodes to re-check.",
     inputSchema: {
       type: "object",
       properties: {
         old_node_id: { type: "string", description: "ID of the node being superseded" },
         new_content: { type: "string", description: "Updated content for the replacement node" },
         new_label:   { type: "string", description: "Updated label (defaults to old label)" },
+        reason:      { type: "string", description: "Why the old version is wrong or outdated (recorded with the history)." },
+        confidence:  { type: "string", description: "Confidence of the new version: low|medium|high|certain or 0–1." },
+        source_type: { type: "string", description: "Where the new version came from (user|self_observation|inference|tool|agent). Identity / goal / rule changes from tool or agent sources are quarantined." },
       },
       required: ["old_node_id", "new_content"],
     },
@@ -187,7 +223,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
   },
   brain_review: {
     description:
-      "Apply an FSRS-6 spaced-repetition review to a node. Updates stability, retrievability, and SIGMA calibration.",
+      "Apply an FSRS-6 spaced-repetition review to a node (node_id + quality): updates stability, retrievability, and SIGMA calibration. Or, with action, use the pending-review queue: action list | show (id) shows identity / value / goal changes from soul imports and merge conflicts; accept / reject need an admin.",
     inputSchema: {
       type: "object",
       properties: {
@@ -198,8 +234,9 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
           maximum: 5,
           description: "Recall quality: 0=blackout, 1=incorrect, 2=incorrect+familiar, 3=hard, 4=correct, 5=perfect",
         },
+        ...REVIEW_QUEUE_PROPS,
       },
-      required: ["node_id", "quality"],
+      required: [],
     },
   },
   brain_forget: {
@@ -236,6 +273,30 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
         },
       },
       required: ["confirm"],
+    },
+  },
+
+  // ── Xanima 0.1.0 belief tools ────────────────────────────────────────────
+  brain_retract: {
+    description:
+      "Retract a memory that is wrong (\"the user said this was wrong\"). It is kept as history with your reason but is never recalled or injected again. Returns related downstream nodes to re-check.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        node_id: { type: "string", description: "ID of the node to retract" },
+        reason:  { type: "string", description: "Why it is wrong (required)" },
+      },
+      required: ["node_id", "reason"],
+    },
+  },
+  brain_status: {
+    description:
+      "Short self-status of your memory: injection size, last sleep and what it changed, low-confidence / disputed counts, hot conflicts, and anything that needs attention. Cheap; use it to decide whether to dig deeper.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        format: { type: "string", description: "text (default) or json" },
+      },
     },
   },
 
@@ -288,6 +349,13 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
   },
 };
 
+// Xanima 0.2.0 decision ledger + goals (appended; order of the older tools unchanged).
+Object.assign(BRAIN_TOOL_DEFS, CONTINUITY_TOOL_DEFS);
+// Xanima 0.5.0: per-turn / per-task injection focus.
+BRAIN_TOOL_DEFS["brain_focus"] = FOCUS_TOOL_DEF;
+// Xanima 0.4.0: the agent-safe soul tool (export of self). brain_import_soul is admin-only (xanima-server / CLI).
+BRAIN_TOOL_DEFS["brain_export_soul"] = SOUL_TOOL_DEFS["brain_export_soul"]!;
+
 /**
  * The 11 tools `packages/mcp` publishes, in the exact order its `TOOLS` array
  * had them. The published order is part of the frozen surface — do not sort.
@@ -304,6 +372,10 @@ export const MCP_TOOL_NAMES: string[] = [
   "brain_forget",
   "brain_edges",
   "brain_reset",
+  "brain_retract",
+  "brain_status",
+  ...CONTINUITY_TOOL_NAMES,
+  "brain_export_soul",
 ];
 
 /** Everything the openwave plugin exposes: all 16. */
@@ -361,6 +433,51 @@ function scanWorkspace(root: string): WsEntry[] {
   return scanDir(root);
 }
 
+/**
+ * Optional belief fields on a write (confidence / source_type / sensitivity /
+ * evidence). `seed` and `legacy` are reserved for operator imports and the
+ * migration, so a tool caller cannot claim them.
+ */
+export function parseBeliefArgs(args: Record<string, unknown>):
+  | { sourceType?: SourceType; confidence?: number; sensitivity?: Sensitivity; evidence?: string[] }
+  | { error: string } {
+  const out: { sourceType?: SourceType; confidence?: number; sensitivity?: Sensitivity; evidence?: string[] } = {};
+  const st = args["source_type"];
+  if (st !== undefined && st !== null && st !== "") {
+    if (!isSourceType(st) || st === "seed" || st === "legacy") return { error: "source_type must be one of user|self_observation|inference|tool|agent" };
+    out.sourceType = st;
+  }
+  const c = args["confidence"];
+  if (c !== undefined && c !== null && c !== "") {
+    const p = parseConfidence(c);
+    if (!p) return { error: "confidence must be low|medium|high|certain or a number 0–1" };
+    out.confidence = p.score;
+  }
+  const sv = args["sensitivity"];
+  if (sv !== undefined && sv !== null && sv !== "") {
+    if (!isSensitivity(sv)) return { error: "sensitivity must be normal|sensitive|confirm_before_acting" };
+    out.sensitivity = sv;
+  }
+  const ev = args["evidence"];
+  if (ev !== undefined && ev !== null) {
+    if (!Array.isArray(ev) || !ev.every((x) => typeof x === "string" && x.length <= 100)) return { error: "evidence must be an array of ids" };
+    out.evidence = ev as string[];
+  }
+  return out;
+}
+
+/** Optional `tags` (project / category, for brain_focus) on a write. */
+export function parseScopeTags(args: Record<string, unknown>): { tags: string[] } | { error: string } | null {
+  const t = args["tags"] ?? args["project"];
+  if (t === undefined || t === null || t === "") return null;
+  const arr = Array.isArray(t) ? t : [t];
+  if (arr.length > 10 || !arr.every((x) => typeof x === "string" && /^[A-Za-z0-9][A-Za-z0-9 _.:\/-]{0,47}$/.test(x))) return { error: "tags must be up to 10 short strings (letters, digits, space _ . : / -)" };
+  return { tags: (arr as string[]).map((x) => x.toLowerCase()) };
+}
+export function setScopeTags(agentId: string, nodeId: string, tags: string[]): void {
+  try { getDb(agentId).prepare("UPDATE nodes SET scope_tags = ? WHERE id = ?").run(JSON.stringify(tags), nodeId); } catch { /* pre-v24 */ }
+}
+
 // ─── Dispatcher ─────────────────────────────────────────────────────────────
 
 /**
@@ -390,6 +507,23 @@ export async function dispatchBrainTool(
         return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
       }
       const { query, type: typeFilter, limit } = validation.data!;
+      const showMeta = config.beliefMetadata !== false;
+      const rel = config.relativeTimeLabels !== false;
+
+      if (args["as_of"] !== undefined && args["as_of"] !== null && args["as_of"] !== "") {
+        const asOf = parseAsOf(args["as_of"]);
+        if (asOf === null) return err(`as_of must be an ISO date/time, epoch ms, or e.g. "3 days ago"`);
+        let rows = queryAsOf(agentId, query, asOf, (limit ?? 10) * 2);
+        if (typeFilter) rows = rows.filter((n) => n.type === typeFilter);
+        rows = rows.slice(0, limit);
+        const when = `${new Date(asOf).toISOString().slice(0, 16).replace("T", " ")} UTC (${relativeTime(asOf)})`;
+        if (rows.length === 0) return ok(`As of ${when}: no matching beliefs.`);
+        return ok([`As of ${when}, I believed:`, ...rows.map((n) => {
+          const st = statusAt(n, asOf);
+          const tag = beliefTag(n, { now: asOf, relativeTime: false, lowThreshold: config.lowConfidenceThreshold });
+          return `[${n.id.slice(0, 8)}] (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  recorded ${relativeTime(n.created_at)} · confidence ${n.confidence ?? "medium"}${tag ? ` · ${tag}` : ""}${st.laterChange ? `\n  since then: ${st.laterChange}` : ""}`;
+        })].join("\n\n"));
+      }
 
       let results = await hybridRetrieve(agentId, query, TOOL_SESSION_ID, config);
       if (typeFilter) results = results.filter((n) => n.type === typeFilter);
@@ -397,7 +531,10 @@ export async function dispatchBrainTool(
 
       const lines = results.slice(0, limit).map((n) => {
         const writer = n.writer_agent_id ? ` writer=${n.writer_agent_id}` : "";
-        return `[${n.id.slice(0, 8)}] (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  R=${n.retrievability.toFixed(2)} sal=${n.salience.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}`;
+        const meta = showMeta
+          ? ` conf=${n.confidence ?? "medium"} src=${n.source_type ?? "legacy"}${rel ? ` (${relativeTime(n.created_at)})` : ""}${n.contradicted_at ? " DISPUTED" : ""}${n.sensitivity && n.sensitivity !== "normal" ? ` [${n.sensitivity}]` : ""}`
+          : "";
+        return `[${n.id.slice(0, 8)}] (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  R=${n.retrievability.toFixed(2)} sal=${n.salience.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}${meta}`;
       });
       return ok(lines.join("\n\n"));
     }
@@ -414,14 +551,23 @@ export async function dispatchBrainTool(
       // agent). Explicit override lets a shared-brain gateway stamp the real
       // peer when dispatching on behalf of another agent.
       const writerAgentId = writer_agent_id ?? agentId;
+      const belief = parseBeliefArgs(args);
+      if ("error" in belief) return err(belief.error);
+      const tags = parseScopeTags(args);
+      if (tags && "error" in tags) return err(tags.error);
+      // Xanima 0.5.0 quarantine: identity / value / goal / rule writes from untrusted sources.
+      const gate = gateWrite(agentId, { op: "write", type, label, content, importance, sourceType: belief.sourceType, confidence: belief.confidence, sensitivity: belief.sensitivity, writer: writerAgentId, source }, { sourceType: belief.sourceType, config });
+      if (gate.decision === "held") return ok(gateNotice(gate));
       const nodeId = writeNode(agentId, type as NodeType, label, content, {
         importance,
         emotional_weight,
         source,
         writerAgentId,
+        ...belief,
       });
+      if (tags) setScopeTags(agentId, nodeId, tags.tags);
       queueEmbedding(agentId, nodeId);
-      return ok(`Written: node ${nodeId} (${type}) "${label}" writer=${writerAgentId}`);
+      return ok(`Written: node ${nodeId} (${type}) "${label}" writer=${writerAgentId}${gate.reviewId ? `\n${gateNotice(gate)}` : ""}`);
     }
 
     // ── brain_link ────────────────────────────────────────────────────────
@@ -446,21 +592,41 @@ export async function dispatchBrainTool(
         return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
       }
       const { old_node_id, new_content, new_label } = validation.data!;
+      const reason = typeof args["reason"] === "string" ? args["reason"] : undefined;
+      const conf = parseConfidence(args["confidence"]);
+      if (args["confidence"] !== undefined && args["confidence"] !== null && args["confidence"] !== "" && !conf) return err("confidence must be low|medium|high|certain or a number 0–1");
 
-      const old = getNode(agentId, old_node_id);
-      if (!old) return err(`node ${old_node_id} not found`);
-
-      const newId = writeNode(agentId, old.type as NodeType, new_label ?? old.label, new_content, {
-        importance: old.importance,
-        emotional_weight: old.emotional_weight,
-        source,
-        writerAgentId: agentId,
+      const oldNode = getNode(agentId, old_node_id);
+      const sst = typeof args["source_type"] === "string" ? args["source_type"] : null;
+      const sgate = oldNode ? gateWrite(agentId, { op: "supersede", oldNodeId: old_node_id, oldType: oldNode.type, oldLabel: oldNode.label, newContent: new_content, newLabel: new_label, reason, writer: agentId, source }, { sourceType: sst, config }) : null;
+      if (sgate?.decision === "held") return ok(gateNotice(sgate));
+      const res = supersedeNode(agentId, old_node_id, new_content, {
+        newLabel: new_label, reason, source, writerAgentId: agentId,
+        ...(conf ? { confidence: conf.score } : {}),
       });
-      queueEmbedding(agentId, newId);
-      closeEdgesFromNode(agentId, old.id);
-      closeEdgesToNode(agentId, old.id);
-      writeEdge(agentId, newId, old.id, "supersedes");
-      return ok(`Superseded: ${old.id.slice(0, 8)} → new node ${newId.slice(0, 8)}`);
+      if (!res.ok) return err(res.error!);
+      queueEmbedding(agentId, res.newId!);
+      const head = `Superseded: ${res.oldId!.slice(0, 8)} → new node ${res.newId!.slice(0, 8)}`;
+      if (config.beliefMetadata === false) return ok(head);
+      return ok(`${head}${reason ? `\nReason: ${reason}` : ""}\n${formatRelated(res.related)}`);
+    }
+
+    // ── brain_retract (Xanima) ────────────────────────────────────────────
+    case "brain_retract": {
+      const nodeId = typeof args["node_id"] === "string" ? args["node_id"].trim() : "";
+      const reason = typeof args["reason"] === "string" ? args["reason"] : "";
+      if (!nodeId) return err("node_id is required");
+      if (!reason.trim()) return err("reason is required");
+      const res = retractNode(agentId, nodeId, reason);
+      if (!res.ok) return err(res.error!);
+      return ok(`Retracted: [${nodeId.slice(0, 8)}] "${res.node!.label}" — ${reason.trim()}\nIt is kept as history (brain_query as_of still finds it) but will not be recalled or injected again.\n${formatRelated(res.related)}`);
+    }
+
+    // ── brain_status (Xanima) ─────────────────────────────────────────────
+    case "brain_status": {
+      const st = computeBrainStatus(getDb(agentId), config);
+      if (String(args["format"] ?? "text").toLowerCase() === "json") return ok(JSON.stringify(st, null, 2));
+      return ok(formatBrainStatus(st));
     }
 
     // ── brain_stats ───────────────────────────────────────────────────────
@@ -555,6 +721,7 @@ export async function dispatchBrainTool(
 
     // ── brain_review ──────────────────────────────────────────────────────
     case "brain_review": {
+      if (isReviewQueueCall(name, args)) return dispatchSoulTool(name, agentId, args, config, { admin: false, by: agentId })!;
       const validation = validateBrainReview(args);
       if (!validation.ok) {
         return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
@@ -686,12 +853,19 @@ export async function dispatchBrainTool(
           return err(`value for ${field} must be valid JSON`);
         }
       }
+      const smGate = gateToolCall(agentId, name, { field, value, ...(typeof args["source_type"] === "string" ? { source_type: args["source_type"] } : {}) }, { writer: agentId, config });
+      if (smGate?.decision === "held") return ok(gateNotice(smGate));
       updateSelfModelField(agentId, field as "identity" | "goals" | "user_model", value);
       return ok(`Updated self_model.${field}`);
     }
 
     // ── brain_reflect (clawbrain-v4) ──────────────────────────────────────
     case "brain_reflect": {
+      // Xanima 0.3.0: scoped reflection (topic / goal_id / since / until) → continuity tool.
+      if (["topic", "goal_id", "since", "until"].some((k) => args[k] !== undefined)) {
+        const c = dispatchContinuityTool(name, agentId, args, config);
+        if (c) return c.isError ? err(c.text.replace(/^Error: /, "")) : ok(c.text);
+      }
       const model = getSelfModel(agentId);
       if (!model) return ok("Self model not initialized — try again after the first session.");
       const goals = getActiveGoals(agentId).map((g) => g.label);
@@ -702,12 +876,14 @@ export async function dispatchBrainTool(
         `User model: ${model.user_model}`,
         `Last updated: ${new Date(model.updated_at).toISOString()}`,
       ];
+      const c = dispatchContinuityTool(name, agentId, {}, config);
+      if (c && !c.isError) lines.push("", c.text);
       return ok(lines.join("\n"));
     }
 
     // ── brain_generate_skill (clawbrain-v4) ───────────────────────────────
     //
-    // DEGRADED in sharpwave-core: `detectSkillCandidates` / `generateSkill`
+    // DEGRADED in xanima-core: `detectSkillCandidates` / `generateSkill`
     // are stubs here (they return [] / null — see skill-evolution.ts). The
     // ported control flow therefore reports "no candidates" or an honest
     // generation failure. It never fabricates a skill file.
@@ -788,7 +964,23 @@ export async function dispatchBrainTool(
       }
     }
 
-    default:
+    case "brain_focus": {
+      const db = getDb(agentId);
+      if (args["show"] === true) { const f = readFocus(db); return ok(f ? `Focus: ${describeFocus(f)}` : "No focus set — recall is normal."); }
+      const r = setFocus(db, args, config);
+      return r.ok ? ok(r.text) : err(r.text.replace(/^Error: /, ""));
+    }
+
+    default: {
+      const g = gateToolCall(agentId, name, args, { writer: agentId, config });
+      if (g?.decision === "held") return ok(gateNotice(g));
+      const { source_type: _st, ...cargs } = args;
+      const c0 = dispatchContinuityTool(name, agentId, GATED_TOOLS.has(name) ? cargs : args, config);
+      const c = c0 && g?.reviewId && !c0.isError ? { ...c0, text: `${c0.text}\n${gateNotice(g)}` } : c0;
+      if (c) return c;
+      const sr = dispatchSoulTool(name, agentId, args, config, { admin: false, by: agentId });
+      if (sr) return sr;
+    }
       // Text matches base sharpwave@0.4.0 (77bc427:src/index.ts), which returned
       // err("unknown tool: <name>") = "Error: unknown tool: <name>".
       return { text: `Error: unknown tool: ${name}`, isError: true };

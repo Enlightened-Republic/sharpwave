@@ -28,6 +28,7 @@
  * `fts_rebuild`, `wal_retry`. Custom event types are also accepted.
  */
 
+import { envGet, resolveDataDir } from "./env.js";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -70,7 +71,7 @@ let lastConsolidationAt: string | null = null;
  * the env var mid-run need to restart the server (matches Python behavior).
  */
 const observabilityEnabled: boolean = (() => {
-  const raw = process.env["SHARPWAVE_OBSERVABILITY"] ?? "";
+  const raw = envGet("OBSERVABILITY") ?? "";
   return raw === "1" || raw.toLowerCase() === "true" || raw.toLowerCase() === "yes";
 })();
 
@@ -81,7 +82,7 @@ const observabilityEnabled: boolean = (() => {
 const eventLogPath: string | null = (() => {
   if (!observabilityEnabled) return null;
   try {
-    const dataDir = process.env["SHARPWAVE_DATA_DIR"] ?? join(process.env["USERPROFILE"] ?? process.env["HOME"] ?? ".", ".sharpwave");
+    const dataDir = resolveDataDir();
     const path = join(dataDir, "brain_events.jsonl");
     const dir = dirname(path);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

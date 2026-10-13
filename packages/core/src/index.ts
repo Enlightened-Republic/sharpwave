@@ -1,10 +1,10 @@
 // packages/core/src/index.ts
 //
-// sharpwave-core PUBLIC API BARREL — the only supported surface.
+// xanima-core PUBLIC API BARREL — the only supported surface.
 //
 // Hand-curated re-export of the engine's public symbols. Every name here was
 // copied verbatim from the owning module's `export` declarations. Consumers
-// (`packages/mcp`, `packages/openwave`) import ONLY from `sharpwave-core`.
+// (`packages/mcp`, `packages/openwave`) import ONLY from `xanima-core`.
 //
 // Modules ported in later tasks (context-assembly, awake-replay,
 // proactive-monitor, extraction, episode-lanes, valor, morning, compaction,
@@ -275,3 +275,95 @@ export {
   RETIRED_NODE_META_PREFIX, RETIRED_EPISODE_META_PREFIX,
 } from "./system-noise.js";
 export type { TurnSignals, NoiseVerdict, NoiseOptions, InputProvenanceLike, SystemNoiseSettings } from "./system-noise.js";
+
+// ── Xanima env / data-dir compatibility (0.1.x: SHARPWAVE_* still honoured) ──
+export {
+  envGet, envSet, envDelete, envSnapshot, envRestore,
+  resolveDataDir, defaultDataHome, deprecationWarnOnce, suppressDeprecationWarning,
+  setDeprecationWarningSink, resetDeprecationWarnings,
+  ENV_PREFIX, LEGACY_ENV_PREFIX, DATA_DIR_NAME, LEGACY_DATA_DIR_NAME,
+} from "./env.js";
+
+// ── Xanima 0.1.0 belief foundation ─────────────────────────────────────────
+export {
+  CONFIDENCE_LEVEL_SCORE, DEFAULT_CONFIDENCE_BY_SOURCE, confidenceLevel, parseConfidence,
+  isConfidenceLevel, isSourceType, isSensitivity, inferSourceType,
+  relativeTime, parseAsOf, beliefTag,
+} from "./belief-meta.js";
+export {
+  DOWNSTREAM_EDGE_TYPES, relatedDownstream, formatRelated, retractNode, supersedeNode,
+  queryAsOf, statusAt, verifyNode, computeBrainStatus, formatBrainStatus, statusFooter,
+  runBeliefReviewPass, getSleepSummary, saveSleepSummary, countNodesEdges,
+} from "./beliefs.js";
+export type {
+  RelatedNode, RetractResult, SupersedeOptions, SupersedeResult, SleepSummary, BrainStatus,
+} from "./beliefs.js";
+export { SCHEMA_VERSION, migrateV19 } from "./db.js";
+export { buildStatusFooter } from "./context-assembly.js";
+export { parseBeliefArgs } from "./tools.js";
+
+// ── Xanima 0.2.0: decision ledger, goals, drift, triggers ──────────────────
+export { migrateV20, migrateV21 } from "./db.js";
+export {
+  recordDecision, updateDecisionOutcome, queryDecisions, getDecision, formatDecision, extractDecisionCandidates,
+  autoExtractDecisions, applyDecisionBoost, runDecisionPass, decisionCounts, resolveGoalCurrent, OUTCOME_STATUSES,
+  confirmDecision, expireDecisionDrafts, prepareLessonVectors, lessonSimilarity,
+} from "./decisions.js";
+export type { DecisionView, DecisionRow, DecisionOption, OutcomeStatus, RecordDecisionInput, DecisionCandidate, DecisionPassResult } from "./decisions.js";
+export {
+  setGoal, updateGoal, listGoals, goalHistory, formatGoal, formatGoalHistory, runDriftPass, maybeRunDailyDrift,
+  buildGoalTurnContext, goalCounts, parsePriority, deriveKeywords, currentGoalRow, GOAL_ACTIONS, GOAL_STATUSES,
+  ackAlignmentNote, criteriaKeywords, isGoalTalk, ALIGNMENT_NOTE_MAX_OFFERS,
+  normGoalTitle, GOAL_TITLE_MAX, looksLikeChatFragment, listLegacyGoals, pauseLegacyGoals, resumeLegacyGoals,
+} from "./goals.js";
+export type { GoalRow, GoalStatus, GoalAction, TriggerSpec, DriftFlag, DriftResult, GoalTurnContext, GoalHistory, LegacyGoal, LegacyPauseResult } from "./goals.js";
+export { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } from "./continuity-tools.js";
+export type { ContinuityResult, ContinuityToolDef } from "./continuity-tools.js";
+export { CONTINUITY_READ_ONLY_TOOLS } from "./continuity-tools.js";
+// ── Xanima 0.3.0: reflection, replay, open items, commitments, plans, meta-tools ──
+export { draftReflection, storeReflection, reflect, formatReflection, runReflectionPass, reflectionBody } from "./reflection.js";
+export type { ReflectInput, ReflectionDraft, ReflectResult } from "./reflection.js";
+export {
+  createOpenItem, updateOpenItem, getOpenItem, listOpenItems, formatOpenItem, extractOpenItemCandidates, autoExtractOpenItems,
+  expireOpenItemDrafts, surfaceOpenItem, openItemCounts, OPEN_KINDS, OPEN_STATUSES,
+} from "./open-items.js";
+export type { OpenKind, OpenStatus, OpenItemRow, OpenItemView, OpenItemCandidate } from "./open-items.js";
+export {
+  createCommitment, updateCommitment, getCommitment, listCommitments, formatCommitment, runCommitmentCheck, commitmentCounts,
+  createPlan, updatePlan, getPlan, listPlans, formatPlan, addBlockers, removeBlockers, blockersOf, blockerDone,
+} from "./plans.js";
+export type { CommitmentView, PlanView, PlanStatus, CommitAction, PlanAction } from "./plans.js";
+export { replay, changesSince, formatChanges, conflicts, briefing, forgetImpact } from "./meta-tools.js";
+export { parseWhen } from "./continuity-util.js";
+export { migrateV22 } from "./db.js";
+// Xanima 0.4.0 — Soul Package (portable continuity: export / import / fork / three-way merge / review)
+export {
+  SOUL_FORMAT, exportSoul, serializeSoul, canonicalJson, validateSoul, parseSoul, signSoul, generateSoulKeyPair,
+  importSoul, mergeSoul, diffSoul, formatSoulDiff, formatImportReport, listReviews, getReview, reviewCounts, formatReview,
+  acceptReview, rejectReview, writeSoulSqlite, soulSummary, looksLikeIdentityRewrite, brainFingerprint, originIdOf,
+} from "./soul.js";
+export type { SoulPackage, SoulContent, SoulItem, SoulGoal, SoulLesson, SoulProvenance, SoulOptions, SoulValidation, SoulDiff, ImportReport, ImportOptions, ReviewItem, ExportSoulOptions } from "./soul.js";
+export { SOUL_TOOL_DEFS, SOUL_TOOL_NAMES, SOUL_AGENT_TOOLS, dispatchSoulTool, soulToolNeedsAdmin } from "./soul-tools.js";
+export type { SoulToolCtx } from "./soul-tools.js";
+export { migrateV23 } from "./db.js";
+// Xanima 0.5.0 — rooms (context bus), controllable injection, poisoning quarantine
+export { migrateV24 } from "./db.js";
+export {
+  ROOM_TOOL_DEFS, ROOM_TOOL_NAMES, ROOM_ROLES, ROOM_NAME_RE, ROOM_BRAIN_PREFIX, PUBLISHABLE_TYPES, roomBrainName, isRoomBrain, roleAtLeast,
+  openRoomRegistry, ensureRoomRegistry, getRoom, createRoom, roleOf, setMember, revokeMember, listMembers, roomsFor, allRooms,
+  parseRoomFilter, subscribe, unsubscribe, subscriptionsFor, filterAccepts,
+  publishNodes, unpublish, withdrawAll, roomQuery, roomConflicts, formatRoomItem, formatRoomConflict,
+} from "./rooms.js";
+export type { RoomRole, RoomInfo, MemberRow, RoomFilter, RoomItem, PublishResult, RoomConflict, RoomToolDef } from "./rooms.js";
+export {
+  setFocus, readFocus, tickFocus, describeFocus, parseFocusRule, matchesRule, sensitiveRelevant, applyInjectionControls,
+  injectionCategories, DEFAULT_INJECTION_CATEGORIES, FOCUS_BOOST,
+} from "./injection-control.js";
+export type { FocusKind, FocusRule, FocusState, FocusArgs, Injectable, ControlReport } from "./injection-control.js";
+export {
+  INJECTION_RE, looksLikeInjection, classifyWrite, gateWrite, gateToolCall, gateNotice, applyQuarantinedOp, quarantineCounts,
+  quarantineMode, describeQuarantineOp, GOAL_TOOLS, GATED_TOOLS,
+} from "./quarantine.js";
+export type { QuarantineMode, QuarantineOp, QuarantineVerdict, GateResult } from "./quarantine.js";
+export { FOCUS_TOOL_DEF, parseScopeTags, setScopeTags } from "./tools.js";
+export type { InjectionCategories } from "./types.js";
