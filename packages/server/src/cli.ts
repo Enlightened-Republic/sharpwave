@@ -55,6 +55,7 @@ import { migrateDataDir, formatMigrateResult } from "./migrate.js";
 import { SleepRunner } from "./sleep.js";
 import { BrainManager } from "./brains.js";
 import { DEFAULT_CONFIG, suppressDeprecationWarning } from "xanima-core";
+import { listLegacyGoalsFile, pauseLegacyGoalsFile, resumeLegacyGoalsFile } from "./goals-legacy.js";
 import { defaultReportBase, ftsProbe, parseSelection, registryStatus, retireItems, scanBrainFile, unretireItems, writeReport } from "./noise.js";
 import { BrainService } from "./service.js";
 import { VERSION } from "./version.js";
@@ -155,6 +156,12 @@ Usage:
   xanima-server noise unretire --agent <id> (--batch <noise-...> | --ids-file <f> | --all) [--dry-run] [--json]
       Service must be stopped. Backup first, then restore the recorded prior values exactly.
   xanima-server noise status --agent <id> [--json]
+  xanima-server goals list-legacy --agent <id> [--json]
+      Read-only. Active *untracked* (pre-0.2.0 backfilled) goals, each marked when it looks like a chat fragment.
+  xanima-server goals pause-legacy --agent <id> [--all-untracked] [--dry-run] [--json]
+      Service must be stopped. Backup first, then pause the untracked goals that look like chat fragments
+      (all untracked ones with --all-untracked). Audited; undo with goals resume-legacy --batch <goals-...>.
+  xanima-server goals resume-legacy --agent <id> --batch <goals-...> [--dry-run] [--json]
   xanima-server soul export --agent <id> [--out f] [--profile compact|full] [--include-sensitive] [--include-shared]
                            [--include-open-items] [--sign --key-file f] [--sqlite f] [--parent <id>|none]
       Write the agent's Soul Package (xanima-soul/1, deterministic JSON + sha256). Read-only: safe while the service runs.
@@ -432,6 +439,41 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     throw new Error(`unknown noise subcommand "${sub ?? ""}" (scan | check | retire | unretire | status)`);
+  }
+
+  if (cmd === "goals") {
+    const agent = one(p, "agent");
+    if (!agent) throw new Error("goals needs --agent <id>");
+    const bad = validateAgentId(agent);
+    if (bad) throw new Error(bad);
+    const dbPath = join(brainsDir(cfg), agent, "brain.db");
+    if (!existsSync(dbPath)) throw new Error(`no brain for "${agent}" at ${dbPath}`);
+    const json = bool(p, "json");
+    const out = (o: unknown, text: string) => process.stdout.write((json ? JSON.stringify(o, null, 2) : text) + "\n");
+    const row = (g: { lineage_id: string; priority: number; title: string; fragment: string | null }) => `  ${g.lineage_id.slice(0, 8)} P${g.priority} ${g.fragment ? `[fragment: ${g.fragment}]` : "[looks like a goal]"} ${g.title.slice(0, 70)}`;
+    if (sub === "list-legacy") {
+      const l = listLegacyGoalsFile(dbPath);
+      out(l, [`${l.length} active untracked legacy goal(s); ${l.filter((g) => g.fragment).length} look like chat fragments`, ...l.map(row)].join("\n"));
+      return 0;
+    }
+    if (sub === "pause-legacy" || sub === "resume-legacy") {
+      const dryRun = bool(p, "dry-run");
+      if (!dryRun && await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first (goals ${sub} writes the brain file directly)`);
+      const common = { dbPath, brain: agent, backupsDir: backupsDir(cfg), audit: new AuditLog(cfg.auditFile), dryRun, by: "admin:cli" };
+      if (sub === "pause-legacy") {
+        const r = pauseLegacyGoalsFile({ ...common, all: bool(p, "all-untracked") });
+        out(r, [`${dryRun ? "DRY RUN — would pause" : "paused"} ${r.paused.length} untracked legacy goal(s), kept ${r.kept.length}  batch=${r.batch}`,
+          ...r.paused.map(row), ...(r.kept.length ? ["kept (not fragment-like; --all-untracked pauses them too):", ...r.kept.map(row)] : []),
+          ...(r.backup ? [`backup ${r.backup}`, `undo: xanima-server goals resume-legacy --agent ${agent} --batch ${r.batch}`] : [])].join("\n"));
+        return 0;
+      }
+      const b = one(p, "batch");
+      if (!b) throw new Error("goals resume-legacy needs --batch <goals-...>");
+      const r = resumeLegacyGoalsFile({ ...common, batch: b });
+      out(r, `${dryRun ? "DRY RUN — would resume" : "resumed"} ${r.resumed.length} goal(s) from ${b}${r.backup ? `\nbackup ${r.backup}` : ""}`);
+      return 0;
+    }
+    throw new Error(`unknown goals subcommand "${sub ?? ""}" (list-legacy | pause-legacy | resume-legacy)`);
   }
 
   if (cmd === "soul") return soulCommand(p, sub, cfg);
