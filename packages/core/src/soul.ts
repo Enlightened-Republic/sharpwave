@@ -22,10 +22,13 @@ import { writeNode } from "./nodes.js";
 import { writeEdge } from "./edges.js";
 import { supersedeNode, retractNode } from "./beliefs.js";
 import { updateSelfModelField } from "./self-model.js";
-import { setGoal, updateGoal, currentGoalRow } from "./goals.js";
+import { setGoal, updateGoal, currentGoalRow, normGoalTitle } from "./goals.js";
 import { recordDecision, decisionContent } from "./decisions.js";
 import { createOpenItem } from "./open-items.js";
+import { INJECTION_RE, applyQuarantinedOp, describeQuarantineOp, type QuarantineOp } from "./quarantine.js";
+import { dispatchContinuityTool } from "./continuity-tools.js";
 import { createCommitment } from "./plans.js";
+import { acceptHeldIdentityChange, markHeldIdentityRejected, recordIdentityImport } from "./identity.js";
 import type { BrainConfig, NodeType, Sensitivity } from "./types.js";
 import { DEFAULT_CONFIG } from "./types.js";
 
@@ -198,13 +201,13 @@ export function exportSoul(db: Database.Database, o: ExportSoulOptions): SoulPac
   const values = (db.prepare(`SELECT ${NODE_COLS} FROM nodes WHERE type = 'identity' AND ${live} ORDER BY importance DESC, id`).all() as NodeRow[]).map((r) => nodeItem(db, r, cap, "value"));
 
   const goalRows = db.prepare(`SELECT g.*, n.writer_agent_id, n.source_type, n.confidence_score FROM goals g JOIN nodes n ON n.id = g.node_id
-                               WHERE g.status = 'active' AND n.status = 'active'${sensN} ORDER BY g.priority, g.lineage_id`).all() as Array<Record<string, unknown>>;
+                               WHERE g.status = 'active' AND g.tracked = 1 AND n.status = 'active'${sensN} ORDER BY g.priority, g.lineage_id`).all() as Array<Record<string, unknown>>;
   const evQ = db.prepare("SELECT version, at, action, reason, change_json FROM goal_events WHERE lineage_id = ? ORDER BY at, id");
   const goals: SoulGoal[] = goalRows.map((g) => {
     let hist = (evQ.all(g["lineage_id"]) as Array<{ version: number; at: number; action: string; reason: string | null; change_json: string | null }>).map((e) => ({
       version: e.version, at: iso(e.at), action: e.action, reason: e.reason ?? null, change: e.change_json ? safeParse(e.change_json) : null }));
     if (compact) hist = hist.slice(-3);
-    return { id: originIdOf(db, String(g["lineage_id"]), "goal"), version: Number(g["version"]), title: String(g["title"]), priority: Number(g["priority"]), status: String(g["status"]),
+    return { id: originIdOf(db, String(g["lineage_id"]), "goal"), version: Number(g["version"]), title: normGoalTitle(String(g["title"])), priority: Number(g["priority"]), status: String(g["status"]),
       success_criteria: (g["success_criteria"] as string | null) ?? null, keywords: (safeParse(String(g["keywords_json"] ?? "[]")) as string[]) ?? [],
       provenance: prov({ writer_agent_id: g["writer_agent_id"] as string | null, source_type: String(g["source_type"]), confidence_score: Number(g["confidence_score"]), created_at: Number(g["created_at"]), updated_at: Number(g["updated_at"]) }), history: hist };
   });
@@ -397,7 +400,7 @@ type AnyItem = SoulItem | SoulGoal | SoulLesson | { id: string; text: string };
 function digest(section: SoulSection, x: AnyItem | undefined): string | null {
   if (!x) return null;
   if (section === "identity") return sha256((x as { text: string }).text.trim());
-  if (section === "goals") { const g = x as SoulGoal; return sha256(canonicalJson([g.title, g.priority, g.status, g.success_criteria ?? null])); }
+  if (section === "goals") { const g = x as SoulGoal; return sha256(canonicalJson([normGoalTitle(g.title), g.priority, g.status, g.success_criteria ?? null])); }
   if (section === "lessons") { const l = x as SoulLesson; return sha256(canonicalJson([l.context, l.chosen, l.outcome_status ?? null, l.lesson])); }
   const n = x as SoulItem;
   if (section === "open_items" || section === "commitments") return sha256(canonicalJson([n.content, n.status ?? null]));
@@ -447,8 +450,8 @@ export function formatSoulDiff(d: SoulDiff): string {
 
 // ─── import / merge (write path, one agent's brain) ─────────────────────────
 
-const POISON_RE = /\b(ignore|disregard|forget)\b.{0,40}\b(previous|prior|all|above|earlier)\b.{0,20}\b(instructions?|rules?|identity|guidelines|prompts?)\b|\byou are now\b|\bnew (system )?(prompt|identity|persona)\b|\bfrom now on,? you\b|\boverride\b.{0,30}\b(identity|rules|values|goals?)\b/i;
-/** Heuristic poisoning flag for identity / value / goal text arriving from outside (first step; quarantine proper is a later release). */
+const POISON_RE = INJECTION_RE;
+/** Heuristic poisoning flag for identity / value / goal text arriving from outside (same patterns as the 0.5.0 quarantine). */
 export function looksLikeIdentityRewrite(text: string): boolean { return POISON_RE.test(text); }
 
 export interface ReviewItem {
@@ -493,7 +496,7 @@ function localIdFor(db: Database.Database, originId: string, section: SoulSectio
 }
 function matchByLabel(db: Database.Database, section: SoulSection, x: AnyItem): string | null {
   if (section === "identity") return null;
-  if (section === "goals") return (db.prepare("SELECT lineage_id FROM goals WHERE status = 'active' AND lower(title) = lower(?) LIMIT 1").get((x as SoulGoal).title) as { lineage_id: string } | undefined)?.lineage_id ?? null;
+  if (section === "goals") return (db.prepare("SELECT lineage_id FROM goals WHERE status = 'active' AND lower(trim(title)) = lower(?) LIMIT 1").get(normGoalTitle((x as SoulGoal).title)) as { lineage_id: string } | undefined)?.lineage_id ?? null;
   if (section === "lessons") return (db.prepare("SELECT node_id FROM decisions WHERE lower(lesson) = lower(?) AND merged_into IS NULL LIMIT 1").get((x as SoulLesson).lesson) as { node_id: string } | undefined)?.node_id ?? null;
   const n = x as SoulItem;
   return (db.prepare("SELECT id FROM nodes WHERE status = 'active' AND type = ? AND lower(label) = lower(?) LIMIT 1").get(n.type, n.label) as { id: string } | undefined)?.id ?? null;
@@ -505,7 +508,7 @@ function localItem(db: Database.Database, section: SoulSection, localId: string,
   if (section === "identity") { const t = identityText(db); return t ? { id: "identity", text: t } : undefined; }
   if (section === "goals") {
     const g = db.prepare("SELECT * FROM goals WHERE lineage_id = ? AND status != 'superseded' ORDER BY version DESC LIMIT 1").get(localId) as Record<string, unknown> | undefined;
-    return g ? ({ id: originId, version: Number(g["version"]), title: String(g["title"]), priority: Number(g["priority"]), status: String(g["status"]), success_criteria: (g["success_criteria"] as string | null) ?? null, keywords: [], history: [] } as unknown as SoulGoal) : undefined;
+    return g ? ({ id: originId, version: Number(g["version"]), title: normGoalTitle(String(g["title"])), priority: Number(g["priority"]), status: String(g["status"]), success_criteria: (g["success_criteria"] as string | null) ?? null, keywords: [], history: [] } as unknown as SoulGoal) : undefined;
   }
   if (section === "lessons") {
     const d = db.prepare("SELECT * FROM decisions WHERE node_id = ?").get(localId) as Record<string, unknown> | undefined;
@@ -749,11 +752,14 @@ function rowToReview(r: Record<string, unknown>): ReviewItem {
     reason: (r["reason"] as string) ?? null, flags: (safeParse(String(r["flags_json"] ?? "[]")) as string[]) ?? [], created_at: Number(r["created_at"]),
     resolved_at: (r["resolved_at"] as number) ?? null, resolved_by: (r["resolved_by"] as string) ?? null, resolution_note: (r["resolution_note"] as string) ?? null };
 }
-export function listReviews(db: Database.Database, o: { status?: "pending" | "accepted" | "rejected" | "all"; limit?: number } = {}): ReviewItem[] {
+export function listReviews(db: Database.Database, o: { status?: "pending" | "accepted" | "rejected" | "logged" | "all"; limit?: number; kind?: string } = {}): ReviewItem[] {
   if (!tableExists(db, "review_items")) return [];
   const st = o.status ?? "pending";
   const lim = Math.max(1, Math.min(o.limit ?? 200, 1000));
-  const rows = (st === "all" ? db.prepare("SELECT * FROM review_items ORDER BY created_at, id LIMIT ?").all(lim) : db.prepare("SELECT * FROM review_items WHERE status = ? ORDER BY created_at, id LIMIT ?").all(st, lim)) as Array<Record<string, unknown>>;
+  const kind = o.kind ?? null;
+  const rows = (st === "all"
+    ? db.prepare("SELECT * FROM review_items WHERE (? IS NULL OR kind = ?) ORDER BY created_at, id LIMIT ?").all(kind, kind, lim)
+    : db.prepare("SELECT * FROM review_items WHERE status = ? AND (? IS NULL OR kind = ?) ORDER BY created_at, id LIMIT ?").all(st, kind, kind, lim)) as Array<Record<string, unknown>>;
   return rows.map(rowToReview);
 }
 export function getReview(db: Database.Database, idOrPrefix: string): ReviewItem | null {
@@ -771,8 +777,20 @@ export function reviewCounts(db: Database.Database): { pending: number; byKind: 
 }
 export function formatReview(r: ReviewItem, full = false): string {
   const s = r.section as SoulSection;
+  if (r.kind === "quarantine") {
+    const op = r.theirs as QuarantineOp | null;
+    const head = `${r.id} [${r.status}] quarantine (${r.section}) ${short(r.label, 80)}${r.flags.length ? ` ⚠ ${r.flags.join(", ")}` : ""}: ${r.reason ?? ""}`;
+    if (!full) return head;
+    return [head, `  proposed: ${op ? describeQuarantineOp(op) : "(missing)"}`,
+      ...(r.resolved_at ? [`  resolved by ${r.resolved_by} at ${iso(r.resolved_at)}${r.resolution_note ? `: ${r.resolution_note}` : ""}`] : [])].join("\n");
+  }
   const head = `${r.id} [${r.status}] ${r.kind} (${r.section}) ${short(r.label, 80)}${r.flags.length ? ` ⚠ ${r.flags.join(", ")}` : ""}: ${r.reason ?? ""}`;
   if (!full) return head;
+  if (r.kind === "identity_change") {
+    const t = r.theirs as { req?: { reason?: string }; writer?: string; provenance?: { origin?: string; tools?: string[] } | null } | null;
+    return [head, `  current: ${r.ours === null || r.ours === undefined ? "(none)" : short(String(r.ours), 300)}`, `  proposed by ${t?.writer ?? "?"} (${t?.provenance?.origin ?? "unattested"}${t?.provenance?.tools?.length ? `: ${t.provenance.tools.join(", ")}` : ""}) — reason: ${short(t?.req?.reason ?? "", 200)}`,
+      ...(r.resolved_at ? [`  resolved by ${r.resolved_by} at ${iso(r.resolved_at)}${r.resolution_note ? `: ${r.resolution_note}` : ""}`] : [])].join("\n");
+  }
   return [head,
     ...(r.markers ? [r.markers] : [`  ours:   ${short(textOf(s, r.ours as AnyItem), 400)}`, `  theirs: ${short(textOf(s, r.theirs as AnyItem), 400)}`]),
     ...(r.package_id ? [`  package ${r.package_id}`] : []),
@@ -795,14 +813,21 @@ export function acceptReview(agentId: string, idOrPrefix: string, o: { by?: stri
   let applied = "";
   const localLive = r.local_id && db.prepare("SELECT 1 FROM nodes WHERE id = ? AND status = 'active'").get(r.local_id);
   const run = db.transaction(() => {
-    if (r.kind === "removal") {
+    if (r.kind === "identity_change") {
+      applied = acceptHeldIdentityChange(agentId, t, { by, reviewId: r.id, config: cfg });
+    } else if (r.kind === "quarantine") {
+      if (!t) throw new Error("quarantined op is missing");
+      applied = applyQuarantinedOp(agentId, t as unknown as QuarantineOp, by, (tool, args, writer) => dispatchContinuityTool(tool, agentId, args, cfg, { writerAgentId: writer }));
+    } else if (r.kind === "removal") {
       if (localLive) { const x = retractNode(agentId, r.local_id!, `removed in soul ${r.package_id ?? ""} (review ${r.id} accepted by ${by})`, { by }); applied = x.ok ? `retracted ${r.local_id!.slice(0, 8)}` : `nothing to retract (${x.error ?? ""})`; }
       else applied = "nothing to retract";
     } else if (!t) {
       applied = "theirs is absent; nothing applied";
     } else if (s === "identity") {
+      const before = ((db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "");
       updateSelfModelField(agentId, "identity", (t as { text: string }).text);
-      applied = "identity updated";
+      const v = recordIdentityImport(db, before, (t as { text: string }).text, { by, reviewId: r.id, now });
+      applied = v ? `identity updated (identity v${v})` : "identity updated";
     } else if (s === "goals") {
       const g = t as SoulGoal;
       const cur = r.local_id ? currentGoalRow(agentId, r.local_id) : null;
@@ -846,6 +871,7 @@ export function rejectReview(agentId: string, idOrPrefix: string, o: { by?: stri
   const now = o.now ?? Date.now();
   const by = o.by ?? "admin";
   db.prepare("UPDATE review_items SET status = 'rejected', resolved_at = ?, resolved_by = ?, resolution_note = ? WHERE id = ?").run(now, by, o.reason ?? "rejected", r.id);
+  if (r.kind === "identity_change") markHeldIdentityRejected(db, r.id, by);
   db.prepare("INSERT INTO soul_events (at, action, package_id, parent_id, by, detail_json) VALUES (?, 'review:reject', ?, NULL, ?, ?)").run(now, r.package_id, by, JSON.stringify({ id: r.id, kind: r.kind, reason: o.reason ?? null }));
   return { ok: true, id: r.id };
 }

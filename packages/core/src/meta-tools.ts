@@ -146,6 +146,15 @@ export function changesSince(agentId: string, args: { goalId?: string; planId?: 
     if (!sc.ids.has(c.node_id)) continue;
     out.push(c.done_at ? { at: c.done_at, kind: "commitment", text: `${c.status}: ${short(c.title, 80)}` } : { at: c.due_at!, kind: "commitment", text: `came due: ${short(c.title, 80)}` });
   }
+  // identity versions (topic "identity" / "self" / "values" / "who I am")
+  if (sc.topic && /^(identity|self|values?|who (i am|am i)|soul)$/i.test(sc.topic.trim())) {
+    try {
+      for (const r of db.prepare("SELECT version, status, target, action, key, old_value, new_value, reason, writer, reverts_version, review_id, created_at FROM identity_changes WHERE created_at BETWEEN ? AND ? ORDER BY created_at").all(since, until) as Array<{ version: number | null; status: string; target: string; action: string; key: string | null; old_value: string | null; new_value: string | null; reason: string | null; writer: string | null; reverts_version: number | null; review_id: string | null; created_at: number }>) {
+        const what = r.action === "revert" ? `revert of v${r.reverts_version} (${r.key ?? r.target})` : `${r.action} ${r.target} ${r.key ?? ""}${r.action === "change" ? `: ${short(r.old_value, 30)} → ${short(r.new_value, 40)}` : r.action === "add" ? ` = ${short(r.new_value, 50)}` : ""}`;
+        out.push({ at: r.created_at, kind: r.status === "applied" ? `identity v${r.version}` : `identity ${r.status}`, text: `${what}${r.reason ? ` — ${short(r.reason, 60)}` : ""}${r.review_id && r.status !== "applied" ? ` (${r.review_id})` : ""} by ${r.writer ?? "?"}` });
+      }
+    } catch { /* pre-v25 */ }
+  }
   // plan steps
   if (sc.planId) for (const s of db.prepare("SELECT idx, text, status, updated_at FROM plan_steps WHERE plan_id = ? AND updated_at BETWEEN ? AND ?").all(sc.planId, since, until) as Array<{ idx: number; text: string; status: string; updated_at: number }>)
     if (s.status !== "todo") out.push({ at: s.updated_at, kind: "step", text: `${s.idx}. ${short(s.text, 70)} → ${s.status}` });

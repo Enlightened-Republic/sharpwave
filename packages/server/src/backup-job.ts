@@ -3,10 +3,10 @@
 // and the `backup now` CLI. Off-PC failures never fail the local snapshots.
 
 import { basename, join, dirname } from "node:path";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { exportSoul, serializeSoul } from "xanima-core";
-import { snapshotAll, type SnapshotResult } from "./backup.js";
+import { snapshotAll, snapshotBrain, type SnapshotResult } from "./backup.js";
 import { OffsiteBackup, type OffsiteResult } from "./offsite.js";
 import { backupsDir, brainsDir, type ServiceConfig } from "./config.js";
 import type { AuditLog } from "./audit.js";
@@ -28,6 +28,11 @@ export function makeOffsite(cfg: ServiceConfig, log: Logger, audit?: AuditLog, e
 
 export function snapshotAndAudit(cfg: ServiceConfig, log: Logger, audit: AuditLog | undefined, only?: string[], srcBrainsDir = brainsDir(cfg)) {
   const r = snapshotAll(srcBrainsDir, backupsDir(cfg), cfg.backup.keep, only);
+  // Xanima 0.5.0: the room registry (members, roles, subscriptions) next to the brains.
+  const reg = join(srcBrainsDir, "..", "rooms", "registry.db");
+  if (!only && existsSync(reg)) {
+    try { r.ok.push(snapshotBrain(reg, backupsDir(cfg), "_rooms-registry", cfg.backup.keep)); } catch (e) { r.failed.push({ brain: "_rooms-registry", error: String(e instanceof Error ? e.message : e) }); }
+  }
   const a = (brain: string, outcome: "ok" | "error", detail: string) => {
     try { audit?.append({ agentId: "system", tool: "backup.snapshot", brain, nodeId: null, outcome, detail }); } catch (e) { log.warn(`audit append failed: ${String(e)}`); }
   };
@@ -37,7 +42,7 @@ export function snapshotAndAudit(cfg: ServiceConfig, log: Logger, audit: AuditLo
     a(f.brain, "error", f.error);
   }
   log.info(`backup: ${r.ok.length} snapshot(s), ${r.failed.length} failure(s)`);
-  if (cfg.brain?.soulPackageOnExport) for (const s of r.ok) if (s.brain !== "shared") writeSoulSidecar(s, cfg, log, a);
+  if (cfg.brain?.soulPackageOnExport) for (const s of r.ok) if (s.brain !== "shared" && !s.brain.startsWith("_")) writeSoulSidecar(s, cfg, log, a);
   return r;
 }
 

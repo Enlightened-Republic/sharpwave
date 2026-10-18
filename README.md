@@ -185,6 +185,7 @@ Memory lands in `~/.sharpwave/` as a SQLite database. Nothing leaves your machin
 | `brain_edges` | Get all active incoming and outgoing edges for a node. |
 | `brain_reset` | Wipe an agent's brain back to empty (a `.db` backup is taken first). `confirm` must equal the agent id. |
 
+| `brain_focus` | (0.5.0) Suppress or boost a topic / project / room / type in recall for N turns or a task. The header (identity, goals, rules) is unaffected. |
 | `brain_export_soul` | (0.4.0) Export your own Soul Package (`xanima-soul/1`): identity, values, goals, skills, lessons, key facts with provenance and a sha256 hash. Compact JSON or a summary. |
 
 In multi-agent mode every tool above also takes a required `agent` argument.
@@ -192,6 +193,12 @@ In multi-agent mode every tool above also takes a required `agent` argument.
 ### Soul Packages (0.4.0)
 
 Carry an agent's identity, goals, skills, lessons and key facts to a fresh brain on another machine or runtime, or fork it and merge the changes back with a three-way merge. Identity, values and goal changes from imports always wait in a review queue; nothing is overwritten. CLI: `xanima-server soul export | fork | import | diff | merge | review | validate | keygen`. Library: `exportSoul`, `importSoul`, `mergeSoul`, `validateSoul` from `xanima-core`. Format: [`packages/core/schema/xanima-soul-1.schema.json`](packages/core/schema/xanima-soul-1.schema.json). Guide: [docs/portability.md](docs/portability.md).
+
+### Rooms, injection control and quarantine (0.5.0)
+
+On `xanima-server`, **rooms** are named namespaces with members (read / write / admin). Agents publish selected memories into a room with provenance (`brain_publish`), search it (`brain_room_query`), subscribe so relevant room items show up in recall tagged `[type·room·writer]` (`brain_subscribe`), and admins create / invite / revoke (`brain_room`, or `xanima-server room …`). Conflicting claims are kept side by side and recorded; nothing is overwritten. Isolation stays the default; the `shared` brain is unchanged. Guide: [docs/rooms.md](docs/rooms.md).
+
+**Injection control:** `brain_focus`, `injectionCategories` switches, and sensitivity labels honoured in recall. **Poisoning quarantine:** writes that would change identity, values, goals or rules from untrusted sources (tool output, other agents, imports, injection-looking text) are logged (`quarantine: "log"`, the default) or held for review (`"enforce"`). Security model: [docs/security-model.md](docs/security-model.md).
 
 ## Memory types
 

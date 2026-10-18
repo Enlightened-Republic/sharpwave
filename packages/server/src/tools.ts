@@ -29,11 +29,15 @@ import {
   parseAsOf, relativeTime, beliefTag, parseConfidence, parseBeliefArgs,
   CONTINUITY_TOOL_NAMES, CONTINUITY_READ_ONLY_TOOLS, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost,
   SOUL_TOOL_DEFS, dispatchSoulTool, soulToolNeedsAdmin,
+  gateWrite, gateToolCall, gateNotice, GATED_TOOLS, parseScopeTags, setScopeTags,
+  setFocus, readFocus, describeFocus, tickFocus, applyInjectionControls, injectionCategories,
+  IDENTITY_TOOL_NAME, dispatchIdentityTool, identityConfig,
 } from "xanima-core";
+import { ROOM_SERVICE_TOOLS, ROOM_SERVICE_TOOL_NAMES, FOCUS_SERVICE_TOOL, callRoomTool, subscribedRoomItems, roomStatusLines, roomConflictText } from "./rooms-tools.js";
 import { join as joinPath } from "node:path";
 import { mkdirSync as mkdirSyncFs } from "node:fs";
 import { createHash } from "node:crypto";
-import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType } from "xanima-core";
+import type { BrainConfig, BrainNode, ActivatedNode, NodeType, EdgeType, RoomItem } from "xanima-core";
 
 import { SHARED_BRAIN, type BrainManager } from "./brains.js";
 import type { AuditLog } from "./audit.js";
@@ -120,6 +124,8 @@ export const SERVICE_TOOLS = [
   withProps("brain_status", { visibility: { type: "string", enum: ["all", "private", "shared"], description: "Which brain(s) to report (default all)." } }),
   // Xanima 0.4.0 Soul Package: export of self (read scope); import is admin-only (listed to admin tokens only).
   withProps("brain_export_soul", {}),
+  // Xanima 0.5.0 follow-up: the agent evolves its own identity / values (versioned; operator can revert).
+  withProps(IDENTITY_TOOL_NAME, {}),
   { name: "brain_import_soul", description: SOUL_TOOL_DEFS["brain_import_soul"]!.description + " Targets the admin token's own agent brain; a backup is taken first. Prefer `xanima-server soul import` (service stopped).", inputSchema: SOUL_TOOL_DEFS["brain_import_soul"]!.inputSchema },
   // Xanima 0.2.0 decision ledger + goals, 0.3.0 reflection / open items / plans / meta-tools — always on the caller's PRIVATE brain.
   ...CONTINUITY_TOOL_NAMES.map((n) => withProps(n, {})),
@@ -166,9 +172,13 @@ export const SERVICE_TOOLS = [
       required: ["mode", "source"],
     },
   },
+  // Xanima 0.5.0: rooms (context bus) + injection focus.
+  ...ROOM_SERVICE_TOOLS,
+  FOCUS_SERVICE_TOOL,
   EPISODE_TOOL_DEF,
   PROVISION_TOOL_DEF,
 ];
+const ROOM_NAMES = new Set(ROOM_SERVICE_TOOL_NAMES);
 
 const TOOL_NAMES = new Set(SERVICE_TOOLS.map((t) => t.name));
 
@@ -331,7 +341,7 @@ function visibilityOf(args: Record<string, unknown>): Visibility | null | "inval
   return "invalid";
 }
 function stripClientFields(args: Record<string, unknown>): Record<string, unknown> {
-  const { visibility: _v, writer_agent_id: _w, agent: _a, scope: _s, format: _f, ...rest } = args;
+  const { visibility: _v, writer_agent_id: _w, agent: _a, scope: _s, format: _f, inject: _i, tags: _t, project: _pj, ...rest } = args;
   return rest;
 }
 
@@ -486,6 +496,32 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
   const p = ctx.principal;
   const cfg = ctx.brainConfig;
   try {
+    if (ROOM_NAMES.has(name)) return await callRoomTool(ctx, name, args);
+    if (name === IDENTITY_TOOL_NAME) {
+      // Always the caller's PRIVATE brain. get / history: read. add / change / remove: write.
+      // attested_provenance comes from the host plugin (OpenClaw), which overwrites any model-supplied value.
+      const mutating = ["add", "change", "remove"].includes(String(args["action"] ?? ""));
+      const needs: Scope = mutating ? "write" : "read";
+      if (!has(p, needs)) return err(`forbidden — ${name}${mutating ? ` ${String(args["action"])}` : ""} needs the ${needs} scope`);
+      if (args["visibility"] === "shared") return err(`${name} works on your private brain only`);
+      const brain = ctx.brains.privateBrain(p.agentId);
+      const { visibility: _v, writer_agent_id: _w, agent: _a, ...rest } = args;
+      const r = await ctx.brains.write(brain, () => dispatchIdentityTool(brain, rest, cfg, { writer: p.agentId }));
+      if (mutating) {
+        const outcome = r.isError ? "denied" : /^Held for review/.test(r.text) ? "denied" : "ok";
+        const prov = (args["attested_provenance"] as { origin?: string } | undefined)?.origin ?? "unattested";
+        ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome, detail: `${String(args["action"])} ${String(args["target"] ?? "field")} ${String(args["field"] ?? args["value_id"] ?? "").slice(0, 40)} prov=${prov} → ${r.text.split(/[.:]/)[0]!.slice(0, 80)}` });
+      }
+      return r.isError ? { text: r.text, isError: true } : ok(r.text);
+    }
+    if (name === "brain_focus") {
+      if (!has(p, "write")) return err("forbidden — brain_focus needs the write scope");
+      const brain = ctx.brains.privateBrain(p.agentId);
+      if (args["show"] === true) { const f = ctx.brains.read(brain, (db) => readFocus(db)); return ok(f ? `Focus: ${describeFocus(f)}` : "No focus set — recall is normal."); }
+      const r = await ctx.brains.write(brain, () => setFocus(getDb(brain), args, cfg));
+      if (r.ok) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: r.state ? describeFocus(r.state).slice(0, 200) : "clear" });
+      return r.ok ? ok(r.text) : err(r.text.replace(/^Error: /, ""));
+    }
     if (name === "brain_export_soul" || name === "brain_import_soul" || (name === "brain_review" && typeof args["action"] === "string")) {
       // Soul Package tools — always the caller's PRIVATE brain. Export / review list|show: read scope.
       // Import / review accept|reject: admin scope (identity and goal changes are a human/admin decision).
@@ -534,15 +570,31 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         // never-compacted header does — this is how a soul loaded into a fresh brain reaches the agent's turns.
         const sm = await ctx.brains.write(brain, () => {
           const db = getDb(brain);
-          const identity = ((db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "").trim();
-          const goals = (db.prepare("SELECT title FROM goals WHERE status = 'active' ORDER BY priority ASC, created_at DESC LIMIT 3").all() as Array<{ title: string }>).map((g) => g.title);
-          return { identity: identity.slice(0, 400), goals };
+          const cats = injectionCategories(cfg);
+          const identity = cats.identity ? ((db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "").trim() : "";
+          const goals = !cats.goals ? [] : (db.prepare("SELECT title FROM goals g WHERE status = 'active' AND tracked = 1 AND version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id) ORDER BY priority ASC, created_at DESC LIMIT 3").all() as Array<{ title: string }>).map((g) => g.title);
+          return { identity: (identityConfig(cfg).maxChars ? identity.slice(0, Math.max(400, identityConfig(cfg).maxChars)) : identity), goals };
         });
         return ok(JSON.stringify({ ...r, ...(sm.identity ? { identity: sm.identity } : {}), ...(sm.goals.length ? { activeGoals: sm.goals } : {}) }));
       }
-      const { visibility: _v, writer_agent_id: _w, agent: _a, ...rest } = args;
+      const { visibility: _v, writer_agent_id: _w, agent: _a, ...rest0 } = args;
+      // Xanima 0.5.0 quarantine: goal changes from tool output / another agent / injection-looking text.
+      let gateText = "";
+      if (GATED_TOOLS.has(name)) {
+        const g = await ctx.brains.write(brain, () => gateToolCall(brain, name, rest0, { writer: p.agentId, config: cfg }));
+        if (g?.reviewId) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: g.decision === "held" ? "denied" : "ok", detail: `quarantine ${g.mode} ${g.reviewId}` });
+        if (g?.decision === "held") return ok(gateNotice(g));
+        if (g?.reviewId) gateText = `\n${gateNotice(g)}`;
+      }
+      const { source_type: _st, ...rest1 } = rest0;
+      const rest = GATED_TOOLS.has(name) ? rest1 : rest0;
       // Reads go through the serialized write connection too: core opens the brain by name (getDb).
-      const r = await ctx.brains.write(brain, () => dispatchContinuityTool(name, brain, rest, cfg, { writerAgentId: p.agentId }));
+      if (name === "brain_conflicts" && !(typeof rest["topic"] === "string" && rest["topic"].trim())) {
+        const rc = roomConflictText(ctx).trim();
+        return ok(rc || "No open room conflicts. Pass a topic to check your own memories for contradictions.");
+      }
+      const r0 = await ctx.brains.write(brain, () => dispatchContinuityTool(name, brain, rest, cfg, { writerAgentId: p.agentId }));
+      const r = r0 && !r0.isError ? { ...r0, text: `${r0.text}${gateText}${name === "brain_conflicts" ? roomConflictText(ctx) : ""}` } : r0;
       if (!CONTINUITY_READ_ONLY.has(name)) {
         const id = r && !r.isError ? (/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/.exec(r.text)?.[1] ?? null) : null;
         ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: id, outcome: r && !r.isError ? "ok" : "error", detail: String(args["action"] ?? "") });
@@ -616,24 +668,43 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         }
         let merged = hits.sort((a, b) => b.node.activation - a.node.activation);
         if (typeFilter) merged = merged.filter((h) => h.node.type === typeFilter);
+        // Xanima 0.5.0 injection path (plugin plumbing, inject:true — once per turn): subscribed room items,
+        // focus (ticked here), category switches and sensitivity. Explicit queries are not shaped.
+        let roomHits: RoomItem[] = [];
+        let control: { suppressedByFocus: number; sensitiveHeld: number; boosted: number; focus: string | null } | null = null;
+        if (args["inject"] === true) {
+          const mine = ctx.brains.privateBrain(p.agentId);
+          const focus = await ctx.brains.write(mine, () => tickFocus(getDb(mine)));
+          const cap = Math.max(0, Math.floor(cfg.roomRecallMax ?? 3));
+          const c1 = applyInjectionControls(merged.map((h) => ({ type: h.node.type, label: h.node.label, content: h.node.content, sensitivity: h.node.sensitivity ?? null, scope_tags: h.node.scope_tags ?? null, activation: h.node.activation, h })), { query, focus, config: cfg });
+          merged = c1.items.map((x) => x.h);
+          const c2 = applyInjectionControls(subscribedRoomItems(ctx, query, cap).map((it) => ({ ...it, room: it.room })), { query, focus, config: cfg });
+          roomHits = c2.items.slice(0, cap);
+          control = { suppressedByFocus: c1.report.suppressedByFocus + c2.report.suppressedByFocus, sensitiveHeld: c1.report.sensitiveHeld + c2.report.sensitiveHeld, boosted: c1.report.boosted + c2.report.boosted, focus: focus ? describeFocus(focus) : null };
+        }
         merged = merged.slice(0, limit ?? 10);
         if (args["format"] === "json") {
           return ok(JSON.stringify({
-            results: merged.map((h) => ({
+            results: [...merged.map((h) => ({
               brain: h.brain, id: h.node.id, type: h.node.type, label: h.node.label, content: h.node.content,
               score: round(h.node.activation), retrievability: round(h.node.retrievability),
               importance: round(h.node.importance), writer: h.node.writer_agent_id ?? null,
               source: h.node.source ?? null,
               ...beliefJson(h.node),
-            })),
+            })), ...roomHits.map((it) => ({
+              brain: "room", room: it.room, id: it.id, type: it.type, label: it.label, content: it.content, writer: it.writer,
+              origin_node_id: it.origin_node_id, published_at: it.published_at, score: 0,
+              ...(metaOn ? { confidence: it.confidence ?? "medium", confidence_score: it.confidence_score ?? null, source_type: it.source_type ?? "agent", status: it.status, created_at: it.created_at, ago: relativeTime(it.created_at), contradicted_at: it.contradicted_at ?? null, sensitivity: it.sensitivity ?? "normal" } : {}),
+            }))],
+            ...(control ? { control } : {}),
           }, null, 2));
         }
-        if (merged.length === 0) return ok("No matching nodes found.");
-        return ok(merged.map((h) => {
+        if (merged.length === 0 && roomHits.length === 0) return ok("No matching nodes found.");
+        return ok([...merged.map((h) => {
           const n = h.node;
           const writer = n.writer_agent_id ? ` writer=${n.writer_agent_id}` : "";
           return `[${h.brain}] ${n.id} (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  score=${n.activation.toFixed(2)} R=${n.retrievability.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}${beliefText(n)}`;
-        }).join("\n\n"));
+        }), ...roomHits.map((it) => `[${it.room}·${it.writer ?? "?"}] ${it.id} (${it.type}) ${it.label}\n  ${it.content.slice(0, 300)}\n  from ${it.origin_node_id ?? "?"}${it.contradicted_at ? " DISPUTED" : ""}`)].join("\n\n"));
       }
 
       case "brain_write": {
@@ -645,11 +716,18 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         const { type, label: lbl, content, importance, emotional_weight } = v.data!;
         const belief = parseBeliefArgs(args);
         if ("error" in belief) return err(belief.error);
+        const tags = parseScopeTags(args);
+        if (tags && "error" in tags) return err(tags.error);
         const started = Date.now();
+        // Xanima 0.5.0 quarantine (private brain): identity / value / goal / rule writes from untrusted sources.
+        const gate = t.brain === SHARED_BRAIN ? null : await ctx.brains.write(t.brain, () => gateWrite(t.brain, { op: "write", type, label: lbl, content, importance, sourceType: belief.sourceType, confidence: belief.confidence, sensitivity: belief.sensitivity, writer: p.agentId, source: WRITE_SOURCE }, { sourceType: belief.sourceType, config: cfg }));
+        if (gate?.reviewId) ctx.audit.append({ agentId: p.agentId, tool: name, brain: t.brain, nodeId: null, outcome: gate.decision === "held" ? "denied" : "ok", detail: `quarantine ${gate.mode} ${gate.reviewId}` });
+        if (gate?.decision === "held") return ok(gateNotice(gate));
         const { id, merged } = await ctx.brains.write(t.brain, () => {
           const nodeId = writeNode(t.brain, type as NodeType, lbl, content, {
             importance, emotional_weight, source: WRITE_SOURCE, writerAgentId: p.agentId, ...belief,
           });
+          if (tags) setScopeTags(t.brain, nodeId, tags.tags);
           queueEmbedding(t.brain, nodeId);
           const row = getNode(t.brain, nodeId);
           return { id: nodeId, merged: !!row && row.created_at < started };
@@ -659,6 +737,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         let text = `Written: node ${id} (${type}) "${lbl}" brain=${brainLabel} writer=${p.agentId}`;
         if (merged) text += " (merged into an existing near-duplicate node)";
         if (claimed && claimed !== p.agentId) text += `\nNote: client-supplied writer_agent_id "${claimed}" was ignored; the writer is the token's agent.`;
+        if (gate?.reviewId) text += `\n${gateNotice(gate)}`;
         return ok(text);
       }
 
@@ -689,6 +768,13 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         const reason = typeof args["reason"] === "string" ? args["reason"] : undefined;
         const conf = parseConfidence(args["confidence"]);
         if (args["confidence"] !== undefined && args["confidence"] !== null && args["confidence"] !== "" && !conf) return err("confidence must be low|medium|high|certain or a number 0–1");
+        const sst = typeof args["source_type"] === "string" ? args["source_type"] : null;
+        const sgate = t.brain === SHARED_BRAIN ? null : await ctx.brains.write(t.brain, () => {
+          const o = getNode(t.brain, old_node_id);
+          return o ? gateWrite(t.brain, { op: "supersede", oldNodeId: o.id, oldType: o.type, oldLabel: o.label, newContent: new_content, newLabel: new_label, reason, writer: p.agentId, source: WRITE_SOURCE }, { sourceType: sst, config: cfg }) : null;
+        });
+        if (sgate?.reviewId) ctx.audit.append({ agentId: p.agentId, tool: name, brain: t.brain, nodeId: old_node_id, outcome: sgate.decision === "held" ? "denied" : "ok", detail: `quarantine ${sgate.mode} ${sgate.reviewId}` });
+        if (sgate?.decision === "held") return ok(gateNotice(sgate));
         const res = await ctx.brains.write(t.brain, () => {
           const r = supersedeNode(t.brain, old_node_id, new_content, {
             newLabel: new_label, reason, source: WRITE_SOURCE, writerAgentId: p.agentId,
@@ -702,6 +788,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         ctx.audit.append({ agentId: p.agentId, tool: name, brain: t.brain, nodeId: res.newId!, outcome: "ok", detail: `supersedes ${res.oldId}${reason ? ` reason=${reason.slice(0, 200)}` : ""}` });
         let text = `Superseded: ${res.oldId} → new node ${res.newId} brain=${label(ctx, t.brain)} writer=${p.agentId}`;
         if (cfg.beliefMetadata !== false) text += `${reason ? `\nReason: ${reason}` : ""}\n${formatRelated(res.related!, 36)}`;
+        if (sgate?.reviewId) text += `\n${gateNotice(sgate)}`;
         return ok(text);
       }
 
@@ -724,7 +811,8 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         if (which !== "all" && which !== "private" && which !== "shared") return err("visibility must be all, private, or shared");
         const sts = readBrains(ctx, which).map((b) => ({ brain: label(ctx, b), status: ctx.brains.read(b, (db) => computeBrainStatus(db, cfg)) }));
         if (args["format"] === "json") return ok(JSON.stringify({ agentId: p.agentId, brains: sts.map((x) => ({ brain: x.brain, ...x.status })) }, null, 2));
-        return ok(sts.map((x) => formatBrainStatus(x.status, x.brain)).join("\n\n"));
+        const roomLines = which === "shared" ? [] : roomStatusLines(ctx);
+        return ok([...sts.map((x) => formatBrainStatus(x.status, x.brain)), ...(roomLines.length ? [roomLines.join("\n")] : [])].join("\n\n"));
       }
 
       case "brain_review":

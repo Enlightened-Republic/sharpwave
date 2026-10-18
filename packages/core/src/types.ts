@@ -84,6 +84,8 @@ export interface BrainNode {
   status_reason?: string | null;
   status_changed_at?: number | null;
   sensitivity?: Sensitivity;
+  /** Xanima 0.5.0 (v24): JSON list of project / category tags. */
+  scope_tags?: string | null;
   /** Set by sleep when the node needs review (low confidence / contradicted). Exempts it from pruning. */
   review_flagged_at?: number | null;
   created_at: number;
@@ -254,6 +256,37 @@ export interface BrainConfig {
   soulMergeApplyTheirs?: boolean;
   /** xanima-server backup now: also write a compact soul package next to each private-brain snapshot. Default false. */
   soulPackageOnExport?: boolean;
+  // ── Xanima 0.5.0 rooms, injection control, quarantine ──
+  /** Rooms (named shared namespaces with members) on the brain service. Default true (no room exists until an admin creates one). */
+  rooms?: boolean;
+  /** Max subscribed-room items added to a turn's recall (tagged [type·room·writer]). Default 3. */
+  roomRecallMax?: number;
+  /** Which injection categories are on. Header = identity / goals / rules (always-on); recall = selective. Defaults: all true, sensitive "relevant". */
+  injectionCategories?: InjectionCategories;
+  /** brain_focus default lifetime in turns when ttl is omitted. Default 3. */
+  focusDefaultTtl?: number;
+  /** Poisoning quarantine for identity / value / goal / rule writes from untrusted sources: off | log (record, still apply) | enforce (hold for review). Default "log". */
+  quarantine?: "off" | "log" | "enforce";
+  /** Agent-evolved identity (brain_identity): locked fields (default ["Name"]), rate limit, size caps. See identity.ts. */
+  /** brain_identity guardrails; each is one switch (see identity.ts). */
+  identity?: { selfEdit?: boolean; refuseUntrusted?: boolean; saveRefusedAsNote?: boolean; locked?: string[]; maxChangesPerDay?: number; maxChars?: number; requireAttestation?: boolean };
+}
+
+export interface InjectionCategories {
+  /** Header: the brain's identity line. */
+  identity?: boolean;
+  /** Header: active goals / alignment notes. */
+  goals?: boolean;
+  /** Header: operational rules (procedural block). */
+  rules?: boolean;
+  /** Selective recall block. */
+  recall?: boolean;
+  /** Decision nodes inside recall. */
+  decisions?: boolean;
+  /** Subscribed room items inside recall. */
+  rooms?: boolean;
+  /** Sensitive items: "relevant" (only when the turn names their topic), "never", or "always". */
+  sensitive?: "relevant" | "never" | "always";
 }
 
 export const DEFAULT_CONFIG: BrainConfig = {
@@ -307,5 +340,10 @@ export const DEFAULT_CONFIG: BrainConfig = {
   soulImportConfidence: 0.5,
   soulMergeApplyTheirs: true,
   soulPackageOnExport: false,
+  rooms: true,
+  roomRecallMax: 3,
+  injectionCategories: { identity: true, goals: true, rules: true, recall: true, decisions: true, rooms: true, sensitive: "relevant" },
+  focusDefaultTtl: 3,
+  quarantine: "log",
   lessonMergeSimilarity: 0.86,
 };

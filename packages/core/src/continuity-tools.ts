@@ -90,6 +90,7 @@ export const CONTINUITY_TOOL_DEFS: Record<string, ContinuityToolDef> = {
         success_criteria: { type: "string", description: "How you will know it is done." },
         keywords: { type: "array", items: { type: "string" }, description: "Words that count as progress when they show up in conversation (derived from the title if omitted)." },
         triggers: TRIGGERS,
+        source_type: { type: "string", description: "Where this change came from (user|self_observation|inference|tool|agent). Goal changes from tool output or another agent are quarantined for review." },
       },
       required: ["title"],
     },
@@ -107,6 +108,7 @@ export const CONTINUITY_TOOL_DEFS: Record<string, ContinuityToolDef> = {
         note: { type: "string", description: "Progress note (action progress)." },
         progress: { type: "string", description: "Shortcut for action=progress with this note: what concretely advanced the goal." },
         triggers: TRIGGERS,
+        source_type: { type: "string", description: "Where this change came from (user|self_observation|inference|tool|agent). Goal changes from tool output or another agent are quarantined for review." },
       },
       required: ["goal_id"],
     },
@@ -192,8 +194,8 @@ Object.assign(CONTINUITY_TOOL_DEFS, {
     inputSchema: { type: "object", properties: { goal_id: { type: "string" }, plan_id: { type: "string" }, topic: { type: "string" }, days: { type: "number", description: "Default 7." } } },
   },
   brain_conflicts: {
-    description: "Contradictions, low-confidence or disputed memories, refuted hypotheses and contradicted assumptions about a topic. Read-only, budget-capped.",
-    inputSchema: { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] },
+    description: "Contradictions, low-confidence or disputed memories, refuted hypotheses and contradicted assumptions about a topic, plus open conflicts in your rooms (brain service). Without a topic: only the room conflicts. Read-only, budget-capped.",
+    inputSchema: { type: "object", properties: { topic: { type: "string", description: "What to check. Optional on the brain service (room conflicts only); required in local mode." } } },
   },
   brain_briefing: {
     description: "A short resume briefing for a plan, goal or topic: where it stands, what's open, recent decisions, commitments, the last reflection, and what changed. Read-only, budget-capped.",
@@ -379,7 +381,7 @@ export function dispatchContinuityTool(
     }
     case "brain_conflicts": {
       const topic = str(args["topic"]);
-      if (!topic) return err("topic is required");
+      if (!topic) return err("topic is required (without a topic, brain_conflicts on the brain service lists room conflicts)");
       return ok(conflicts(agentId, topic, config, now ?? Date.now()).text);
     }
     case "brain_briefing": {

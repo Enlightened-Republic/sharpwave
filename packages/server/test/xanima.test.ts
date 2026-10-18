@@ -88,7 +88,7 @@ describe("belief tools on the service", () => {
       expect(st.brains[0].nodes).toMatchObject({ retracted: 1, superseded: 1 });
       expect(st.brains[0].injection.estimatedTokens).toBeGreaterThan(0);
       const stText = (await tool(h.url, tok, "brain_status", { visibility: "private" })).text;
-      expect(stText).toMatch(/^\[private\] Brain status \(schema v23\)/);
+      expect(stText).toMatch(/^\[private\] Brain status \(schema v25\)/);
 
       // audit carries reasons but never content
       const audit = readFileSync(h.cfg.auditFile, "utf8");
@@ -176,7 +176,7 @@ describe("xanima-server migrate (copy ~/.sharpwave → ~/.xanima)", () => {
       expect(paths).toEqual([...(HAVE_SNAPSHOT ? ["main/brain.db"] : []), "service/brains/gano/brain.db", "service/brains/shared/brain.db"].sort());
       for (const b of j.brains) {
         expect(b.ok).toBe(true);
-        expect(b.after).toMatchObject({ nodes: b.before.nodes, edges: b.before.edges, episodes: b.before.episodes, schema: 23 });
+        expect(b.after).toMatchObject({ nodes: b.before.nodes, edges: b.before.edges, episodes: b.before.episodes, schema: 25 });
         expect(b.integrity).toBe("ok");
       }
       const gano = j.brains.find((b: { path: string }) => b.path.includes("gano"));

@@ -20,9 +20,13 @@
 //   xanima-server soul import  --agent <id> --from f [--mode new|merge] [--dry-run] [--trust-key id]... [--require-signature]
 //   xanima-server soul diff    <a.json> <b.json> [--json]
 //   xanima-server soul merge   --base f --theirs f --into <id> [--dry-run] [--force]
-//   xanima-server soul review  list|show|accept|reject --agent <id> [--id x | --all] [--reason txt] [--status s]
+//   xanima-server soul review  list|show|accept|reject --agent <id> [--id x | --all] [--reason txt] [--status pending|logged|accepted|rejected|all] [--kind quarantine|identity|goal|conflict…]
 //   xanima-server soul validate --from f [--trust-key id]... [--require-signature]
 //   xanima-server soul keygen  --key-file f [--force]
+//   xanima-server room create  <name> --owner <agent> [--description txt]
+//   xanima-server room invite  <name> --agent <id> --role read|write|admin
+//   xanima-server room revoke  <name> --agent <id> [--withdraw]      (--withdraw: service stopped)
+//   xanima-server room list | members <name> | conflicts <name> [--json]
 //   xanima-server version
 //
 // Common: --config <file> (default <root>/config.json if present), --root <dir>
@@ -34,6 +38,7 @@ import { snapshotBrain } from "./backup.js";
 import {
   exportSoul, serializeSoul, signSoul, generateSoulKeyPair, parseSoul, validateSoul, diffSoul, formatSoulDiff, importSoul, mergeSoul,
   formatImportReport, listReviews, getReview, formatReview, acceptReview, rejectReview, writeSoulSqlite, soulSummary, getDb,
+  openRoomRegistry, allRooms, listMembers, createRoom, setMember, revokeMember, withdrawAll, roomConflicts, formatRoomConflict, roomBrainName, type RoomRole,
 } from "xanima-core";
 import { dirname, join } from "node:path";
 import { brainsDir, backupsDir, defaultConfigPath, defaultRoot, expandHome, loadConfigFile, resolveConfig, type ServiceConfig } from "./config.js";
@@ -49,7 +54,8 @@ import { adoptBrain, formatAdoptResult, type AdoptMode } from "./adopt.js";
 import { migrateDataDir, formatMigrateResult } from "./migrate.js";
 import { SleepRunner } from "./sleep.js";
 import { BrainManager } from "./brains.js";
-import { DEFAULT_CONFIG, suppressDeprecationWarning } from "xanima-core";
+import { DEFAULT_CONFIG, suppressDeprecationWarning, identityHistory, formatIdentityHistory, revertIdentityVersion, identityStatus, identityFields, listValues } from "xanima-core";
+import { listLegacyGoalsFile, pauseLegacyGoalsFile, resumeLegacyGoalsFile } from "./goals-legacy.js";
 import { defaultReportBase, ftsProbe, parseSelection, registryStatus, retireItems, scanBrainFile, unretireItems, writeReport } from "./noise.js";
 import { BrainService } from "./service.js";
 import { VERSION } from "./version.js";
@@ -60,7 +66,7 @@ interface Parsed {
   flags: Map<string, string[]>;
 }
 
-const BOOL_FLAGS = new Set(["include-sensitive", "include-shared", "include-open-items", "sign", "require-signature", "include-backups", "skip-port-check", "json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
+const BOOL_FLAGS = new Set(["withdraw", "include-sensitive", "include-shared", "include-open-items", "sign", "require-signature", "include-backups", "skip-port-check", "json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
 
 function parse(argv: string[]): Parsed {
   const out: Parsed = { _: [], flags: new Map() };
@@ -150,6 +156,19 @@ Usage:
   xanima-server noise unretire --agent <id> (--batch <noise-...> | --ids-file <f> | --all) [--dry-run] [--json]
       Service must be stopped. Backup first, then restore the recorded prior values exactly.
   xanima-server noise status --agent <id> [--json]
+  xanima-server goals list-legacy --agent <id> [--json]
+      Read-only. Active *untracked* (pre-0.2.0 backfilled) goals, each marked when it looks like a chat fragment.
+  xanima-server goals pause-legacy --agent <id> [--all-untracked] [--dry-run] [--json]
+      Service must be stopped. Backup first, then pause the untracked goals that look like chat fragments
+      (all untracked ones with --all-untracked). Audited; undo with goals resume-legacy --batch <goals-...>.
+  xanima-server goals resume-legacy --agent <id> --batch <goals-...> [--dry-run] [--json]
+  xanima-server identity history --agent <id> [--all] [--limit 50] [--json]
+      Read-only (safe while the service runs). The agent's identity versions: what changed (old → new), reason,
+      who / provenance, review id, reverted-by. --all also lists changes held for review and refused attempts.
+  xanima-server identity show --agent <id> [--json]      Current identity fields + values (read-only).
+  xanima-server identity revert <version> --agent <id> [--reason text] [--force] [--json]
+      Service must be stopped. Backup first, then undo that version as a NEW version (history kept). Refuses when the
+      same field / value changed later (revert the later version first, or --force).
   xanima-server soul export --agent <id> [--out f] [--profile compact|full] [--include-sensitive] [--include-shared]
                            [--include-open-items] [--sign --key-file f] [--sqlite f] [--parent <id>|none]
       Write the agent's Soul Package (xanima-soul/1, deterministic JSON + sha256). Read-only: safe while the service runs.
@@ -429,9 +448,154 @@ async function main(argv: string[]): Promise<number> {
     throw new Error(`unknown noise subcommand "${sub ?? ""}" (scan | check | retire | unretire | status)`);
   }
 
+  if (cmd === "goals") {
+    const agent = one(p, "agent");
+    if (!agent) throw new Error("goals needs --agent <id>");
+    const bad = validateAgentId(agent);
+    if (bad) throw new Error(bad);
+    const dbPath = join(brainsDir(cfg), agent, "brain.db");
+    if (!existsSync(dbPath)) throw new Error(`no brain for "${agent}" at ${dbPath}`);
+    const json = bool(p, "json");
+    const out = (o: unknown, text: string) => process.stdout.write((json ? JSON.stringify(o, null, 2) : text) + "\n");
+    const row = (g: { lineage_id: string; priority: number; title: string; fragment: string | null }) => `  ${g.lineage_id.slice(0, 8)} P${g.priority} ${g.fragment ? `[fragment: ${g.fragment}]` : "[looks like a goal]"} ${g.title.slice(0, 70)}`;
+    if (sub === "list-legacy") {
+      const l = listLegacyGoalsFile(dbPath);
+      out(l, [`${l.length} active untracked legacy goal(s); ${l.filter((g) => g.fragment).length} look like chat fragments`, ...l.map(row)].join("\n"));
+      return 0;
+    }
+    if (sub === "pause-legacy" || sub === "resume-legacy") {
+      const dryRun = bool(p, "dry-run");
+      if (!dryRun && await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first (goals ${sub} writes the brain file directly)`);
+      const common = { dbPath, brain: agent, backupsDir: backupsDir(cfg), audit: new AuditLog(cfg.auditFile), dryRun, by: "admin:cli" };
+      if (sub === "pause-legacy") {
+        const r = pauseLegacyGoalsFile({ ...common, all: bool(p, "all-untracked") });
+        out(r, [`${dryRun ? "DRY RUN — would pause" : "paused"} ${r.paused.length} untracked legacy goal(s), kept ${r.kept.length}  batch=${r.batch}`,
+          ...r.paused.map(row), ...(r.kept.length ? ["kept (not fragment-like; --all-untracked pauses them too):", ...r.kept.map(row)] : []),
+          ...(r.backup ? [`backup ${r.backup}`, `undo: xanima-server goals resume-legacy --agent ${agent} --batch ${r.batch}`] : [])].join("\n"));
+        return 0;
+      }
+      const b = one(p, "batch");
+      if (!b) throw new Error("goals resume-legacy needs --batch <goals-...>");
+      const r = resumeLegacyGoalsFile({ ...common, batch: b });
+      out(r, `${dryRun ? "DRY RUN — would resume" : "resumed"} ${r.resumed.length} goal(s) from ${b}${r.backup ? `\nbackup ${r.backup}` : ""}`);
+      return 0;
+    }
+    throw new Error(`unknown goals subcommand "${sub ?? ""}" (list-legacy | pause-legacy | resume-legacy)`);
+  }
+
+  if (cmd === "identity") {
+    const agent = one(p, "agent") ?? one(p, "brain");
+    if (!agent) throw new Error("identity needs --agent <id> (or --brain <id>)");
+    const bad = validateAgentId(agent);
+    if (bad) throw new Error(bad);
+    const dbPath = join(brainsDir(cfg), agent, "brain.db");
+    if (!existsSync(dbPath)) throw new Error(`no brain for "${agent}" at ${dbPath}`);
+    const json = bool(p, "json");
+    const out = (o: unknown, text: string) => process.stdout.write((json ? JSON.stringify(o, null, 2) : text) + "\n");
+    const brainCfg = { ...DEFAULT_CONFIG, ...(cfg.brain ?? {}) };
+    if (sub === "history" || sub === "show") {
+      const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      try {
+        if (sub === "history") {
+          const lim = one(p, "limit");
+          const rows = identityHistory(db, { all: bool(p, "all"), limit: lim ? Number(lim) : 50 });
+          const st = identityStatus(db, brainCfg);
+          out(rows, [`${agent}: identity v${st?.version ?? 0} · ${st?.held ?? 0} held for review · locked: ${st?.locked.join(", ") || "none"}${bool(p, "all") ? "" : " (applied versions; --all adds held / refused attempts)"}`, formatIdentityHistory(rows)].join("\n"));
+        } else {
+          const text = ((db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "").trim();
+          const values = listValues(db);
+          out({ identity: text, fields: identityFields(text), values }, [`identity:`, text || "(empty)", "", `values (${values.length}):`, ...values.map((v) => `- ${v.id.slice(0, 8)} [${v.source_type ?? "?"}] ${v.label}`)].join("\n"));
+        }
+      } finally { db.close(); }
+      return 0;
+    }
+    if (sub === "revert") {
+      const v = Number(one(p, "version") ?? p._[2]);
+      if (!Number.isInteger(v) || v < 1) throw new Error("identity revert needs a version number: xanima-server identity revert <version> --agent <id>");
+      if (await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first (identity revert writes the brain file directly)`);
+      const backup = snapshotBrain(dbPath, join(backupsDir(cfg), agent), "identity", 1_000_000).path;
+      const mgr = new BrainManager(brainsDir(cfg), 1);
+      mgr.init();
+      try {
+        const r = await mgr.write(agent, () => revertIdentityVersion(agent, v, { by: "admin:cli", reason: one(p, "reason") ?? `revert v${v} (operator)`, force: bool(p, "force"), config: brainCfg }));
+        new AuditLog(cfg.auditFile).append({ agentId: "admin:cli", tool: "identity revert", brain: agent, nodeId: null, outcome: r.status === "applied" ? "ok" : "error", detail: `v${v} → ${r.message.slice(0, 160)} backup=${backup}` });
+        out({ ...r, backup }, `${r.message}\nbackup ${backup}`);
+        return r.status === "applied" ? 0 : 1;
+      } finally { await mgr.close(); }
+    }
+    throw new Error(`unknown identity subcommand "${sub ?? ""}" (history | show | revert)`);
+  }
+
   if (cmd === "soul") return soulCommand(p, sub, cfg);
+  if (cmd === "room") return roomCommand(p, sub, cfg);
 
   throw new Error(`unknown command "${cmd}" — run xanima-server help`);
+}
+
+async function roomCommand(p: Parsed, sub: string | undefined, cfg: ServiceConfig): Promise<number> {
+  const json = bool(p, "json");
+  const out = (o: unknown, text: string) => process.stdout.write((json ? JSON.stringify(o, null, 2) : text) + "\n");
+  const reg = openRoomRegistry(join(brainsDir(cfg), "..", "rooms", "registry.db"));
+  const audit = new AuditLog(cfg.auditFile);
+  const by = "admin:cli";
+  try {
+    if (sub === "list") {
+      const rooms = allRooms(reg).map((r) => ({ ...r, members: listMembers(reg, r.name) }));
+      out(rooms, rooms.length ? rooms.map((r) => `${r.name} (owner ${r.owner}): ${r.members.map((m) => `${m.agent_id}=${m.role}`).join(", ")}${r.description ? ` — ${r.description}` : ""}`).join("\n") : "no rooms");
+      return 0;
+    }
+    const name = p._[2];
+    if (!name) throw new Error(`room ${sub ?? ""} needs a room name`);
+    if (sub === "create") {
+      const owner = one(p, "owner"); if (!owner) throw new Error("room create needs --owner <agent>");
+      const bad = validateAgentId(owner); if (bad) throw new Error(bad);
+      const r = createRoom(reg, { name, owner, description: one(p, "description") });
+      if (!r.ok) throw new Error(r.error);
+      audit.append({ agentId: by, tool: "room.create", brain: roomBrainName(name), nodeId: null, outcome: "ok", detail: `owner=${owner}` });
+      out({ ok: true, room: name, owner }, `created room ${name} (owner ${owner})`);
+      return 0;
+    }
+    if (sub === "invite" || sub === "revoke") {
+      const agent = one(p, "agent"); if (!agent) throw new Error(`room ${sub} needs --agent <id>`);
+      const bad = validateAgentId(agent); if (bad) throw new Error(bad);
+      if (sub === "invite") {
+        const role = (one(p, "role") ?? "read") as RoomRole;
+        const r = setMember(reg, { room: name, agent, role, by });
+        if (!r.ok) throw new Error(r.error);
+        audit.append({ agentId: by, tool: "room.invite", brain: roomBrainName(name), nodeId: null, outcome: "ok", detail: `${agent}=${role}` });
+        out({ ok: true, room: name, agent, role, previous: r.previous ?? null }, `${agent} is ${role} in ${name}${r.previous ? ` (was ${r.previous})` : ""}`);
+        return 0;
+      }
+      const withdraw = bool(p, "withdraw");
+      if (withdraw && await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first for --withdraw, or use brain_room {"action":"revoke","withdraw":true} through the service`);
+      const r = revokeMember(reg, { room: name, agent, by });
+      if (!r.ok) throw new Error(r.error);
+      let withdrawn = 0;
+      if (withdraw) {
+        const mgr = new BrainManager(brainsDir(cfg), 1); mgr.init();
+        try { withdrawn = await mgr.write(roomBrainName(name), () => withdrawAll(name, agent, `withdrawn: ${agent} was revoked from ${name} by ${by}`)); } finally { await mgr.close(); }
+      }
+      audit.append({ agentId: by, tool: "room.revoke", brain: roomBrainName(name), nodeId: null, outcome: "ok", detail: `${agent}${withdraw ? ` withdraw=${withdrawn}` : ""}` });
+      out({ ok: true, room: name, agent, withdrawn }, `revoked ${agent} from ${name}${withdraw ? `; withdrew ${withdrawn} item(s)` : ""}`);
+      return 0;
+    }
+    if (sub === "members") {
+      const m = listMembers(reg, name, true);
+      out(m, m.map((x) => `${x.agent_id} ${x.role}${x.revoked_at ? " (revoked)" : ""}`).join("\n") || "no members");
+      return 0;
+    }
+    if (sub === "conflicts") {
+      const f = join(brainsDir(cfg), roomBrainName(name), "brain.db");
+      if (!existsSync(f)) { out([], "no conflicts (room brain not created yet)"); return 0; }
+      const db = new Database(f, { readonly: true });
+      try {
+        const cs = roomConflicts(name, { status: "all" }, db);
+        out(cs, cs.map((c) => formatRoomConflict(c, (t) => new Date(t).toISOString())).join("\n") || "no conflicts");
+      } finally { db.close(); }
+      return 0;
+    }
+    throw new Error(`unknown room subcommand "${sub ?? ""}" (create | invite | revoke | list | members | conflicts)`);
+  } finally { reg.close(); }
 }
 
 async function soulCommand(p: Parsed, sub: string | undefined, cfg: ServiceConfig): Promise<number> {
@@ -546,7 +710,8 @@ async function soulCommand(p: Parsed, sub: string | undefined, cfg: ServiceConfi
       try {
         if (action === "list") {
           const st = (one(p, "status") ?? "pending") as "pending";
-          const rows = listReviews(db, { status: st });
+          const kind = one(p, "kind");
+          const rows = listReviews(db, { status: st, ...(kind ? { kind } : {}) });
           out(rows, rows.length ? rows.map((r) => formatReview(r)).join("\n") : `no ${st} review items`);
         } else {
           const id = one(p, "id") ?? p._[3]; if (!id) throw new Error("soul review show needs --id <rv-…>");

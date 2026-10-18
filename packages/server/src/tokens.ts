@@ -18,7 +18,11 @@ import { dirname } from "node:path";
  * `provision` is deliberately narrow: it only unlocks brain_provision_agent
  * (loopback only) and grants no read/write on any brain.
  */
-export const SCOPES = ["read", "write", "shared-write", "admin", "provision"] as const;
+/**
+ * `room-admin` (Xanima 0.5.0) lets a token CREATE rooms. Using a room needs the normal
+ * read / write scope PLUS membership; inviting / revoking needs the room's admin role.
+ */
+export const SCOPES = ["read", "write", "shared-write", "admin", "provision", "room-admin"] as const;
 export type Scope = (typeof SCOPES)[number];
 
 /** Agent ids double as private-brain directory names. */

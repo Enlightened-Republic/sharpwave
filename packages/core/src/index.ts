@@ -314,8 +314,9 @@ export {
   setGoal, updateGoal, listGoals, goalHistory, formatGoal, formatGoalHistory, runDriftPass, maybeRunDailyDrift,
   buildGoalTurnContext, goalCounts, parsePriority, deriveKeywords, currentGoalRow, GOAL_ACTIONS, GOAL_STATUSES,
   ackAlignmentNote, criteriaKeywords, isGoalTalk, ALIGNMENT_NOTE_MAX_OFFERS,
+  normGoalTitle, GOAL_TITLE_MAX, looksLikeChatFragment, listLegacyGoals, pauseLegacyGoals, resumeLegacyGoals,
 } from "./goals.js";
-export type { GoalRow, GoalStatus, GoalAction, TriggerSpec, DriftFlag, DriftResult, GoalTurnContext, GoalHistory } from "./goals.js";
+export type { GoalRow, GoalStatus, GoalAction, TriggerSpec, DriftFlag, DriftResult, GoalTurnContext, GoalHistory, LegacyGoal, LegacyPauseResult } from "./goals.js";
 export { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } from "./continuity-tools.js";
 export type { ContinuityResult, ContinuityToolDef } from "./continuity-tools.js";
 export { CONTINUITY_READ_ONLY_TOOLS } from "./continuity-tools.js";
@@ -345,3 +346,32 @@ export type { SoulPackage, SoulContent, SoulItem, SoulGoal, SoulLesson, SoulProv
 export { SOUL_TOOL_DEFS, SOUL_TOOL_NAMES, SOUL_AGENT_TOOLS, dispatchSoulTool, soulToolNeedsAdmin } from "./soul-tools.js";
 export type { SoulToolCtx } from "./soul-tools.js";
 export { migrateV23 } from "./db.js";
+// Xanima 0.5.0 — rooms (context bus), controllable injection, poisoning quarantine
+export { migrateV24, migrateV25 } from "./db.js";
+export {
+  ROOM_TOOL_DEFS, ROOM_TOOL_NAMES, ROOM_ROLES, ROOM_NAME_RE, ROOM_BRAIN_PREFIX, PUBLISHABLE_TYPES, roomBrainName, isRoomBrain, roleAtLeast,
+  openRoomRegistry, ensureRoomRegistry, getRoom, createRoom, roleOf, setMember, revokeMember, listMembers, roomsFor, allRooms,
+  parseRoomFilter, subscribe, unsubscribe, subscriptionsFor, filterAccepts,
+  publishNodes, unpublish, withdrawAll, roomQuery, roomConflicts, formatRoomItem, formatRoomConflict,
+} from "./rooms.js";
+export type { RoomRole, RoomInfo, MemberRow, RoomFilter, RoomItem, PublishResult, RoomConflict, RoomToolDef } from "./rooms.js";
+export {
+  setFocus, readFocus, tickFocus, describeFocus, parseFocusRule, matchesRule, sensitiveRelevant, applyInjectionControls,
+  injectionCategories, DEFAULT_INJECTION_CATEGORIES, FOCUS_BOOST,
+} from "./injection-control.js";
+export type { FocusKind, FocusRule, FocusState, FocusArgs, Injectable, ControlReport } from "./injection-control.js";
+export {
+  INJECTION_RE, looksLikeInjection, classifyWrite, gateWrite, gateToolCall, gateNotice, applyQuarantinedOp, quarantineCounts,
+  quarantineMode, describeQuarantineOp, GOAL_TOOLS, GATED_TOOLS,
+} from "./quarantine.js";
+export type { QuarantineMode, QuarantineOp, QuarantineVerdict, GateResult } from "./quarantine.js";
+export { FOCUS_TOOL_DEF, parseScopeTags, setScopeTags } from "./tools.js";
+export type { InjectionCategories } from "./types.js";
+
+// Xanima 0.5.0 follow-up: agent-evolved identity (versioned, revertible, guarded)
+export {
+  IDENTITY_TOOL_DEF, IDENTITY_TOOL_NAME, IDENTITY_STEERING_NOTE, IDENTITY_ORIGINS, DEFAULT_IDENTITY_CONFIG, identityConfig, parseIdentity, renderIdentity, identityFields,
+  proposeIdentityChange, applyIdentityChange, revertIdentityVersion, identityHistory, formatIdentityHistory, formatIdentityChange,
+  identityStatus, listValues, dispatchIdentityTool, recordIdentityImport, lockedFieldChange, acceptHeldIdentityChange,
+} from "./identity.js";
+export type { IdentityConfig, IdentityRequest, IdentityResult, IdentityChangeRow, AttestedProvenance, IdentityStatus, IdentityLine } from "./identity.js";
