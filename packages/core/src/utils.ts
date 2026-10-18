@@ -6,7 +6,7 @@ import type { NodeType } from "./types.js";
  * Resolve an agentId from a session key string.
  *
  * Prior v3 logic was `sessionKey.split(":")[0]`, which for keys like
- * `"telegram:hailey:chat-id"` returned the channel name "telegram" instead of
+ * `"telegram:alice:chat-id"` returned the channel name "telegram" instead of
  * an agent id — every hook then no-op'd via `if (!config.agents.includes(...))`.
  *
  * Strategy here:

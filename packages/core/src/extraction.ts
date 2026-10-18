@@ -284,9 +284,9 @@ function buildExtractionPrompt(episodes: Episode[]): string {
 
 Rules:
 - identity: things that define who someone IS ("I'm a morning person", "my name is X")
-- relationship: how two people relate ("Hailey is my mom", "I trust her completely", "we built this together")
+- relationship: how two people relate ("Sam is my sister", "I trust her completely", "we built this together")
 - preference: likes, dislikes, opinions, taste ("loves 90s music", "hates corporate jargon", "prefers direct talk over padding")
-- fact: durable real-world details about a person, place, or thing ("Hailey lives in Phoenix", "her birthday is May 9")
+- fact: durable real-world details about a person, place, or thing ("Sam lives in Lisbon", "their birthday is March 3")
 - skill: things the agent knows HOW TO DO
 - pattern: recurring behaviors or tendencies
 - semantic: world knowledge, world events, abstract concepts

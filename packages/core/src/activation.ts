@@ -132,7 +132,7 @@ export function spreadActivation(
       .map(([id, act]) => {
         const node = nodeCache.get(id);
         if (!node?.embedding) return null;
-        // Identity/goal nodes hold Marley's self-model — exempt from lateral competition.
+        // Identity/goal nodes hold the agent's self-model — exempt from lateral competition.
         // They are already protected from downscaling; consistency requires protecting
         // them from suppression too so two similar goals don't silence each other.
         if (node.type === "identity" || node.type === "goal") return null;

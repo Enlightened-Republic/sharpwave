@@ -10,7 +10,7 @@
 //                  <root>/noise-reports/ (on the PC, never the repo). High
 //                  confidence rows are pre-marked action=retire, the rest
 //                  action=review. Safe while the service runs (WAL reader).
-//   noise check    read-only. FTS top-N for a query (e.g. "Hailey"), marking
+//   noise check    read-only. FTS top-N for a query (e.g. a person's name), marking
 //                  which hits are candidates / retired.
 //   noise retire   ONLY rows the reviewer left at action=retire (CSV/JSON) or
 //                  listed ids (txt). Service must be stopped. Takes a VACUUM INTO

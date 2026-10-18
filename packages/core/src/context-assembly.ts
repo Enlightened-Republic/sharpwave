@@ -340,7 +340,7 @@ export async function buildRecallContext(
   recordInjection(agentId, sessionId, injected);
   if (outInjectedIds) for (const n of injected) outInjectedIds.add(n.id);
 
-  return `[BRAIN: on your mind — ·gist items are rough unattributed fragments; do not assert them as facts about Hailey without checking]\n${lines.join("\n")}`;
+  return `[BRAIN: on your mind — ·gist items are rough unattributed fragments; do not assert them as facts about the user without checking]\n${lines.join("\n")}`;
 }
 
 /** Total chars the procedural block may add to a prompt. Prompt size drives
