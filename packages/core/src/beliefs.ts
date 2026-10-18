@@ -21,6 +21,7 @@ import { isSilentReplyText, isInternalWakeText } from "./system-noise.js";
 import { decisionCounts } from "./decisions.js";
 import { goalCounts } from "./goals.js";
 import { quarantineCounts, quarantineMode } from "./quarantine.js";
+import { identityStatus, type IdentityStatus } from "./identity.js";
 import { readFocus, describeFocus } from "./injection-control.js";
 import type { BrainConfig, BrainNode, NodeType, SourceType, ConfidenceLevel, Sensitivity } from "./types.js";
 
@@ -259,6 +260,8 @@ export interface BrainStatus {
   reviews?: { pending: number; byKind: Record<string, number>; flagged: number };
   /** Xanima 0.5.0: poisoning quarantine counts (review_items kind "quarantine") */
   quarantine?: { mode: "off" | "log" | "enforce"; held: number; logged: number; accepted: number; rejected: number };
+  /** Xanima 0.5.0 follow-up: agent-evolved identity (versions, held changes, locked fields) */
+  identity?: IdentityStatus | null;
   /** Xanima 0.5.0: active brain_focus, described */
   focus?: string | null;
   lastSleep: { at: number | null; ago: string; summary: SleepSummary | null };
@@ -356,6 +359,9 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
   } catch { /* pre-v23 */ }
   const quarantine = { mode: quarantineMode(config), ...quarantineCounts(db) };
   if (quarantine.held) attention.push(`${quarantine.held} identity/goal write${quarantine.held === 1 ? "" : "s"} from an untrusted source quarantined — held in review (brain_review list)`);
+  let identity: IdentityStatus | null = null;
+  try { identity = identityStatus(db, config, now); } catch { /* pre-v25 */ }
+  if (identity?.held) attention.push(`${identity.held} identity change${identity.held === 1 ? "" : "s"} held for review (not applied) — brain_review list`);
   const focusState = readFocus(db);
   const focus = focusState ? describeFocus(focusState) : null;
   if (reviews.flagged) attention.push(`${reviews.flagged} imported identity/goal change${reviews.flagged === 1 ? "" : "s"} flagged as a possible rewrite — held in review (brain_review list)`);
@@ -378,6 +384,7 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
     reflections,
     reviews,
     quarantine,
+    identity,
     focus,
     lastSleep: { at: lastAt, ago: lastAt ? relativeTime(lastAt, now) : "never", summary },
     injection: { budgetChars, headerChars, recallCapChars, estimatedTokens: Math.ceil((headerChars + recallCapChars) / 4) },
@@ -412,6 +419,7 @@ export function formatBrainStatus(s: BrainStatus, label = ""): string {
   }
   if (s.reviews?.pending) L.push(`  review queue: ${s.reviews.pending} pending (${Object.entries(s.reviews.byKind).map(([k, v]) => `${k} ${v}`).join(", ")})${s.reviews.flagged ? `, ${s.reviews.flagged} flagged as possible identity rewrite` : ""} — nothing in review is applied until accepted`);
   if (s.quarantine && (s.quarantine.held || s.quarantine.logged || s.quarantine.accepted || s.quarantine.rejected || s.quarantine.mode === "enforce")) L.push(`  quarantine (${s.quarantine.mode}): ${s.quarantine.held} held for review, ${s.quarantine.logged} logged (applied), ${s.quarantine.accepted} accepted, ${s.quarantine.rejected} rejected`);
+  if (s.identity && (s.identity.version || s.identity.held || s.identity.rejected24h)) L.push(`  identity: v${s.identity.version}${s.identity.last ? ` (last: ${s.identity.last.text}, ${relativeTime(s.identity.last.at)})` : ""} · ${s.identity.applied24h} change${s.identity.applied24h === 1 ? "" : "s"} in 24 h · ${s.identity.held} held for review · ${s.identity.rejected24h} refused in 24 h · locked: ${s.identity.locked.join(", ") || "none"} (history: xanima-server identity history)`);
   if (s.focus) L.push(`  focus: ${s.focus}`);
   if (s.reflections?.total) L.push(`  reflections: ${s.reflections.total} (last ${relativeTime(s.reflections.lastAt)})`);
   if (s.goals.pendingNote) L.push(`  alignment note pending (${s.goals.pendingNoteOffers ? `offered ${s.goals.pendingNoteOffers}×, ` : ""}not yet delivered — consumed by the next real reply): ${s.goals.pendingNote}`);

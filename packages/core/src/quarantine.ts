@@ -11,7 +11,8 @@
 // brain_update_goal / brain_write type identity with no untrusted marker) pass through.
 //
 // Modes (config `quarantine`): off | log | enforce. Default "log" for 0.5.0: the would-be
-// quarantine is recorded as a review item with status "logged" and the write is applied;
+// quarantine is recorded as a review item with status "logged" and the write is applied —
+// EXCEPT identity / value writes, which are held (pending) in log mode too (0.5.0 follow-up);
 // "enforce" holds it as a "pending" review item (kind "quarantine") that an admin accepts
 // (applies it through the normal write path) or rejects (nothing changes). Reuses the
 // v0.4.0 review queue — brain_review list / accept / reject.
@@ -95,10 +96,15 @@ export function gateWrite(agentId: string, op: QuarantineOp, o: { sourceType?: s
   if (mode === "off" || !(verdict.protectedTarget && verdict.untrusted)) return { decision: "apply", mode, verdict };
   const db = getDb(agentId);
   const now = o.now ?? Date.now();
-  const status = mode === "enforce" ? "pending" : "logged";
-  const id = `rv-q${createHash("sha256").update(`${JSON.stringify(op)}|${now}|${Math.random()}`).digest("hex").slice(0, 11)}`;
   const label = op.op === "write" ? op.label : op.op === "supersede" ? (op.newLabel ?? op.oldLabel) : `${op.tool} ${String(op.args["title"] ?? op.args["goal_id"] ?? "")}`.trim();
-  const section = op.op === "tool" ? "goals" : (op.op === "write" ? op.type : op.oldType) === "goal" ? "goals" : "identity";
+  const section = op.op === "tool"
+    ? (op.tool === "brain_update_self_model" && op.args["field"] === "identity" ? "identity" : "goals")
+    : (op.op === "write" ? op.type : op.oldType) === "goal" ? "goals" : "identity";
+  // Identity / value writes from an untrusted source are HELD even in log mode (nothing stored):
+  // log mode used to apply them, which let injected identity text into the brain. Goals stay log-only.
+  const hold = mode === "enforce" || section === "identity";
+  const status = hold ? "pending" : "logged";
+  const id = `rv-q${createHash("sha256").update(`${JSON.stringify(op)}|${now}|${Math.random()}`).digest("hex").slice(0, 11)}`;
   db.prepare(`INSERT INTO review_items (id, kind, section, status, package_id, origin_id, local_id, label, base_json, ours_json, theirs_json, markers, reason, flags_json, created_at, resolved_at, resolved_by, resolution_note)
               VALUES (?, 'quarantine', ?, ?, NULL, NULL, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?)`).run(
     id, section, status, op.op === "supersede" ? op.oldNodeId : null, label.slice(0, 200), JSON.stringify(op), verdict.reasons.join("; ").slice(0, 600),
@@ -108,7 +114,7 @@ export function gateWrite(agentId: string, op: QuarantineOp, o: { sourceType?: s
     db.prepare("INSERT INTO soul_events (at, action, package_id, parent_id, by, detail_json) VALUES (?, ?, NULL, NULL, ?, ?)")
       .run(now, `quarantine:${status === "pending" ? "hold" : "log"}`, op.writer, JSON.stringify({ id, op: op.op, reasons: verdict.reasons }));
   } catch { /* pre-v23 */ }
-  return { decision: mode === "enforce" ? "held" : "apply", mode, reviewId: id, verdict };
+  return { decision: hold ? "held" : "apply", mode, reviewId: id, verdict };
 }
 
 /** Human text for a held / logged write (tool results). */

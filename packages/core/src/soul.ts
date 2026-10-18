@@ -28,6 +28,7 @@ import { createOpenItem } from "./open-items.js";
 import { INJECTION_RE, applyQuarantinedOp, describeQuarantineOp, type QuarantineOp } from "./quarantine.js";
 import { dispatchContinuityTool } from "./continuity-tools.js";
 import { createCommitment } from "./plans.js";
+import { acceptHeldIdentityChange, markHeldIdentityRejected, recordIdentityImport } from "./identity.js";
 import type { BrainConfig, NodeType, Sensitivity } from "./types.js";
 import { DEFAULT_CONFIG } from "./types.js";
 
@@ -785,6 +786,11 @@ export function formatReview(r: ReviewItem, full = false): string {
   }
   const head = `${r.id} [${r.status}] ${r.kind} (${r.section}) ${short(r.label, 80)}${r.flags.length ? ` ⚠ ${r.flags.join(", ")}` : ""}: ${r.reason ?? ""}`;
   if (!full) return head;
+  if (r.kind === "identity_change") {
+    const t = r.theirs as { req?: { reason?: string }; writer?: string; provenance?: { origin?: string; tools?: string[] } | null } | null;
+    return [head, `  current: ${r.ours === null || r.ours === undefined ? "(none)" : short(String(r.ours), 300)}`, `  proposed by ${t?.writer ?? "?"} (${t?.provenance?.origin ?? "unattested"}${t?.provenance?.tools?.length ? `: ${t.provenance.tools.join(", ")}` : ""}) — reason: ${short(t?.req?.reason ?? "", 200)}`,
+      ...(r.resolved_at ? [`  resolved by ${r.resolved_by} at ${iso(r.resolved_at)}${r.resolution_note ? `: ${r.resolution_note}` : ""}`] : [])].join("\n");
+  }
   return [head,
     ...(r.markers ? [r.markers] : [`  ours:   ${short(textOf(s, r.ours as AnyItem), 400)}`, `  theirs: ${short(textOf(s, r.theirs as AnyItem), 400)}`]),
     ...(r.package_id ? [`  package ${r.package_id}`] : []),
@@ -807,7 +813,9 @@ export function acceptReview(agentId: string, idOrPrefix: string, o: { by?: stri
   let applied = "";
   const localLive = r.local_id && db.prepare("SELECT 1 FROM nodes WHERE id = ? AND status = 'active'").get(r.local_id);
   const run = db.transaction(() => {
-    if (r.kind === "quarantine") {
+    if (r.kind === "identity_change") {
+      applied = acceptHeldIdentityChange(agentId, t, { by, reviewId: r.id, config: cfg });
+    } else if (r.kind === "quarantine") {
       if (!t) throw new Error("quarantined op is missing");
       applied = applyQuarantinedOp(agentId, t as unknown as QuarantineOp, by, (tool, args, writer) => dispatchContinuityTool(tool, agentId, args, cfg, { writerAgentId: writer }));
     } else if (r.kind === "removal") {
@@ -816,8 +824,10 @@ export function acceptReview(agentId: string, idOrPrefix: string, o: { by?: stri
     } else if (!t) {
       applied = "theirs is absent; nothing applied";
     } else if (s === "identity") {
+      const before = ((db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "");
       updateSelfModelField(agentId, "identity", (t as { text: string }).text);
-      applied = "identity updated";
+      const v = recordIdentityImport(db, before, (t as { text: string }).text, { by, reviewId: r.id, now });
+      applied = v ? `identity updated (identity v${v})` : "identity updated";
     } else if (s === "goals") {
       const g = t as SoulGoal;
       const cur = r.local_id ? currentGoalRow(agentId, r.local_id) : null;
@@ -861,6 +871,7 @@ export function rejectReview(agentId: string, idOrPrefix: string, o: { by?: stri
   const now = o.now ?? Date.now();
   const by = o.by ?? "admin";
   db.prepare("UPDATE review_items SET status = 'rejected', resolved_at = ?, resolved_by = ?, resolution_note = ? WHERE id = ?").run(now, by, o.reason ?? "rejected", r.id);
+  if (r.kind === "identity_change") markHeldIdentityRejected(db, r.id, by);
   db.prepare("INSERT INTO soul_events (at, action, package_id, parent_id, by, detail_json) VALUES (?, 'review:reject', ?, NULL, ?, ?)").run(now, r.package_id, by, JSON.stringify({ id: r.id, kind: r.kind, reason: o.reason ?? null }));
   return { ok: true, id: r.id };
 }

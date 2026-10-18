@@ -54,7 +54,7 @@ import { adoptBrain, formatAdoptResult, type AdoptMode } from "./adopt.js";
 import { migrateDataDir, formatMigrateResult } from "./migrate.js";
 import { SleepRunner } from "./sleep.js";
 import { BrainManager } from "./brains.js";
-import { DEFAULT_CONFIG, suppressDeprecationWarning } from "xanima-core";
+import { DEFAULT_CONFIG, suppressDeprecationWarning, identityHistory, formatIdentityHistory, revertIdentityVersion, identityStatus, identityFields, listValues } from "xanima-core";
 import { listLegacyGoalsFile, pauseLegacyGoalsFile, resumeLegacyGoalsFile } from "./goals-legacy.js";
 import { defaultReportBase, ftsProbe, parseSelection, registryStatus, retireItems, scanBrainFile, unretireItems, writeReport } from "./noise.js";
 import { BrainService } from "./service.js";
@@ -162,6 +162,13 @@ Usage:
       Service must be stopped. Backup first, then pause the untracked goals that look like chat fragments
       (all untracked ones with --all-untracked). Audited; undo with goals resume-legacy --batch <goals-...>.
   xanima-server goals resume-legacy --agent <id> --batch <goals-...> [--dry-run] [--json]
+  xanima-server identity history --agent <id> [--all] [--limit 50] [--json]
+      Read-only (safe while the service runs). The agent's identity versions: what changed (old → new), reason,
+      who / provenance, review id, reverted-by. --all also lists changes held for review and refused attempts.
+  xanima-server identity show --agent <id> [--json]      Current identity fields + values (read-only).
+  xanima-server identity revert <version> --agent <id> [--reason text] [--force] [--json]
+      Service must be stopped. Backup first, then undo that version as a NEW version (history kept). Refuses when the
+      same field / value changed later (revert the later version first, or --force).
   xanima-server soul export --agent <id> [--out f] [--profile compact|full] [--include-sensitive] [--include-shared]
                            [--include-open-items] [--sign --key-file f] [--sqlite f] [--parent <id>|none]
       Write the agent's Soul Package (xanima-soul/1, deterministic JSON + sha256). Read-only: safe while the service runs.
@@ -474,6 +481,49 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     throw new Error(`unknown goals subcommand "${sub ?? ""}" (list-legacy | pause-legacy | resume-legacy)`);
+  }
+
+  if (cmd === "identity") {
+    const agent = one(p, "agent") ?? one(p, "brain");
+    if (!agent) throw new Error("identity needs --agent <id> (or --brain <id>)");
+    const bad = validateAgentId(agent);
+    if (bad) throw new Error(bad);
+    const dbPath = join(brainsDir(cfg), agent, "brain.db");
+    if (!existsSync(dbPath)) throw new Error(`no brain for "${agent}" at ${dbPath}`);
+    const json = bool(p, "json");
+    const out = (o: unknown, text: string) => process.stdout.write((json ? JSON.stringify(o, null, 2) : text) + "\n");
+    const brainCfg = { ...DEFAULT_CONFIG, ...(cfg.brain ?? {}) };
+    if (sub === "history" || sub === "show") {
+      const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      try {
+        if (sub === "history") {
+          const lim = one(p, "limit");
+          const rows = identityHistory(db, { all: bool(p, "all"), limit: lim ? Number(lim) : 50 });
+          const st = identityStatus(db, brainCfg);
+          out(rows, [`${agent}: identity v${st?.version ?? 0} · ${st?.held ?? 0} held for review · locked: ${st?.locked.join(", ") || "none"}${bool(p, "all") ? "" : " (applied versions; --all adds held / refused attempts)"}`, formatIdentityHistory(rows)].join("\n"));
+        } else {
+          const text = ((db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "").trim();
+          const values = listValues(db);
+          out({ identity: text, fields: identityFields(text), values }, [`identity:`, text || "(empty)", "", `values (${values.length}):`, ...values.map((v) => `- ${v.id.slice(0, 8)} [${v.source_type ?? "?"}] ${v.label}`)].join("\n"));
+        }
+      } finally { db.close(); }
+      return 0;
+    }
+    if (sub === "revert") {
+      const v = Number(one(p, "version") ?? p._[2]);
+      if (!Number.isInteger(v) || v < 1) throw new Error("identity revert needs a version number: xanima-server identity revert <version> --agent <id>");
+      if (await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first (identity revert writes the brain file directly)`);
+      const backup = snapshotBrain(dbPath, join(backupsDir(cfg), agent), "identity", 1_000_000).path;
+      const mgr = new BrainManager(brainsDir(cfg), 1);
+      mgr.init();
+      try {
+        const r = await mgr.write(agent, () => revertIdentityVersion(agent, v, { by: "admin:cli", reason: one(p, "reason") ?? `revert v${v} (operator)`, force: bool(p, "force"), config: brainCfg }));
+        new AuditLog(cfg.auditFile).append({ agentId: "admin:cli", tool: "identity revert", brain: agent, nodeId: null, outcome: r.status === "applied" ? "ok" : "error", detail: `v${v} → ${r.message.slice(0, 160)} backup=${backup}` });
+        out({ ...r, backup }, `${r.message}\nbackup ${backup}`);
+        return r.status === "applied" ? 0 : 1;
+      } finally { await mgr.close(); }
+    }
+    throw new Error(`unknown identity subcommand "${sub ?? ""}" (history | show | revert)`);
   }
 
   if (cmd === "soul") return soulCommand(p, sub, cfg);

@@ -347,7 +347,7 @@ export { SOUL_TOOL_DEFS, SOUL_TOOL_NAMES, SOUL_AGENT_TOOLS, dispatchSoulTool, so
 export type { SoulToolCtx } from "./soul-tools.js";
 export { migrateV23 } from "./db.js";
 // Xanima 0.5.0 — rooms (context bus), controllable injection, poisoning quarantine
-export { migrateV24 } from "./db.js";
+export { migrateV24, migrateV25 } from "./db.js";
 export {
   ROOM_TOOL_DEFS, ROOM_TOOL_NAMES, ROOM_ROLES, ROOM_NAME_RE, ROOM_BRAIN_PREFIX, PUBLISHABLE_TYPES, roomBrainName, isRoomBrain, roleAtLeast,
   openRoomRegistry, ensureRoomRegistry, getRoom, createRoom, roleOf, setMember, revokeMember, listMembers, roomsFor, allRooms,
@@ -367,3 +367,11 @@ export {
 export type { QuarantineMode, QuarantineOp, QuarantineVerdict, GateResult } from "./quarantine.js";
 export { FOCUS_TOOL_DEF, parseScopeTags, setScopeTags } from "./tools.js";
 export type { InjectionCategories } from "./types.js";
+
+// Xanima 0.5.0 follow-up: agent-evolved identity (versioned, revertible, guarded)
+export {
+  IDENTITY_TOOL_DEF, IDENTITY_TOOL_NAME, DEFAULT_IDENTITY_CONFIG, identityConfig, parseIdentity, renderIdentity, identityFields,
+  proposeIdentityChange, applyIdentityChange, revertIdentityVersion, identityHistory, formatIdentityHistory, formatIdentityChange,
+  identityStatus, listValues, dispatchIdentityTool, recordIdentityImport, lockedFieldChange, acceptHeldIdentityChange,
+} from "./identity.js";
+export type { IdentityConfig, IdentityRequest, IdentityResult, IdentityChangeRow, AttestedProvenance, IdentityStatus, IdentityLine } from "./identity.js";

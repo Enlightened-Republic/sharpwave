@@ -267,6 +267,8 @@ export interface BrainConfig {
   focusDefaultTtl?: number;
   /** Poisoning quarantine for identity / value / goal / rule writes from untrusted sources: off | log (record, still apply) | enforce (hold for review). Default "log". */
   quarantine?: "off" | "log" | "enforce";
+  /** Agent-evolved identity (brain_identity): locked fields (default ["Name"]), rate limit, size caps. See identity.ts. */
+  identity?: { locked?: string[]; maxChangesPerDay?: number; maxFieldNameChars?: number; maxFieldChars?: number; maxValueChars?: number; maxIdentityChars?: number; requireAttestation?: boolean };
 }
 
 export interface InjectionCategories {

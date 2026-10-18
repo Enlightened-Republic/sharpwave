@@ -27,6 +27,7 @@ import { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } f
 import { SOUL_TOOL_DEFS, REVIEW_QUEUE_PROPS, dispatchSoulTool, isReviewQueueCall } from "./soul-tools.js";
 import { gateWrite, gateToolCall, gateNotice, GATED_TOOLS } from "./quarantine.js";
 import { setFocus, readFocus, describeFocus } from "./injection-control.js";
+import { IDENTITY_TOOL_DEF, IDENTITY_TOOL_NAME, dispatchIdentityTool, lockedFieldChange, recordIdentityImport } from "./identity.js";
 
 /** Xanima 0.5.0 brain_focus (local mode and the service). */
 export const FOCUS_TOOL_DEF: BrainToolDef = {
@@ -353,6 +354,8 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
 Object.assign(BRAIN_TOOL_DEFS, CONTINUITY_TOOL_DEFS);
 // Xanima 0.5.0: per-turn / per-task injection focus.
 BRAIN_TOOL_DEFS["brain_focus"] = FOCUS_TOOL_DEF;
+// Xanima 0.5.0 follow-up: the agent evolves its own identity / values (versioned, revertible, guarded).
+BRAIN_TOOL_DEFS[IDENTITY_TOOL_NAME] = IDENTITY_TOOL_DEF;
 // Xanima 0.4.0: the agent-safe soul tool (export of self). brain_import_soul is admin-only (xanima-server / CLI).
 BRAIN_TOOL_DEFS["brain_export_soul"] = SOUL_TOOL_DEFS["brain_export_soul"]!;
 
@@ -855,6 +858,15 @@ export async function dispatchBrainTool(
       }
       const smGate = gateToolCall(agentId, name, { field, value, ...(typeof args["source_type"] === "string" ? { source_type: args["source_type"] } : {}) }, { writer: agentId, config });
       if (smGate?.decision === "held") return ok(gateNotice(smGate));
+      if (field === "identity") {
+        // 0.5.0 follow-up: versioned like brain_identity; locked fields stay locked.
+        const before = getSelfModel(agentId)?.identity ?? "";
+        const locked = lockedFieldChange(before, value, config);
+        if (locked) return err(`"${locked}" is a locked identity field (identity.locked); use brain_identity for other fields`);
+        updateSelfModelField(agentId, "identity", value);
+        try { recordIdentityImport(getDb(agentId), before, value, { by: agentId, action: "replace", reason: "brain_update_self_model", provenance: "brain_update_self_model (local)" }); } catch { /* pre-v25 */ }
+        return ok(`Updated self_model.identity`);
+      }
       updateSelfModelField(agentId, field as "identity" | "goals" | "user_model", value);
       return ok(`Updated self_model.${field}`);
     }
@@ -963,6 +975,9 @@ export async function dispatchBrainTool(
         return ok(`brain_docs: cannot read ${file} — ${String(readErr)}`);
       }
     }
+
+    case "brain_identity":
+      return dispatchIdentityTool(agentId, args, config, { writer: agentId });
 
     case "brain_focus": {
       const db = getDb(agentId);

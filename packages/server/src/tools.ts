@@ -31,6 +31,7 @@ import {
   SOUL_TOOL_DEFS, dispatchSoulTool, soulToolNeedsAdmin,
   gateWrite, gateToolCall, gateNotice, GATED_TOOLS, parseScopeTags, setScopeTags,
   setFocus, readFocus, describeFocus, tickFocus, applyInjectionControls, injectionCategories,
+  IDENTITY_TOOL_NAME, dispatchIdentityTool, identityConfig,
 } from "xanima-core";
 import { ROOM_SERVICE_TOOLS, ROOM_SERVICE_TOOL_NAMES, FOCUS_SERVICE_TOOL, callRoomTool, subscribedRoomItems, roomStatusLines, roomConflictText } from "./rooms-tools.js";
 import { join as joinPath } from "node:path";
@@ -123,6 +124,8 @@ export const SERVICE_TOOLS = [
   withProps("brain_status", { visibility: { type: "string", enum: ["all", "private", "shared"], description: "Which brain(s) to report (default all)." } }),
   // Xanima 0.4.0 Soul Package: export of self (read scope); import is admin-only (listed to admin tokens only).
   withProps("brain_export_soul", {}),
+  // Xanima 0.5.0 follow-up: the agent evolves its own identity / values (versioned; operator can revert).
+  withProps(IDENTITY_TOOL_NAME, {}),
   { name: "brain_import_soul", description: SOUL_TOOL_DEFS["brain_import_soul"]!.description + " Targets the admin token's own agent brain; a backup is taken first. Prefer `xanima-server soul import` (service stopped).", inputSchema: SOUL_TOOL_DEFS["brain_import_soul"]!.inputSchema },
   // Xanima 0.2.0 decision ledger + goals, 0.3.0 reflection / open items / plans / meta-tools — always on the caller's PRIVATE brain.
   ...CONTINUITY_TOOL_NAMES.map((n) => withProps(n, {})),
@@ -494,6 +497,23 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
   const cfg = ctx.brainConfig;
   try {
     if (ROOM_NAMES.has(name)) return await callRoomTool(ctx, name, args);
+    if (name === IDENTITY_TOOL_NAME) {
+      // Always the caller's PRIVATE brain. get / history: read. add / change / remove: write.
+      // attested_provenance comes from the host plugin (OpenClaw), which overwrites any model-supplied value.
+      const mutating = ["add", "change", "remove"].includes(String(args["action"] ?? ""));
+      const needs: Scope = mutating ? "write" : "read";
+      if (!has(p, needs)) return err(`forbidden — ${name}${mutating ? ` ${String(args["action"])}` : ""} needs the ${needs} scope`);
+      if (args["visibility"] === "shared") return err(`${name} works on your private brain only`);
+      const brain = ctx.brains.privateBrain(p.agentId);
+      const { visibility: _v, writer_agent_id: _w, agent: _a, ...rest } = args;
+      const r = await ctx.brains.write(brain, () => dispatchIdentityTool(brain, rest, cfg, { writer: p.agentId }));
+      if (mutating) {
+        const outcome = r.isError ? "denied" : /^Held for review/.test(r.text) ? "denied" : "ok";
+        const prov = (args["attested_provenance"] as { origin?: string } | undefined)?.origin ?? "unattested";
+        ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome, detail: `${String(args["action"])} ${String(args["target"] ?? "field")} ${String(args["field"] ?? args["value_id"] ?? "").slice(0, 40)} prov=${prov} → ${r.text.split(/[.:]/)[0]!.slice(0, 80)}` });
+      }
+      return r.isError ? { text: r.text, isError: true } : ok(r.text);
+    }
     if (name === "brain_focus") {
       if (!has(p, "write")) return err("forbidden — brain_focus needs the write scope");
       const brain = ctx.brains.privateBrain(p.agentId);
@@ -553,7 +573,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
           const cats = injectionCategories(cfg);
           const identity = cats.identity ? ((db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "").trim() : "";
           const goals = !cats.goals ? [] : (db.prepare("SELECT title FROM goals g WHERE status = 'active' AND tracked = 1 AND version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id) ORDER BY priority ASC, created_at DESC LIMIT 3").all() as Array<{ title: string }>).map((g) => g.title);
-          return { identity: identity.slice(0, 400), goals };
+          return { identity: identity.slice(0, Math.max(400, identityConfig(cfg).maxIdentityChars)), goals };
         });
         return ok(JSON.stringify({ ...r, ...(sm.identity ? { identity: sm.identity } : {}), ...(sm.goals.length ? { activeGoals: sm.goals } : {}) }));
       }
