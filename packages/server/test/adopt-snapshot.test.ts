@@ -46,7 +46,7 @@ describe.skipIf(!has)("adopt a real brain snapshot copy as agent 'main'", () => 
 
     const r = JSON.parse((await cli(["brain", "adopt", "--agent", "main", "--from", legacy, "--json"])).stdout);
     expect(r.integrity).toBe("ok");
-    expect(r.after.schema).toBe(24);
+    expect(r.after.schema).toBe(25);
     expect([r.after.nodes, r.after.edges, r.after.episodes]).toEqual([r.before.nodes, r.before.edges, r.before.episodes]);
     if (EN) expect([r.after.nodes, r.after.edges, r.after.episodes]).toEqual([EN, EE, EP]);
     expect(r.sourceUnchanged).toBe(true);
@@ -56,7 +56,7 @@ describe.skipIf(!has)("adopt a real brain snapshot copy as agent 'main'", () => 
     const db = new Database(join(svcRoot, "brains", "main", "brain.db"), { readonly: true });
     const n = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
     expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
-    expect(n("SELECT MAX(version) AS n FROM schema_version")).toBe(24);
+    expect(n("SELECT MAX(version) AS n FROM schema_version")).toBe(25);
     expect(n("SELECT COUNT(*) AS n FROM nodes")).toBe(r.before.nodes);
     expect(n("SELECT COUNT(*) AS n FROM edges")).toBe(r.before.edges);
     expect(n("SELECT COUNT(*) AS n FROM episodes")).toBe(r.before.episodes);
