@@ -1,6 +1,9 @@
 import { runBeliefReviewPass, saveSleepSummary, countNodesEdges } from "./beliefs.js";
 import { runDecisionPass, prepareLessonVectors } from "./decisions.js";
 import { runDriftPass } from "./goals.js";
+import { runReflectionPass } from "./reflection.js";
+import { expireOpenItemDrafts } from "./open-items.js";
+import { runCommitmentCheck } from "./plans.js";
 import { getDb, getMeta, setMeta, bumpWriteCounter } from "./db.js";
 import { decayEligibilityTraces, decayRetrievability, writeNode, ftsSearchNodes } from "./nodes.js";
 import { queueEmbedding, vectorSearchNodes, bufferToFloat32, cosineSimilarity, upsertNodeVector } from "./embeddings.js";
@@ -253,6 +256,15 @@ export async function runConsolidation(
     try { drift = runDriftPass(agentId, config, log); } catch (err) { log.warn(`[xanima] drift pass failed (agent=${agentId}): ${String(err)}`); }
   }
 
+  // Xanima 0.3.0: reflection phase (reflection: "sleep"), captured open-item
+  // draft expiry, commitment overdue / blocked check (queues one nudge).
+  let refl = { written: 0, merged: 0, ids: [] as string[], method: "template" };
+  let openExpired = 0;
+  let commit = { overdue: 0, blocked: 0, nudged: null as string | null };
+  try { refl = await runReflectionPass(agentId, config, log); } catch (err) { log.warn(`[xanima] reflection pass failed (agent=${agentId}): ${String(err)}`); }
+  try { openExpired = expireOpenItemDrafts(agentId, config).length; } catch (err) { log.warn(`[xanima] open-item expiry failed (agent=${agentId}): ${String(err)}`); }
+  try { commit = runCommitmentCheck(agentId, config); } catch (err) { log.warn(`[xanima] commitment check failed (agent=${agentId}): ${String(err)}`); }
+
   // Phase 4: Deep — physically prune near-zero retrievability orphans
   const pruned = runDeepPhase(agentId, config, log);
 
@@ -272,6 +284,8 @@ export async function runConsolidation(
       decisionsMerged: decisionsPass.merged, decisionsCalibrated: decisionsPass.calibrated, lessonsPromoted: decisionsPass.promoted,
     lessonsMerged: decisionsPass.lessonsMerged, draftsExpired: decisionsPass.draftsExpired,
       goalsChecked: drift.checked, goalsDrifting: drift.drifting.length, alignmentNoteQueued: drift.noteId !== null,
+      reflectionsWritten: refl.written, reflectionsMerged: refl.merged, openDraftsExpired: openExpired,
+      commitmentsOverdue: commit.overdue, commitmentsBlocked: commit.blocked, commitmentNudgeQueued: commit.nudged !== null,
     });
   } catch { /* summary is best-effort */ }
 
@@ -1256,7 +1270,7 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): number
   const candidates = db.prepare(`
     SELECT n.id, n.rowid FROM nodes n
     WHERE n.retrievability < 0.01
-      AND n.type NOT IN ('identity', 'goal')
+      AND n.type NOT IN ('identity', 'goal', 'decision', 'hypothesis', 'question', 'assumption', 'commitment', 'plan', 'reflection')
       AND NOT EXISTS (
         SELECT 1 FROM edges e
         WHERE (e.from_id = n.id OR e.to_id = n.id) AND e.valid_until IS NULL

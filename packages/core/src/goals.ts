@@ -9,6 +9,8 @@
  * with version+1 under the same lineage_id. Status changes (pause / resume /
  * done / archive / track) are recorded in goal_events. Nothing is deleted.
  */
+import { maybeRunCommitmentCheck } from "./plans.js";
+import { surfaceOpenItem } from "./open-items.js";
 import { randomUUID } from "node:crypto";
 import { getDb, getMeta, setMeta, bumpWriteCounter } from "./db.js";
 import { writeNode, getNode } from "./nodes.js";
@@ -396,10 +398,10 @@ export function runDriftPass(agentId: string, config: Partial<BrainConfig>, log?
     note += " Take a step toward it, or pause / re-prioritise it with brain_update_goal.";
     if (note.length > max) note = note.slice(0, max - 1) + "…";
     const lineages = res.drifting.map((d) => d.lineage_id).sort();
-    const prev = db.prepare("SELECT text, lineage_ids_json, delivered_at, created_at FROM alignment_notes ORDER BY id DESC LIMIT 1").get() as { text: string; lineage_ids_json: string; delivered_at: number | null; created_at: number } | undefined;
+    const prev = db.prepare("SELECT text, lineage_ids_json, delivered_at, created_at FROM alignment_notes WHERE COALESCE(kind, 'alignment') = 'alignment' ORDER BY id DESC LIMIT 1").get() as { text: string; lineage_ids_json: string; delivered_at: number | null; created_at: number } | undefined;
     const sameRecent = prev && prev.lineage_ids_json === JSON.stringify(lineages) && now - (prev.delivered_at ?? prev.created_at) < DAY;
     if (!sameRecent) {
-      db.prepare("UPDATE alignment_notes SET superseded_at = ? WHERE delivered_at IS NULL AND superseded_at IS NULL").run(now);
+      db.prepare("UPDATE alignment_notes SET superseded_at = ? WHERE COALESCE(kind, 'alignment') = 'alignment' AND delivered_at IS NULL AND superseded_at IS NULL").run(now);
       res.noteId = Number(db.prepare("INSERT INTO alignment_notes (created_at, text, lineage_ids_json) VALUES (?, ?, ?)").run(now, note, JSON.stringify(lineages)).lastInsertRowid);
       res.note = note;
     }
@@ -418,7 +420,7 @@ export function maybeRunDailyDrift(agentId: string, config: Partial<BrainConfig>
 
 // ─── turn context: alignment note (once) + goal triggers ───────────────────
 
-export interface GoalTurnContext { text: string; noteId: number | null; triggered: Array<{ trigger_id: string; lineage_id: string; title: string; why: string }> }
+export interface GoalTurnContext { text: string; noteId: number | null; /** All offered note ids this turn (alignment note + commitment nudge); ack each after a real reply. */ noteIds: number[]; openItemId?: string | null; triggered: Array<{ trigger_id: string; lineage_id: string; title: string; why: string }> }
 
 /** Safety valve: a note offered this many times without an ack is retired (e.g. a host that never acks). */
 export const ALIGNMENT_NOTE_MAX_OFFERS = 6;
@@ -439,16 +441,22 @@ export function ackAlignmentNote(agentId: string, noteId: number, now = Date.now
  * Mutates delivery / firing state; read-only otherwise.
  */
 export function buildGoalTurnContext(agentId: string, prompt: string, config: Partial<BrainConfig>, now = Date.now(), log?: Log): GoalTurnContext {
-  const out: GoalTurnContext = { text: "", noteId: null, triggered: [] };
-  if (config.intentDriftCheck === "off" && config.goalTriggers === false) return out;
+  const out: GoalTurnContext = { text: "", noteId: null, noteIds: [], openItemId: null, triggered: [] };
+  const nudges = config.commitmentNudges !== false;
+  const surfacing = config.openItemSurfacing !== false;
+  if (config.intentDriftCheck === "off" && config.goalTriggers === false && !nudges && !surfacing) return out;
   const db = getDb(agentId);
-  try { maybeRunDailyDrift(agentId, config, now, log); } catch (e) { log?.warn(`[xanima] daily drift failed: ${String(e)}`); }
+  if (config.intentDriftCheck !== "off" || config.goalTriggers !== false) {
+    try { maybeRunDailyDrift(agentId, config, now, log); } catch (e) { log?.warn(`[xanima] daily drift failed: ${String(e)}`); }
+  }
+  if (nudges) { try { maybeRunCommitmentCheck(agentId, config, now); } catch (e) { log?.warn(`[xanima] commitment check failed: ${String(e)}`); } }
   const lines: string[] = [];
-  if (config.intentDriftCheck !== "off") {
-    const n = db.prepare("SELECT id, text FROM alignment_notes WHERE delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get() as { id: number; text: string } | undefined;
+  const kinds = [...(config.intentDriftCheck !== "off" ? ["alignment"] : []), ...(nudges ? ["commitment"] : [])];
+  for (const kind of kinds) {
+    const n = db.prepare("SELECT id, text FROM alignment_notes WHERE COALESCE(kind, 'alignment') = ? AND delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get(kind) as { id: number; text: string } | undefined;
     if (n) {
       // Offered, not delivered: the host acks (ackAlignmentNote) once a real reply came out of this prompt.
-      lines.push(n.text); out.noteId = n.id;
+      lines.push(n.text); out.noteIds.push(n.id); if (out.noteId === null) out.noteId = n.id;
       const c = db.prepare("UPDATE alignment_notes SET offered_at = ?, offered_count = offered_count + 1 WHERE id = ? RETURNING offered_count").get(now, n.id) as { offered_count: number };
       if (c.offered_count >= ALIGNMENT_NOTE_MAX_OFFERS) {
         db.prepare("UPDATE alignment_notes SET delivered_at = ? WHERE id = ?").run(now, n.id);
@@ -481,9 +489,13 @@ export function buildGoalTurnContext(agentId: string, prompt: string, config: Pa
       lines.push(`Goal ${priorityLabel(t.priority)} "${t.title}"${t.success_criteria ? ` — success: ${t.success_criteria}` : ""} (${why}).`);
     }
   }
+  if (surfacing) {
+    try { const o = surfaceOpenItem(agentId, prompt, config, now); if (o) { lines.push(o.line); out.openItemId = o.id; } } catch (e) { log?.warn(`[xanima] open-item surfacing failed: ${String(e)}`); }
+  }
   if (!lines.length) return out;
-  const max = Math.max(80, (config.alignmentNoteMaxTokens ?? 60) * 4);
-  let body = lines.join("\n");
+  // Budget: alignmentNoteMaxTokens for the first line (the alignment note), one ~160-char line for each extra (nudge / trigger / open item).
+  const max = Math.max(80, (config.alignmentNoteMaxTokens ?? 60) * 4) + 160 * Math.min(3, lines.length - 1);
+  let body = lines.map((l) => (l.length > 240 ? l.slice(0, 239) + "…" : l)).join("\n");
   if (body.length > max) body = body.slice(0, max - 1) + "…";
   out.text = `[BRAIN: goals]\n${body}`;
   return out;
@@ -495,7 +507,7 @@ export function goalCounts(db: ReturnType<typeof getDb>): { active: number; trac
     const r = db.prepare(`SELECT SUM(status='active') AS active, SUM(status='active' AND tracked=1) AS tracked, SUM(status='paused') AS paused, SUM(status='done') AS done FROM goals g WHERE ${cur}`).get() as Record<string, number | null>;
     const drifting = (db.prepare(`SELECT lineage_id, title, drift_reason FROM goals g WHERE ${cur} AND status = 'active' AND drift_reason IS NOT NULL ORDER BY priority`).all() as Array<{ lineage_id: string; title: string; drift_reason: string }>)
       .map((d) => ({ id: d.lineage_id, title: d.title, reason: d.drift_reason }));
-    const n = db.prepare("SELECT text, offered_count FROM alignment_notes WHERE delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get() as { text: string; offered_count: number } | undefined;
+    const n = db.prepare("SELECT text, offered_count FROM alignment_notes WHERE COALESCE(kind, 'alignment') = 'alignment' AND delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get() as { text: string; offered_count: number } | undefined;
     return { active: r["active"] ?? 0, tracked: r["tracked"] ?? 0, paused: r["paused"] ?? 0, done: r["done"] ?? 0, drifting, pendingNote: n?.text ?? null, pendingNoteOffers: n?.offered_count ?? 0 };
   } catch { return { active: 0, tracked: 0, paused: 0, done: 0, drifting: [], pendingNote: null, pendingNoteOffers: 0 }; }
 }

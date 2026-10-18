@@ -395,7 +395,7 @@ function initSchema(db: Database.Database): void {
 }
 
 /** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 22;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -565,6 +565,104 @@ export function migrateV21(db: Database.Database): void {
   `);
   try { db.exec("UPDATE decisions SET draft_status = 'pending' WHERE auto_extracted = 1 AND draft_status IS NULL AND outcome_at IS NULL"); } catch { /* ok */ }
   try { db.exec("UPDATE alignment_notes SET offered_count = 1, offered_at = delivered_at WHERE delivered_at IS NOT NULL AND offered_count = 0"); } catch { /* ok */ }
+}
+
+/**
+ * v22 (Xanima 0.3.0, additive, new tables + one column set):
+ *   reflections, open_items (hypothesis | question | assumption), commitments,
+ *   plans + plan_steps, dependencies (blocked-by between any two nodes),
+ *   alignment_notes.kind / ref_id (the note queue also carries commitment nudges).
+ */
+export function migrateV22(db: Database.Database): void {
+  const add = (t: string, c: string) => { try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* already exists */ } };
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reflections (
+      node_id       TEXT PRIMARY KEY,
+      scope_kind    TEXT NOT NULL,
+      scope_ref     TEXT,
+      since         INTEGER NOT NULL,
+      until         INTEGER NOT NULL,
+      worked_json   TEXT NOT NULL DEFAULT '[]',
+      didnt_json    TEXT NOT NULL DEFAULT '[]',
+      next_json     TEXT NOT NULL DEFAULT '[]',
+      sources_json  TEXT NOT NULL DEFAULT '[]',
+      origin        TEXT NOT NULL,
+      method        TEXT NOT NULL,
+      merge_count   INTEGER NOT NULL DEFAULT 1,
+      history_json  TEXT NOT NULL DEFAULT '[]',
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS reflections_scope ON reflections(scope_kind, scope_ref);
+    CREATE TABLE IF NOT EXISTS open_items (
+      node_id         TEXT PRIMARY KEY,
+      kind            TEXT NOT NULL,
+      text            TEXT NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'open',
+      load_bearing    INTEGER NOT NULL DEFAULT 0,
+      evidence_for    TEXT NOT NULL DEFAULT '[]',
+      evidence_against TEXT NOT NULL DEFAULT '[]',
+      answer          TEXT,
+      close_reason    TEXT,
+      auto_extracted  INTEGER NOT NULL DEFAULT 0,
+      draft_status    TEXT,
+      keywords_json   TEXT NOT NULL DEFAULT '[]',
+      contradicted_at INTEGER,
+      last_surfaced_at INTEGER,
+      surfaced_count  INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL,
+      closed_at       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS open_items_status ON open_items(kind, status);
+    CREATE TABLE IF NOT EXISTS commitments (
+      node_id       TEXT PRIMARY KEY,
+      title         TEXT NOT NULL,
+      owner         TEXT NOT NULL,
+      counterparty  TEXT NOT NULL DEFAULT 'user',
+      status        TEXT NOT NULL DEFAULT 'open',
+      due_at        INTEGER,
+      note          TEXT,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      done_at       INTEGER,
+      last_nudged_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS commitments_status ON commitments(status, due_at);
+    CREATE TABLE IF NOT EXISTS plans (
+      node_id       TEXT PRIMARY KEY,
+      title         TEXT NOT NULL,
+      goal_id       TEXT,
+      status        TEXT NOT NULL DEFAULT 'active',
+      keywords_json TEXT NOT NULL DEFAULT '[]',
+      parked_at     INTEGER,
+      park_note     TEXT,
+      resumed_at    INTEGER,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS plan_steps (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id    TEXT NOT NULL,
+      idx        INTEGER NOT NULL,
+      text       TEXT NOT NULL,
+      status     TEXT NOT NULL DEFAULT 'todo',
+      note       TEXT,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS plan_steps_plan ON plan_steps(plan_id, idx);
+    CREATE TABLE IF NOT EXISTS dependencies (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      blocked_id  TEXT NOT NULL,
+      blocker_id  TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      resolved_at INTEGER,
+      UNIQUE(blocked_id, blocker_id)
+    );
+    CREATE INDEX IF NOT EXISTS dependencies_blocked ON dependencies(blocked_id);
+  `);
+  add("alignment_notes", "kind TEXT NOT NULL DEFAULT 'alignment'");
+  add("alignment_notes", "ref_id TEXT");
 }
 
 function runMigrations(db: Database.Database): void {
@@ -850,6 +948,10 @@ function runMigrations(db: Database.Database): void {
 
   if (current < 21) {
     migrateV21(db);
+  }
+
+  if (current < 22) {
+    migrateV22(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

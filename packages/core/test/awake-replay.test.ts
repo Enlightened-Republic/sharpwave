@@ -8,7 +8,7 @@ import { DEFAULT_CONFIG } from "../src/types.js";
 
 // xanima-core's db.ts does not export a `SCHEMA_VERSION` symbol; assert
 // against the known current value (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 21; // v21 = Xanima 0.2.0 draft expiry / note acks / lesson merges
+const SCHEMA_VERSION = 22; // v22 = Xanima 0.3.0 reflections / open items / commitments / plans
 
 // xanima-core's writeNode dedupes on near-identical content by default
 // (trigram-Jaccard >= 0.85, type-scoped) — clawbrain-v4's writeNode did not.

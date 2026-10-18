@@ -87,7 +87,7 @@ describe("brain adopt", () => {
     expect(r.after!.schema).toBeGreaterThanOrEqual(18);
     expect(r.after!.nullWriters).toEqual({ nodes: totals.nodes, edges: totals.edges, episodes: totals.episodes }); // no backfill by default
     expect(r.backfillWriter).toBeNull();
-    expect(counts(target)).toMatchObject({ ...totals, schema: 21 });
+    expect(counts(target)).toMatchObject({ ...totals, schema: 22 });
 
     // Pre-adopt backup: exists, sha256 matches result + manifest, schema still 17, counts equal.
     expect(r.backup!.path).toMatch(/[\\/]backups[\\/]main[\\/]pre-adopt[\\/]main-pre-adopt-.*\.db$/);
@@ -106,7 +106,7 @@ describe("brain adopt", () => {
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ agentId: "admin:cli", tool: "brain_adopt", brain: "main", nodeId: null, outcome: "ok" });
     expect(audit[0].detail).toContain(`nodes=${totals.nodes}`);
-    expect(audit[0].detail).toContain("schema=17->21");
+    expect(audit[0].detail).toContain("schema=17->22");
     expect(JSON.stringify(audit)).not.toContain("legacy-fixture-content");
     expect(JSON.stringify(audit)).not.toContain("kumquat");
   });
@@ -122,8 +122,8 @@ describe("brain adopt", () => {
     expect(r.replacedMovedTo!.length).toBeGreaterThanOrEqual(1);
     const aside = r.replacedMovedTo!.find((p) => /brain\.db\.pre-adopt-[^-]+.*Z$/.test(p))!;
     expect(aside).toBeTruthy();
-    expect(counts(aside)).toMatchObject({ nodes: totals.nodes, schema: 21 }); // the previously adopted brain, intact
-    expect(counts(target)).toMatchObject({ nodes: totals.nodes, schema: 21 });
+    expect(counts(aside)).toMatchObject({ nodes: totals.nodes, schema: 22 }); // the previously adopted brain, intact
+    expect(counts(target)).toMatchObject({ nodes: totals.nodes, schema: 22 });
   });
 
   it("an EMPTY existing private brain (e.g. created by a smoke test) is moved aside without --force", async () => {
@@ -266,7 +266,7 @@ describe("brain adopt — CLI", () => {
     const real = await cli([...base, "--json"]);
     expect(real.code, real.err).toBe(0);
     const j = JSON.parse(real.out);
-    expect(j).toMatchObject({ dryRun: false, integrity: "ok", sourceUnchanged: true, after: { nodes: totals.nodes, schema: 21 } });
+    expect(j).toMatchObject({ dryRun: false, integrity: "ok", sourceUnchanged: true, after: { nodes: totals.nodes, schema: 22 } });
 
     const again = await cli(base);
     expect(again.code).toBe(1);

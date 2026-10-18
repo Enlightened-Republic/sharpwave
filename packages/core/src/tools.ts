@@ -111,7 +111,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
       type: "object",
       properties: {
         query: { type: "string", description: "Natural language search query" },
-        type:  { type: "string", description: "Filter by node type: identity|semantic|episodic|pattern|skill|goal|emotion|procedural|schema" },
+        type:  { type: "string", description: "Filter by node type: identity|semantic|episodic|pattern|skill|goal|emotion|procedural|schema|decision|reflection|hypothesis|question|assumption|commitment|plan" },
         limit: { type: "number", description: "Max results to return (default 10)" },
         as_of: { type: ["string", "number"], description: "Time travel: what did I believe at this time? ISO date/time (\"2026-10-01\", \"2026-10-01T14:00:00Z\"), \"yesterday\", \"3 days ago\", or epoch milliseconds. Includes beliefs later retracted or superseded (marked as such)." },
       },
@@ -809,6 +809,11 @@ export async function dispatchBrainTool(
 
     // ── brain_reflect (clawbrain-v4) ──────────────────────────────────────
     case "brain_reflect": {
+      // Xanima 0.3.0: scoped reflection (topic / goal_id / since / until) → continuity tool.
+      if (["topic", "goal_id", "since", "until"].some((k) => args[k] !== undefined)) {
+        const c = dispatchContinuityTool(name, agentId, args, config);
+        if (c) return c.isError ? err(c.text.replace(/^Error: /, "")) : ok(c.text);
+      }
       const model = getSelfModel(agentId);
       if (!model) return ok("Self model not initialized — try again after the first session.");
       const goals = getActiveGoals(agentId).map((g) => g.label);
@@ -819,6 +824,8 @@ export async function dispatchBrainTool(
         `User model: ${model.user_model}`,
         `Last updated: ${new Date(model.updated_at).toISOString()}`,
       ];
+      const c = dispatchContinuityTool(name, agentId, {}, config);
+      if (c && !c.isError) lines.push("", c.text);
       return ok(lines.join("\n"));
     }
 

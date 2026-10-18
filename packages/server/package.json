@@ -1,6 +1,6 @@
 {
   "name": "xanima-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Xanima brain service: one process that owns every brain (shared + one private per agent), served over MCP Streamable HTTP with per-agent bearer tokens.",
   "type": "module",
@@ -34,7 +34,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
-    "xanima-core": "0.2.0",
+    "xanima-core": "0.3.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },

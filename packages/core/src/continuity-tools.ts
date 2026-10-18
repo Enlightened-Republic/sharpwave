@@ -4,6 +4,12 @@
  * and xanima-server (which calls it on the caller's private brain).
  */
 import type { BrainConfig } from "./types.js";
+import { reflect, formatReflection } from "./reflection.js";
+import { createOpenItem, updateOpenItem, getOpenItem, listOpenItems, formatOpenItem, type OpenKind, type OpenStatus, type OpenAction } from "./open-items.js";
+import { createCommitment, updateCommitment, listCommitments, formatCommitment, createPlan, updatePlan, getPlan, listPlans, formatPlan, type CommitAction, type PlanAction, type PlanStatus } from "./plans.js";
+import { replay, changesSince, formatChanges, conflicts, briefing, forgetImpact } from "./meta-tools.js";
+import { parseWhen, capLines, ago, DAY } from "./continuity-util.js";
+
 import {
   confirmDecision,   recordDecision, updateDecisionOutcome, queryDecisions, formatDecision, OUTCOME_STATUSES, type OutcomeStatus,
 } from "./decisions.js";
@@ -118,6 +124,90 @@ export const CONTINUITY_TOOL_DEFS: Record<string, ContinuityToolDef> = {
   },
 };
 
+// ── Xanima 0.3.0: reflection, replay, open items, commitments, plans, meta-tools ──
+const LINKS = { type: "array", items: { type: "string" }, description: "Ids (or 8+ char prefixes) of goals, plans, decisions or other nodes this is about." };
+const WHEN = { type: ["string", "number"] };
+Object.assign(CONTINUITY_TOOL_DEFS, {
+  brain_reflect: {
+    description: "Reflect: what worked, what didn't, and what to try next — built from decision outcomes, resolved hypotheses, slipped commitments and reported results in a window. Scope it to a topic or goal_id (or neither for everything). The reflection is stored (merging into a near-duplicate one) and comes back in recall and briefings. No arguments in local mode also shows your self model.",
+    inputSchema: { type: "object", properties: {
+      topic: { type: "string" }, goal_id: { type: "string" },
+      since: { ...WHEN, description: 'Window start: ISO date, epoch ms or "7 days ago". Default: reflectionWindowDays back.' },
+      until: { ...WHEN, description: "Window end. Default now." },
+    } },
+  },
+  brain_replay: {
+    description: "Experience replay: a few compressed past trajectories (what was said → the decision → what happened → the lesson) for a goal, a skill, or a query. Budget-capped. Use it before repeating a kind of decision.",
+    inputSchema: { type: "object", properties: { goal_id: { type: "string" }, skill_id: { type: "string" }, query: { type: "string" }, k: { type: "number", description: "How many trajectories (1-10, default 3)." } } },
+  },
+  brain_hypothesis: {
+    description: "Hypotheses and assumptions as first-class items. create (statement, kind hypothesis|assumption, load_bearing for assumptions your plan rests on, confidence, evidence_for/against, links), evidence (add evidence_for / evidence_against), support / refute (with evidence), close (reason), reopen, confirm (keep a captured draft), update. A load-bearing assumption with more evidence against than for shows as CONTRADICTED in brain_status.",
+    inputSchema: { type: "object", properties: {
+      action: { type: "string", enum: ["create", "update", "evidence", "support", "refute", "close", "reopen", "confirm"] },
+      id: { type: "string", description: "The hypothesis / assumption id (not for create)." },
+      statement: { type: "string" }, kind: { type: "string", enum: ["hypothesis", "assumption"], description: "Default hypothesis." },
+      load_bearing: { type: "boolean" }, confidence: { type: ["string", "number"] },
+      evidence: { type: "string", description: "One piece of evidence (support → for, refute → against). A bare node id links that node." },
+      evidence_for: { type: "array", items: { type: "string" } }, evidence_against: { type: "array", items: { type: "string" } },
+      links: LINKS, reason: { type: "string" },
+    }, required: ["action"] },
+  },
+  brain_question: {
+    description: "Open questions you want to keep alive across sessions. ask (question, links), answer (id, answer — closes it), close (id, reason), reopen, update. Open questions resurface when a turn is about them.",
+    inputSchema: { type: "object", properties: {
+      action: { type: "string", enum: ["ask", "answer", "close", "reopen", "update", "confirm"] },
+      id: { type: "string" }, question: { type: "string" }, answer: { type: "string" }, reason: { type: "string" }, links: LINKS,
+    }, required: ["action"] },
+  },
+  brain_list_open: {
+    description: "List open hypotheses, questions and assumptions (load-bearing first). Filter by kind, status (active = open + supported, or open | supported | refuted | closed | all), a query, or about (a goal / plan / decision id).",
+    inputSchema: { type: "object", properties: {
+      kind: { type: "string", enum: ["hypothesis", "question", "assumption"] }, status: { type: "string", enum: ["active", "open", "supported", "refuted", "closed", "all"] },
+      query: { type: "string" }, about: { type: "string" }, limit: { type: "number" }, format: { type: "string", enum: ["text", "json"] },
+    } },
+  },
+  brain_commit: {
+    description: "Commitments you made — to the user or to yourself. create (title, to: user | self | a name, due: ISO / \"tomorrow\" / \"in 3 days\", blocked_by: ids, links), update (title / due / note), done, drop (reason), reopen, block (blocked_by), unblock. Overdue or blocked commitments show in brain_status and as a one-line nudge.",
+    inputSchema: { type: "object", properties: {
+      action: { type: "string", enum: ["create", "update", "done", "drop", "reopen", "block", "unblock"] },
+      id: { type: "string" }, title: { type: "string" }, to: { type: "string" }, due: WHEN, note: { type: "string" }, reason: { type: "string" },
+      blocked_by: { type: "array", items: { type: "string" }, description: "Ids of what this waits on: commitments, decisions, plans, hypotheses, goals, or plan steps as step:<n>." },
+      links: LINKS,
+    }, required: ["action"] },
+  },
+  brain_commitments: {
+    description: "List your commitments: open (default), overdue, blocked, done, or all.",
+    inputSchema: { type: "object", properties: { status: { type: "string", enum: ["open", "overdue", "blocked", "done", "all"] }, format: { type: "string", enum: ["text", "json"] } } },
+  },
+  brain_plan: {
+    description: "Plans with steps. create (title, steps[], goal_id), list (status), show (plan_id), add_steps, step (step number, status todo|doing|done|blocked|skipped, note, blocked_by), park (note — why), resume (returns a briefing: the plan, what's still open, and what changed while it was parked), done, abandon.",
+    inputSchema: { type: "object", properties: {
+      action: { type: "string", enum: ["create", "list", "show", "update", "add_steps", "step", "park", "resume", "done", "abandon"] },
+      plan_id: { type: "string" }, title: { type: "string" }, goal_id: { type: "string" }, steps: { type: "array", items: { type: "string" } },
+      step: { type: "number" }, status: { type: "string" }, note: { type: "string" }, blocked_by: { type: "array", items: { type: "string" } }, links: LINKS,
+    }, required: ["action"] },
+  },
+  brain_changes: {
+    description: "What changed about a goal, plan or topic in the last N days: decisions and outcomes, goal events, new / updated / retired memories, hypotheses that moved, commitments done or due. Fast, read-only, budget-capped.",
+    inputSchema: { type: "object", properties: { goal_id: { type: "string" }, plan_id: { type: "string" }, topic: { type: "string" }, days: { type: "number", description: "Default 7." } } },
+  },
+  brain_conflicts: {
+    description: "Contradictions, low-confidence or disputed memories, refuted hypotheses and contradicted assumptions about a topic. Read-only, budget-capped.",
+    inputSchema: { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] },
+  },
+  brain_briefing: {
+    description: "A short resume briefing for a plan, goal or topic: where it stands, what's open, recent decisions, commitments, the last reflection, and what changed. Read-only, budget-capped.",
+    inputSchema: { type: "object", properties: { plan_id: { type: "string" }, goal_id: { type: "string" }, topic: { type: "string" }, since: WHEN } },
+  },
+  brain_forget_impact: {
+    description: "Dry run: what would be lost by compacting or forgetting a cluster (a node id and its members) or everything matching a query — unique facts, protected items, links cut, references, recoverable episodes. Changes nothing.",
+    inputSchema: { type: "object", properties: { cluster: { type: "string" }, query: { type: "string" } } },
+  },
+} satisfies Record<string, ContinuityToolDef>);
+
+/** Read-only continuity tools (read scope on the service). */
+export const CONTINUITY_READ_ONLY_TOOLS = ["brain_query_decisions", "brain_list_goals", "brain_replay", "brain_list_open", "brain_commitments", "brain_changes", "brain_conflicts", "brain_briefing", "brain_forget_impact"];
+
 export const CONTINUITY_TOOL_NAMES = Object.keys(CONTINUITY_TOOL_DEFS);
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -192,6 +282,114 @@ export function dispatchContinuityTool(
       if (!r.ok) return err(r.error!);
       const ver = r.previous && r.goal!.version !== r.previous.version ? ` (v${r.previous.version} → v${r.goal!.version}; v${r.previous.version} kept as history)` : "";
       return ok(`Goal ${action}${ver}:\n${formatGoal(r.goal!)}`);
+    }
+    case "brain_reflect": {
+      const since = args["since"] !== undefined ? parseWhen(args["since"], now ?? Date.now()) : undefined;
+      const until = args["until"] !== undefined ? parseWhen(args["until"], now ?? Date.now()) : undefined;
+      if (since === null || until === null) return err('since / until must be an ISO date, epoch ms or "N days ago"');
+      const r = reflect(agentId, { topic: str(args["topic"]), goalId: str(args["goal_id"]), ...(since ? { since } : {}), ...(until ? { until } : {}), origin: "tool", ...(now ? { now } : {}) }, config);
+      if (!r.ok) return err(r.error!);
+      return ok(formatReflection(r));
+    }
+    case "brain_replay": {
+      const r = replay(agentId, { goalId: str(args["goal_id"]), skillId: str(args["skill_id"]), query: str(args["query"]), ...(typeof args["k"] === "number" ? { k: args["k"] } : {}) }, config, now ?? Date.now());
+      return r.ok ? ok(r.text!) : err(r.error!);
+    }
+    case "brain_hypothesis": case "brain_question": {
+      const q = name === "brain_question";
+      const action = (str(args["action"]) ?? "").toLowerCase();
+      const text = str(args[q ? "question" : "statement"]);
+      if (action === "create" || action === "ask") {
+        const kind = q ? "question" : ((str(args["kind"]) ?? "hypothesis") as OpenKind);
+        if (!q && kind !== "hypothesis" && kind !== "assumption") return err("kind must be hypothesis or assumption");
+        const r = createOpenItem(agentId, {
+          kind, text: text ?? "", loadBearing: args["load_bearing"] === true, links: strArr(args["links"]),
+          ...(args["confidence"] !== undefined ? { confidence: args["confidence"] as number } : {}),
+          evidenceFor: [...(strArr(args["evidence_for"]) ?? []), ...(str(args["evidence"]) ? [str(args["evidence"])!] : [])], evidenceAgainst: strArr(args["evidence_against"]),
+          writerAgentId: opts.writerAgentId, ...(now ? { now } : {}),
+        });
+        if (!r.ok) return err(r.error!);
+        return ok(`Recorded ${kind} ${r.id}.\n${formatOpenItem(getOpenItem(agentId, r.id!)!, now)}`);
+      }
+      const id = str(args["id"]);
+      if (!id) return err("id is required (brain_list_open shows ids)");
+      const map: Record<string, OpenAction> = { update: "update", evidence: "evidence", support: "support", refute: "refute", close: "close", reopen: "reopen", confirm: "confirm", answer: "answer" };
+      if (!map[action]) return err(`unknown action ${action}`);
+      const r = updateOpenItem(agentId, id, {
+        action: map[action]!, text, loadBearing: typeof args["load_bearing"] === "boolean" ? args["load_bearing"] : undefined, links: strArr(args["links"]),
+        ...(args["confidence"] !== undefined ? { confidence: args["confidence"] as number } : {}),
+        evidence: str(args["evidence"]), evidenceFor: strArr(args["evidence_for"]), evidenceAgainst: strArr(args["evidence_against"]),
+        answer: str(args["answer"]), reason: str(args["reason"]), writerAgentId: opts.writerAgentId, ...(now ? { now } : {}),
+      });
+      if (!r.ok) return err(r.error!);
+      return ok(`${r.item!.kind} ${action === "answer" ? "answered" : action === "close" ? "closed" : action === "refute" ? "refuted" : action === "support" ? "supported" : "updated"}.\n${formatOpenItem(r.item!, now)}`);
+    }
+    case "brain_list_open": {
+      const st = str(args["status"]) as OpenStatus | "all" | "active" | undefined;
+      const rows = listOpenItems(agentId, { kind: str(args["kind"]) as OpenKind | undefined, ...(st ? { status: st } : {}), query: str(args["query"]), about: str(args["about"]), ...(typeof args["limit"] === "number" ? { limit: args["limit"] } : {}) });
+      if (json) return ok(JSON.stringify({ items: rows }, null, 2));
+      if (!rows.length) return ok("No open hypotheses, questions or assumptions match.");
+      return ok(capLines(rows.map((o) => formatOpenItem(o, now)), Math.max(400, config.metaToolMaxChars ?? 2400)));
+    }
+    case "brain_commit": {
+      const action = (str(args["action"]) ?? "").toLowerCase();
+      if (action === "create") {
+        const r = createCommitment(agentId, { title: str(args["title"]) ?? "", to: str(args["to"]), due: args["due"], note: str(args["note"]), links: strArr(args["links"]), blockedBy: strArr(args["blocked_by"]), writerAgentId: opts.writerAgentId, ...(now ? { now } : {}) });
+        if (!r.ok) return err(r.error!);
+        return ok(`Commitment recorded.\n${formatCommitment(r.commitment!, now)}`);
+      }
+      const id = str(args["id"]);
+      if (!id) return err("id is required (brain_commitments shows ids)");
+      const r = updateCommitment(agentId, id, { action: action as CommitAction, title: str(args["title"]), ...(args["due"] !== undefined ? { due: args["due"] } : {}), note: str(args["note"]), blockedBy: strArr(args["blocked_by"]), reason: str(args["reason"]), ...(now ? { now } : {}) });
+      if (!r.ok) return err(r.error!);
+      return ok(`Commitment ${action}.\n${formatCommitment(r.commitment!, now)}`);
+    }
+    case "brain_commitments": {
+      const rows = listCommitments(agentId, { status: (str(args["status"]) ?? "open") as "open", ...(now ? { now } : {}) });
+      if (json) return ok(JSON.stringify({ commitments: rows }, null, 2));
+      return ok(rows.length ? capLines(rows.map((c) => formatCommitment(c, now)), Math.max(400, config.metaToolMaxChars ?? 2400)) : "No commitments match.");
+    }
+    case "brain_plan": {
+      const action = (str(args["action"]) ?? "").toLowerCase();
+      if (action === "create") {
+        const r = createPlan(agentId, { title: str(args["title"]) ?? "", goalId: str(args["goal_id"]), steps: strArr(args["steps"]), links: strArr(args["links"]), writerAgentId: opts.writerAgentId, ...(now ? { now } : {}) });
+        return r.ok ? ok(`Plan created.\n${formatPlan(r.plan!, now)}`) : err(r.error!);
+      }
+      if (action === "list") {
+        const rows = listPlans(agentId, (str(args["status"]) ?? "active") as PlanStatus);
+        return ok(rows.length ? capLines(rows.map((p) => formatPlan(p, now)), Math.max(400, config.metaToolMaxChars ?? 2400)) : "No plans match.");
+      }
+      const id = str(args["plan_id"]);
+      if (!id) return err("plan_id is required");
+      if (action === "show") { const p = getPlan(agentId, id); return p ? ok(formatPlan(p, now)) : err(`plan ${id} not found`); }
+      const r = updatePlan(agentId, id, { action: action as PlanAction, title: str(args["title"]), steps: strArr(args["steps"]), ...(typeof args["step"] === "number" ? { step: args["step"] } : {}), status: str(args["status"]), note: str(args["note"]), blockedBy: strArr(args["blocked_by"]), ...(now ? { now } : {}) });
+      if (!r.ok) return err(r.error!);
+      if (action === "resume") {
+        const b = briefing(agentId, { planId: r.plan!.node_id, ...(r.previousParkedAt ? { since: r.previousParkedAt } : {}) }, config, now ?? Date.now());
+        return ok(`Plan resumed (parked ${r.previousParkedAt ? ago(r.previousParkedAt, now ?? Date.now()) : "?"}).\n${b.text}`);
+      }
+      return ok(`Plan ${action}.\n${formatPlan(r.plan!, now)}`);
+    }
+    case "brain_changes": {
+      const days = typeof args["days"] === "number" && args["days"] > 0 ? Math.min(365, args["days"]) : 7;
+      const t = now ?? Date.now();
+      const r = changesSince(agentId, { goalId: str(args["goal_id"]), planId: str(args["plan_id"]), topic: str(args["topic"]), since: t - days * DAY, until: t });
+      if (r.error) return err(r.error);
+      return ok(formatChanges(r.scope!.label, r.changes, t - days * DAY, config, t));
+    }
+    case "brain_conflicts": {
+      const topic = str(args["topic"]);
+      if (!topic) return err("topic is required");
+      return ok(conflicts(agentId, topic, config, now ?? Date.now()).text);
+    }
+    case "brain_briefing": {
+      const since = args["since"] !== undefined ? parseWhen(args["since"], now ?? Date.now()) : undefined;
+      const r = briefing(agentId, { planId: str(args["plan_id"]), goalId: str(args["goal_id"]), topic: str(args["topic"]), ...(since ? { since } : {}) }, config, now ?? Date.now());
+      return r.ok ? ok(r.text!) : err(r.error!);
+    }
+    case "brain_forget_impact": {
+      const r = forgetImpact(agentId, { cluster: str(args["cluster"]), query: str(args["query"]) }, config, now ?? Date.now());
+      return r.ok ? ok(r.text!) : err(r.error!);
     }
     case "brain_list_goals": {
       const gid = str(args["goal_id"]);

@@ -2,7 +2,9 @@ import { envGet } from "./env.js";
 export type NodeType =
   | "identity" | "semantic" | "episodic" | "pattern"
   | "skill" | "goal" | "emotion" | "procedural" | "schema"
-  | "decision"; // Xanima 0.2.0 decision ledger (structured row in `decisions`)
+  | "decision" // Xanima 0.2.0 decision ledger (structured row in `decisions`)
+  // Xanima 0.3.0 (structured rows in open_items / commitments / plans / reflections)
+  | "hypothesis" | "question" | "assumption" | "commitment" | "plan" | "reflection";
 
 // EdgeType: `associates` is the canonical Hebbian/similarity edge type since
 // v4.0.0 (CHANGELOG.md [4.0.0] Changed). `associated_with` is retained ONLY
@@ -16,6 +18,7 @@ export type EdgeType =
   | "generated_skill" | "drives"
   | "used_in" | "led_to" | "derived_from" // Xanima 0.1.0 lightweight causal links
   | "advances" | "conflicts_with_goal" // Xanima 0.2.0 decision → goal
+  | "reflects_on" | "about" | "blocked_by" | "evidence_for" | "evidence_against" // Xanima 0.3.0
   | "associated_with"; // legacy — read only
 
 export interface BrainNode {
@@ -218,6 +221,25 @@ export interface BrainConfig {
   decisionDraftTtlDays?: number;
   /** Cosine similarity at/above which a new lesson merges into an existing skill (embedding path). Default 0.86. */
   lessonMergeSimilarity?: number;
+  // ── Xanima 0.3.0: reflection, open items, commitments, plans, meta-tools ──
+  /** Sleep reflection phase: "sleep" writes a templated what-worked / what-didn't / try-next reflection from recent outcomes. Default "off". */
+  reflection?: "off" | "sleep";
+  /** Use the LLM to phrase reflections (opt-in; falls back to the template). Default false. */
+  reflectionLlm?: boolean;
+  /** Window a reflection looks back over when no since/until is given. Default 7 days. */
+  reflectionWindowDays?: number;
+  /** Capture "I think … because …", "open question: …", "assuming …" from the agent's own replies as drafts. Default true. */
+  openItemCapture?: boolean;
+  /** Days before an unconfirmed captured hypothesis / question / assumption draft expires (soft). Default 14. */
+  openItemDraftTtlDays?: number;
+  /** Surface one relevant open question / hypothesis per turn when the prompt matches it (6 h cooldown each). Default true. */
+  openItemSurfacing?: boolean;
+  /** One-line nudge for overdue / blocked commitments (consumed only by a real reply). Default true. */
+  commitmentNudges?: boolean;
+  /** Character cap for brain_replay output. Default 1600. */
+  replayMaxChars?: number;
+  /** Character cap for brain_changes / brain_conflicts / brain_briefing / brain_forget_impact output. Default 2400. */
+  metaToolMaxChars?: number;
 }
 
 export const DEFAULT_CONFIG: BrainConfig = {
@@ -256,5 +278,14 @@ export const DEFAULT_CONFIG: BrainConfig = {
   goalTriggers: true,
   alignmentNoteMaxTokens: 60,
   decisionDraftTtlDays: 14,
+  reflection: "off",
+  reflectionLlm: false,
+  reflectionWindowDays: 7,
+  openItemCapture: true,
+  openItemDraftTtlDays: 14,
+  openItemSurfacing: true,
+  commitmentNudges: true,
+  replayMaxChars: 1600,
+  metaToolMaxChars: 2400,
   lessonMergeSimilarity: 0.86,
 };

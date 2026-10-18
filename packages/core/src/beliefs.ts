@@ -9,6 +9,8 @@
 // better-sqlite3 handle so the brain service can run them on its read-only
 // WAL connections.
 
+import { openItemCounts } from "./open-items.js";
+import { commitmentCounts } from "./plans.js";
 import type Database from "better-sqlite3";
 import { getDb, getMeta, setMeta, bumpWriteCounter, SCHEMA_VERSION } from "./db.js";
 import { executeWithWalRetrySync } from "./wal-retry.js";
@@ -223,6 +225,12 @@ export interface SleepSummary {
   lessonsMerged?: number;
   draftsExpired?: number;
   goalsChecked?: number;
+  reflectionsWritten?: number;
+  reflectionsMerged?: number;
+  openDraftsExpired?: number;
+  commitmentsOverdue?: number;
+  commitmentsBlocked?: number;
+  commitmentNudgeQueued?: boolean;
   goalsDrifting?: number;
   alignmentNoteQueued?: boolean;
 }
@@ -241,6 +249,10 @@ export interface BrainStatus {
   hotConflicts: Array<{ a: { id: string; label: string }; b: { id: string; label: string }; since: number }>;
   decisions: { total: number; pending: number; resolved: number; auto: number; lessonsPromoted: number; draftsPending: number; draftsExpired: number; lessonsMerged: number };
   goals: { active: number; tracked: number; paused: number; done: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null; pendingNoteOffers: number };
+  /** Xanima 0.3.0 */
+  open: ReturnType<typeof openItemCounts>;
+  commitments: ReturnType<typeof commitmentCounts>;
+  reflections: { total: number; lastAt: number | null };
   lastSleep: { at: number | null; ago: string; summary: SleepSummary | null };
   injection: {
     budgetChars: number;
@@ -324,6 +336,13 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
   if (lastAt && now - lastAt > 3 * DAY && episodes > 0) attention.push(`sleep has not run for ${Math.floor((now - lastAt) / DAY)} days`);
   const decisions = decisionCounts(db);
   const goals = goalCounts(db);
+  const open = openItemCounts(db);
+  const commitments = commitmentCounts(db, now);
+  let reflections = { total: 0, lastAt: null as number | null };
+  try { const r = db.prepare("SELECT COUNT(*) n, MAX(updated_at) m FROM reflections").get() as { n: number; m: number | null }; reflections = { total: r.n, lastAt: r.m }; } catch { /* pre-v22 */ }
+  for (const a of open.contradictedAssumptions.slice(0, 2)) attention.push(`load-bearing assumption CONTRADICTED: "${a.text.slice(0, 60)}" — re-check what rests on it`);
+  if (commitments.overdue.length) attention.push(`${commitments.overdue.length} commitment${commitments.overdue.length === 1 ? "" : "s"} overdue ("${commitments.overdue[0]!.title.slice(0, 40)}")`);
+  if (commitments.blocked.length) attention.push(`${commitments.blocked.length} commitment${commitments.blocked.length === 1 ? "" : "s"} blocked`);
   if (goals.drifting.length) attention.push(`${goals.drifting.length} goal${goals.drifting.length === 1 ? "" : "s"} drifting ("${goals.drifting[0]!.title.slice(0, 40)}")`);
   if (headerChars + recallCapChars > budgetChars) attention.push(`injection may exceed budget (${headerChars + recallCapChars} > ${budgetChars} chars)`);
 
@@ -335,6 +354,9 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
     hotConflicts: conflicts.map((c) => ({ a: { id: c.aid, label: c.al }, b: { id: c.bid, label: c.bl }, since: c.at })),
     decisions,
     goals,
+    open,
+    commitments,
+    reflections,
     lastSleep: { at: lastAt, ago: lastAt ? relativeTime(lastAt, now) : "never", summary },
     injection: { budgetChars, headerChars, recallCapChars, estimatedTokens: Math.ceil((headerChars + recallCapChars) / 4) },
     attention,
@@ -350,11 +372,23 @@ export function formatBrainStatus(s: BrainStatus, label = ""): string {
   if (src) L.push(`  sources: ${src}`);
   L.push(`  injection: ~${s.injection.estimatedTokens} tokens (header ${s.injection.headerChars} + recall cap ${s.injection.recallCapChars} chars; budget ${s.injection.budgetChars})`);
   const ss = s.lastSleep.summary;
-  L.push(`  last sleep: ${s.lastSleep.ago}${ss ? ` — nodes ${ss.nodesBefore}→${ss.nodesAfter}, edges ${ss.edgesBefore}→${ss.edgesAfter}, pruned ${ss.pruned}, new contradictions ${ss.newContradictions}, flagged ${ss.flaggedForReview}${ss.decisionsMerged || ss.decisionsCalibrated || ss.lessonsPromoted ? `, decisions merged ${ss.decisionsMerged ?? 0} / calibrated ${ss.decisionsCalibrated ?? 0} / lessons promoted ${ss.lessonsPromoted ?? 0}` : ""}${ss.lessonsMerged ? `, lessons merged into existing skills ${ss.lessonsMerged}` : ""}${ss.draftsExpired ? `, decision drafts expired ${ss.draftsExpired}` : ""}${ss.goalsChecked ? `, goals checked ${ss.goalsChecked} (${ss.goalsDrifting ?? 0} drifting)` : ""}${ss.legacyNoiseFlagged ? ` (${ss.legacyNoiseFlagged} look like legacy heartbeat/NO_REPLY noise — review, then retire with xanima-server noise)` : ""}` : ""}`);
+  L.push(`  last sleep: ${s.lastSleep.ago}${ss ? ` — nodes ${ss.nodesBefore}→${ss.nodesAfter}, edges ${ss.edgesBefore}→${ss.edgesAfter}, pruned ${ss.pruned}, new contradictions ${ss.newContradictions}, flagged ${ss.flaggedForReview}${ss.decisionsMerged || ss.decisionsCalibrated || ss.lessonsPromoted ? `, decisions merged ${ss.decisionsMerged ?? 0} / calibrated ${ss.decisionsCalibrated ?? 0} / lessons promoted ${ss.lessonsPromoted ?? 0}` : ""}${ss.lessonsMerged ? `, lessons merged into existing skills ${ss.lessonsMerged}` : ""}${ss.draftsExpired ? `, decision drafts expired ${ss.draftsExpired}` : ""}${ss.reflectionsWritten || ss.reflectionsMerged ? `, reflections written ${ss.reflectionsWritten ?? 0} / merged ${ss.reflectionsMerged ?? 0}` : ""}${ss.openDraftsExpired ? `, open-item drafts expired ${ss.openDraftsExpired}` : ""}${ss.commitmentsOverdue ? `, commitments overdue ${ss.commitmentsOverdue}` : ""}${ss.goalsChecked ? `, goals checked ${ss.goalsChecked} (${ss.goalsDrifting ?? 0} drifting)` : ""}${ss.legacyNoiseFlagged ? ` (${ss.legacyNoiseFlagged} look like legacy heartbeat/NO_REPLY noise — review, then retire with xanima-server noise)` : ""}` : ""}`);
   if (s.decisions.total || s.decisions.draftsExpired) L.push(`  decisions: ${s.decisions.total} (${s.decisions.pending} awaiting outcome, ${s.decisions.resolved} resolved, ${s.decisions.lessonsPromoted} lessons promoted${s.decisions.lessonsMerged ? `, ${s.decisions.lessonsMerged} merged into existing skills` : ""})`);
   if (s.decisions.draftsPending || s.decisions.draftsExpired) L.push(`  decision drafts: ${s.decisions.draftsPending} pending (auto-extracted, unconfirmed), ${s.decisions.draftsExpired} expired`);
   if (s.goals.active || s.goals.paused || s.goals.done) L.push(`  goals: ${s.goals.active} active (${s.goals.tracked} drift-checked), ${s.goals.paused} paused, ${s.goals.done} done`);
   for (const d of s.goals.drifting.slice(0, 3)) L.push(`    DRIFT ${d.id.slice(0, 8)}: ${d.reason}`);
+  if (s.open && (s.open.hypotheses || s.open.questions || s.open.assumptions || s.open.draftsExpired)) {
+    L.push(`  open items: ${s.open.hypotheses} hypotheses, ${s.open.questions} questions, ${s.open.assumptions} assumptions${s.open.draftsPending ? ` (${s.open.draftsPending} captured drafts unconfirmed)` : ""}${s.open.draftsExpired ? `, ${s.open.draftsExpired} drafts expired` : ""}`);
+    for (const q of s.open.hotQuestions) L.push(`    HOT QUESTION ${q.id.slice(0, 8)}: ${q.text.slice(0, 100)}`);
+    for (const a of s.open.contradictedAssumptions) L.push(`    CONTRADICTED load-bearing assumption ${a.id.slice(0, 8)} (${relativeTime(a.since)}): ${a.text.slice(0, 100)}`);
+  }
+  if (s.commitments && (s.commitments.open || s.commitments.plansActive || s.commitments.plansParked)) {
+    L.push(`  commitments: ${s.commitments.open} open (${s.commitments.overdue.length} overdue, ${s.commitments.blocked.length} blocked); plans: ${s.commitments.plansActive} active, ${s.commitments.plansParked} parked`);
+    for (const c of s.commitments.overdue.slice(0, 3)) L.push(`    OVERDUE ${c.id.slice(0, 8)}: ${c.title.slice(0, 80)} (due ${relativeTime(c.due_at)})`);
+    for (const c of s.commitments.blocked.slice(0, 3)) L.push(`    BLOCKED ${c.id.slice(0, 8)}: ${c.title.slice(0, 60)} — waiting on ${c.waiting.slice(0, 60)}`);
+    if (s.commitments.pendingNudge) L.push(`  commitment nudge pending (consumed by the next real reply): ${s.commitments.pendingNudge}`);
+  }
+  if (s.reflections?.total) L.push(`  reflections: ${s.reflections.total} (last ${relativeTime(s.reflections.lastAt)})`);
   if (s.goals.pendingNote) L.push(`  alignment note pending (${s.goals.pendingNoteOffers ? `offered ${s.goals.pendingNoteOffers}×, ` : ""}not yet delivered — consumed by the next real reply): ${s.goals.pendingNote}`);
   if (s.hotConflicts.length) {
     L.push(`  hot conflicts:`);

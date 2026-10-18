@@ -44,7 +44,7 @@ describe("schema 18 — fresh DB", () => {
     expect(cols(db, "edges")).toContain("writer_agent_id");
     const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='nodes_writer_agent'").get();
     expect(idx).toBeTruthy();
-    expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(21);
+    expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(22);
   });
 });
 
@@ -171,7 +171,7 @@ describe("v17 → v18 migration (synthetic)", () => {
     closeDb(id);
 
     const db2 = getDb(id);
-    expect((db2.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(21);
+    expect((db2.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(22);
     for (const t of ["nodes", "episodes", "edges"]) expect(cols(db2, t)).toContain("writer_agent_id");
     expect(db2.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='nodes_writer_agent'").get()).toBeTruthy();
     expect(db2.prepare("SELECT COUNT(*) AS n FROM nodes WHERE writer_agent_id IS NULL").get()).toEqual({ n: 2 });
@@ -228,7 +228,7 @@ describe.skipIf(!HAVE_SNAPSHOT)("v17 → v18 migration on a COPY of a real brain
       const migrateMs = performance.now() - t0;
 
       try {
-        expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(21);
+        expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(22);
         expect(census(db)).toEqual(before);
         for (const t of ["nodes", "episodes", "edges"]) expect(cols(db, t)).toContain("writer_agent_id");
         expect(db.prepare("SELECT COUNT(*) AS n FROM nodes WHERE writer_agent_id IS NOT NULL").get()).toEqual({ n: 0 });

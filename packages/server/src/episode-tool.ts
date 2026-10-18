@@ -16,7 +16,7 @@
 // Kept in its own file (plus two lines of registration in tools.ts) to stay
 // clear of other in-flight packages/server branches.
 
-import { appendEpisode, classifySystemTurn, scoreImportance, autoExtractDecisions } from "xanima-core";
+import { appendEpisode, classifySystemTurn, scoreImportance, autoExtractDecisions, autoExtractOpenItems } from "xanima-core";
 
 import { SHARED_BRAIN } from "./brains.js";
 import type { Scope } from "./tokens.js";
@@ -117,8 +117,15 @@ export async function callEpisodeAppend(ctx: ToolContext, args: Record<string, u
       for (const d of drafted) ctx.audit.append({ agentId: p.agentId, tool: EPISODE_TOOL_NAME, brain, nodeId: d, outcome: "ok", detail: "auto-extracted decision draft" });
     } catch { /* best-effort */ }
   }
+  let captured: string[] = [];
+  if (role === "assistant" && brain !== SHARED_BRAIN && ctx.brainConfig?.openItemCapture !== false) {
+    try {
+      captured = await ctx.brains.write(brain, () => autoExtractOpenItems(brain, content as string, ctx.brainConfig ?? {}, { writerAgentId: p.agentId, evidence: [String(id)] }));
+      for (const d of captured) ctx.audit.append({ agentId: p.agentId, tool: EPISODE_TOOL_NAME, brain, nodeId: d, outcome: "ok", detail: "captured open-item draft" });
+    } catch { /* best-effort */ }
+  }
   const label = brain === SHARED_BRAIN ? "shared" : "private";
-  let text = `Appended: episode ${id} (${role}) brain=${label} writer=${p.agentId} importance=${imp.toFixed(2)}${drafted.length ? `\nDrafted ${drafted.length} decision${drafted.length === 1 ? "" : "s"} (low confidence): ${drafted.join(", ")}` : ""}`;
+  let text = `Appended: episode ${id} (${role}) brain=${label} writer=${p.agentId} importance=${imp.toFixed(2)}${drafted.length ? `\nDrafted ${drafted.length} decision${drafted.length === 1 ? "" : "s"} (low confidence): ${drafted.join(", ")}` : ""}${captured.length ? `\nCaptured ${captured.length} open item draft${captured.length === 1 ? "" : "s"}: ${captured.join(", ")}` : ""}`;
   if (typeof args["writer_agent_id"] === "string" && args["writer_agent_id"] !== p.agentId) {
     text += `\nNote: client-supplied writer_agent_id "${args["writer_agent_id"]}" was ignored; the writer is the token's agent.`;
   }
