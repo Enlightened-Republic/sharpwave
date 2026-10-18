@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Task Scheduler definition for the SharpWave brain service - equivalent to
+  Task Scheduler definition for the Xanima brain service - equivalent to
   what install-task.ps1 registers. Use EITHER this XML OR install-task.ps1.
 
   Replace the placeholders (keep the file UTF-8, or re-save as UTF-16 LE if schtasks complains), then (normal, non-admin prompt):
-    schtasks /Create /TN "SharpWave Brain Service" /XML sharpwave-service.task.xml
+    schtasks /Create /TN "Xanima Brain Service" /XML sharpwave-service.task.xml
   Remove:
-    schtasks /Delete /TN "SharpWave Brain Service" /F
+    schtasks /Delete /TN "Xanima Brain Service" /F
 
   Placeholders:
     __USER__    DOMAIN\user (e.g. from `whoami`)
@@ -19,7 +19,7 @@
 -->
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>SharpWave brain service (MCP over HTTP on 127.0.0.1:18790 + tailnet). Hidden via sharpwave-service.vbs.</Description>
+    <Description>Xanima brain service (MCP over HTTP on 127.0.0.1:18790 + tailnet). Hidden via sharpwave-service.vbs.</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>

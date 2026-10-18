@@ -192,7 +192,7 @@ describe("offsite pipeline through the service", () => {
     const keyRoot = tempRoot("sw-key-");
     const keyFile = join(keyRoot, "backup.key");
     generateKeyFile(keyFile);
-    const drive = join(tempRoot("sw-drive-"), "My Drive", "SharpWave");
+    const drive = join(tempRoot("sw-drive-"), "My Drive", "Xanima");
     const h = await startService({ offsiteBackup: { enabled: true, keyFile, folder: drive, keepDaily: 7, keepWeekly: 4 } });
     try {
       const tok = h.mint("alice");
@@ -377,7 +377,7 @@ describe("CLI: keygen, backup now (offsite), restore; key never printed or logge
     await h.stop(false);
     const root = h.root;
     const keyFile = join(tempRoot("sw-key-"), ".sharpwave", "backup.key");
-    const drive = join(tempRoot("sw-drive-"), "SharpWave");
+    const drive = join(tempRoot("sw-drive-"), "Xanima");
     const logFile = join(root, "logs", "service.log");
     const run = (...args: string[]) => spawnSync(process.execPath, [CLI, ...args, "--root", root], { encoding: "utf8", env: { ...process.env, SHARPWAVE_BACKUP_KEY: "" } });
 

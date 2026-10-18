@@ -32,7 +32,7 @@ export function writeEdge(
   if (fromId === toId) {
     // Structured warning to stderr (no Logger threaded through writeEdge).
     // eslint-disable-next-line no-console
-    console.warn(`[sharpwave] writeEdge: refused self-loop (agent=${agentId} id=${fromId} type=${type})`);
+    console.warn(`[xanima] writeEdge: refused self-loop (agent=${agentId} id=${fromId} type=${type})`);
     return "";
   }
 

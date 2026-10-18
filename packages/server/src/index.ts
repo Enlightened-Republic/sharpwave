@@ -1,4 +1,4 @@
-// Public surface of sharpwave-server (for tests and embedding).
+// Public surface of xanima-server (for tests and embedding).
 export { BrainService } from "./service.js";
 export type { ServiceOptions } from "./service.js";
 export { resolveConfig, defaultConfig, loadConfigFile, DEFAULT_PORT, DEFAULT_TAILNET_IP, LOOPBACK } from "./config.js";

@@ -6,12 +6,12 @@ import { DEFAULT_CONFIG } from "../src/types.js";
 
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 
-// NOTE (openwave/sharpwave-core split, Task 3):
+// NOTE (openwave/xanima-core split, Task 3):
 // clawbrain-v4's skill-evolution.ts is a full implementation exporting
 // `buildSkillContent`, `slugify`, a `SkillCandidate` interface, and a
 // `detectSkillCandidates` that actually walks pattern → instance_of edges.
 //
-// sharpwave-core's skill-evolution.ts is a deliberate STUB (verified in
+// xanima-core's skill-evolution.ts is a deliberate STUB (verified in
 // src/skill-evolution.ts): skill evolution writes files into the host agent's
 // workspace skills directory and hooks the prompt pipeline, which has no meaning
 // in the engine / MCP-server context. It exports only:
@@ -23,7 +23,7 @@ function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 // real candidate detection (7 of 8) were removed. These cases pin the stub
 // contract instead.
 
-describe("skill-evolution (sharpwave-core stub)", () => {
+describe("skill-evolution (xanima-core stub)", () => {
   it("detectSkillCandidates returns [] when skillEvolution is disabled", () => {
     const id = fresh();
     const candidates = detectSkillCandidates(id, { ...DEFAULT_CONFIG, skillEvolution: false });

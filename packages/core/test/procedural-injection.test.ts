@@ -6,7 +6,7 @@ import { getDb, closeDb } from "../src/db.js";
 
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 
-// sharpwave-core's writeNode carries a near-duplicate gate (trigram-Jaccard
+// xanima-core's writeNode carries a near-duplicate gate (trigram-Jaccard
 // 0.85, default on) that clawbrain-v4's writeNode did not. Several fixtures below
 // deliberately reuse identical content to isolate the source/importance/valid_until
 // ranking in getOperationalProcedures — opt out of the gate so they land as

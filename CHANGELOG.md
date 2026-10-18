@@ -2,6 +2,18 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
+## 0.1.0 (Xanima) — unreleased
+
+Rename + belief foundation (design: Xanima phase 1).
+
+- **Rename:** `sharpwave-core` → `xanima-core`, `sharpwave` → `xanima`, `sharpwave-server` → `xanima-server` (all 0.1.0). Old bins (`sharpwave`, `sharpwave-server`) remain as aliases. `XANIMA_*` env vars, with `SHARPWAVE_*` read as deprecated aliases for 0.1.x. Default data dir `~/.xanima`, falling back to `~/.sharpwave` until migrated.
+- **`xanima-server migrate`:** copies `~/.sharpwave` → `~/.xanima` (skips `_backup-*`), migrates and verifies every brain (counts before == after, integrity), rewrites paths in the copied config.json, writes MIGRATED-FROM-SHARPWAVE.json. Never touches the source; refuses a non-empty target or a running service.
+- **Schema v19 (additive):** nodes gain `confidence`, `confidence_score`, `source_type`, `verified_at`, `contradicted_at`, `evidence`, `status`, `status_reason`, `status_changed_at`, `sensitivity`, `review_flagged_at`. Backfill: `legacy` / `medium 0.6`; already-closed rows become `superseded` (if a supersedes edge points at them) or `archived`.
+- **Tools:** `brain_retract` (reason required; history kept; downstream nodes listed), `brain_status` (counts, low-confidence / disputed / flagged, hot conflicts, injection estimate, last sleep summary), `brain_supersede` `reason` + related nodes, `brain_query` `as_of`, `brain_write` `confidence` / `source_type` / `sensitivity` / `evidence`.
+- **Injection:** recall lines carry relative time and a `(?)` low-confidence / `disputed` / `confirm before acting` marker; an optional one-line `[BRAIN: status]` footer when something needs attention.
+- **Sleep:** belief review pass stamps contradictions, flags low-confidence / disputed beliefs for review and exempts them (and retracted/superseded history) from the Deep prune; records a sleep summary. `xanima-server sleep now`.
+- **Flags (BrainConfig, and service config.json `brain`):** `beliefMetadata`, `relativeTimeLabels`, `selfStatus`, `lowConfidenceThreshold`, `sleepBeliefReview`.
+
 ## [Unreleased]
 
 ### Added — system-noise guard + reversible noise review (`engram/skip-heartbeat-noise`)

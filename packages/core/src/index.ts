@@ -1,10 +1,10 @@
 // packages/core/src/index.ts
 //
-// sharpwave-core PUBLIC API BARREL — the only supported surface.
+// xanima-core PUBLIC API BARREL — the only supported surface.
 //
 // Hand-curated re-export of the engine's public symbols. Every name here was
 // copied verbatim from the owning module's `export` declarations. Consumers
-// (`packages/mcp`, `packages/openwave`) import ONLY from `sharpwave-core`.
+// (`packages/mcp`, `packages/openwave`) import ONLY from `xanima-core`.
 //
 // Modules ported in later tasks (context-assembly, awake-replay,
 // proactive-monitor, extraction, episode-lanes, valor, morning, compaction,
@@ -275,3 +275,29 @@ export {
   RETIRED_NODE_META_PREFIX, RETIRED_EPISODE_META_PREFIX,
 } from "./system-noise.js";
 export type { TurnSignals, NoiseVerdict, NoiseOptions, InputProvenanceLike, SystemNoiseSettings } from "./system-noise.js";
+
+// ── Xanima env / data-dir compatibility (0.1.x: SHARPWAVE_* still honoured) ──
+export {
+  envGet, envSet, envDelete, envSnapshot, envRestore,
+  resolveDataDir, defaultDataHome, deprecationWarnOnce, suppressDeprecationWarning,
+  setDeprecationWarningSink, resetDeprecationWarnings,
+  ENV_PREFIX, LEGACY_ENV_PREFIX, DATA_DIR_NAME, LEGACY_DATA_DIR_NAME,
+} from "./env.js";
+
+// ── Xanima 0.1.0 belief foundation ─────────────────────────────────────────
+export {
+  CONFIDENCE_LEVEL_SCORE, DEFAULT_CONFIDENCE_BY_SOURCE, confidenceLevel, parseConfidence,
+  isConfidenceLevel, isSourceType, isSensitivity, inferSourceType,
+  relativeTime, parseAsOf, beliefTag,
+} from "./belief-meta.js";
+export {
+  DOWNSTREAM_EDGE_TYPES, relatedDownstream, formatRelated, retractNode, supersedeNode,
+  queryAsOf, statusAt, verifyNode, computeBrainStatus, formatBrainStatus, statusFooter,
+  runBeliefReviewPass, getSleepSummary, saveSleepSummary, countNodesEdges,
+} from "./beliefs.js";
+export type {
+  RelatedNode, RetractResult, SupersedeOptions, SupersedeResult, SleepSummary, BrainStatus,
+} from "./beliefs.js";
+export { SCHEMA_VERSION, migrateV19 } from "./db.js";
+export { buildStatusFooter } from "./context-assembly.js";
+export { parseBeliefArgs } from "./tools.js";

@@ -1,3 +1,20 @@
+# Xanima (formerly Sharpwave)
+
+> **0.1.0 (pre-release, not published):** the packages are now `xanima-core`,
+> `xanima` (MCP server; `sharpwave` bin kept as an alias) and `xanima-server`
+> (`sharpwave-server` bin alias). `XANIMA_*` env vars replace `SHARPWAVE_*`
+> (old names still work in 0.1.x with a one-time deprecation warning). Data
+> lives in `~/.xanima`; `~/.sharpwave` is used until you run
+> `xanima-server migrate`, which COPIES it (and verifies every brain's counts)
+> and never moves or deletes the old folder. Schema v19 adds belief metadata
+> (confidence, source_type, status, sensitivity, verified/contradicted
+> timestamps, evidence) with an additive migration: existing rows become
+> `source_type=legacy`, `confidence=medium (0.6)`. New tools `brain_retract`
+> and `brain_status`; `brain_supersede` takes a `reason` and returns related
+> nodes to re-check; `brain_query` takes `as_of`. Sleep flags low-confidence
+> and disputed beliefs for review (and keeps them out of the prune).
+> `xanima-server sleep now [--force]` runs one cycle offline. See CHANGELOG.
+
 # Sharpwave
 
 **A long-term memory MCP server for AI agents.** It remembers across sessions,

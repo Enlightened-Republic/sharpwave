@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Registers the "SharpWave Brain Service" Scheduled Task (at logon, restart on
+  Registers the "Xanima Brain Service" Scheduled Task (at logon, restart on
   failure, hidden via a .vbs WScript wrapper). Nothing is started unless you
   pass -StartNow.
 
@@ -15,11 +15,11 @@
     powershell -ExecutionPolicy Bypass -File .\install-task.ps1 -StartNow  # register + start
     powershell -ExecutionPolicy Bypass -File .\install-task.ps1 -WhatIf    # show what would happen
 
-  Uninstall: .\uninstall-task.ps1  (or: Unregister-ScheduledTask -TaskName "SharpWave Brain Service")
+  Uninstall: .\uninstall-task.ps1  (or: Unregister-ScheduledTask -TaskName "Xanima Brain Service")
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-  [string]$TaskName   = "SharpWave Brain Service",
+  [string]$TaskName   = "Xanima Brain Service",
   [string]$NodePath   = "",
   [string]$ServerCli  = "",
   [string]$ConfigPath = (Join-Path $env:USERPROFILE ".sharpwave\service\config.json"),
@@ -37,7 +37,7 @@ if (-not $NodePath) {
 $NodePath = (Resolve-Path $NodePath).Path
 
 $ver = (& $NodePath -p "process.versions.node").Trim()
-if ([int]($ver.Split(".")[0]) -lt 22) { throw "sharpwave-server needs Node >= 22 (found $ver at $NodePath)" }
+if ([int]($ver.Split(".")[0]) -lt 22) { throw "xanima-server needs Node >= 22 (found $ver at $NodePath)" }
 
 if (-not $ServerCli) { $ServerCli = Join-Path $PSScriptRoot "..\..\dist\cli.js" }
 if (-not (Test-Path $ServerCli)) { throw "server CLI not found at $ServerCli - run 'npm run build' in packages/server first" }
@@ -70,7 +70,7 @@ Write-Host "Restart   : the .vbs wrapper restarts node 30 s after a non-zero exi
 
 if ($PSCmdlet.ShouldProcess($TaskName, "Register-ScheduledTask")) {
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-    -Description "SharpWave brain service (MCP over HTTP on 127.0.0.1:18790, plus the tailnet IP only if configured). Hidden via sharpwave-service.vbs." -Force | Out-Null
+    -Description "Xanima brain service (MCP over HTTP on 127.0.0.1:18790, plus the tailnet IP only if configured). Hidden via sharpwave-service.vbs." -Force | Out-Null
   Write-Host "Registered. Not started." -ForegroundColor Green
   if ($StartNow) {
     Start-ScheduledTask -TaskName $TaskName

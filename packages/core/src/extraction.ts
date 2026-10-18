@@ -110,7 +110,7 @@ export async function drainExtractionQueue(
   const CAP = 20 * BATCH;
 
   if (eligible.length > CAP) {
-    log.warn(`[sharpwave] extraction: ${eligible.length - CAP} episode(s) dropped beyond ${CAP}-item cap`);
+    log.warn(`[xanima] extraction: ${eligible.length - CAP} episode(s) dropped beyond ${CAP}-item cap`);
   }
 
   const consumed: Episode[] = [];
@@ -132,7 +132,7 @@ async function extractBatch(
   config: BrainConfig,
   log: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<{ facts: ExtractedFact[]; temporal: TemporalRelation[] }> {
-  // sharpwave-core is single-provider OpenRouter: every direct LLM call in the
+  // xanima-core is single-provider OpenRouter: every direct LLM call in the
   // engine goes through `callOpenRouter` (./llm.ts), shared with
   // consolidation.ts's generative-REM / contradiction path. clawbrain-v4's
   // multi-provider `resolveChatLlmChain([ingestionModel, ...config.llmFallbacks])`
@@ -141,7 +141,7 @@ async function extractBatch(
   // provider chain did before.
   const apiKey = config.openRouterApiKey || process.env["OPENROUTER_API_KEY"] || "";
   if (!apiKey) {
-    log.warn("[sharpwave] extraction: no API key for any chain model — using heuristic fallback");
+    log.warn("[xanima] extraction: no API key for any chain model — using heuristic fallback");
     return { facts: heuristicFallback(episodes), temporal: heuristicTemporal(episodes) };
   }
 
@@ -154,16 +154,16 @@ async function extractBatch(
     // 600 tokens / no temperature key for consolidation's REM path.
     const text = await callOpenRouter(prompt, config.ingestionModel, apiKey, 1500, 0.1);
     if (!text.trim()) {
-      log.warn(`[sharpwave] extraction: empty response from ${config.ingestionModel} — using heuristic fallback`);
+      log.warn(`[xanima] extraction: empty response from ${config.ingestionModel} — using heuristic fallback`);
       return { facts: heuristicFallback(episodes), temporal: heuristicTemporal(episodes) };
     }
     const parsed = parseExtractionPayload(text);
     parsed.facts = guardProceduralFacts(parsed.facts, episodes, log);
 
-    log.info(`[sharpwave] extraction: ${parsed.facts.length} facts + ${parsed.temporal.length} temporal from ${episodes.length} episodes (model=${config.ingestionModel})`);
+    log.info(`[xanima] extraction: ${parsed.facts.length} facts + ${parsed.temporal.length} temporal from ${episodes.length} episodes (model=${config.ingestionModel})`);
     return parsed;
   } catch (err) {
-    log.warn(`[sharpwave] extraction failed on ${config.ingestionModel}: ${String(err)} — using heuristic fallback`);
+    log.warn(`[xanima] extraction failed on ${config.ingestionModel}: ${String(err)} — using heuristic fallback`);
     return { facts: heuristicFallback(episodes), temporal: heuristicTemporal(episodes) };
   }
 }
@@ -188,7 +188,7 @@ export function guardProceduralFacts(
     const flags = f.content.match(/--[a-zA-Z][a-zA-Z0-9-]*/g) ?? [];
     for (const flag of flags) {
       if (!sourceText.includes(flag)) {
-        log.warn(`[sharpwave] PRAXIS guard: dropped procedural "${f.label.slice(0, 60)}" — flag ${flag} not found verbatim in source episodes`);
+        log.warn(`[xanima] PRAXIS guard: dropped procedural "${f.label.slice(0, 60)}" — flag ${flag} not found verbatim in source episodes`);
         return false;
       }
     }

@@ -32,9 +32,9 @@ import { buildBootstrapContext, getDreamContext } from "../src/context-assembly.
 import { DEFAULT_CONFIG } from "../src/types.js";
 import type { BrainNode } from "../src/types.js";
 
-// sharpwave-core's db.ts does not export a SCHEMA_VERSION symbol — assert against
+// xanima-core's db.ts does not export a SCHEMA_VERSION symbol — assert against
 // the known current migration target (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19; // v19 = Xanima 0.1.0 belief metadata
 
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 function freshSession(): string { return `sess-${randomUUID()}`; }
@@ -354,7 +354,7 @@ describe("Scenario 5 — Bootstrap auto-injection (brain pre-loads agent at sess
 
     const ctx = await buildBootstrapContext(id, session, DEFAULT_CONFIG);
 
-    expect(ctx).toContain("[SharpWave");
+    expect(ctx).toContain("[Xanima");
     closeDb(id);
   });
 
@@ -679,7 +679,7 @@ describe("Scenario 9 — Working memory capacity (Miller's 7±2 slots)", () => {
 
 describe("Scenario 10 — Hallucination resistance (no false connections, null on unknown)", () => {
   // NOTE (Step G): clawbrain-v4's "resolveEntity returns null for unknown mention"
-  // case was dropped — sharpwave-core's entity-resolution.ts exposes
+  // case was dropped — xanima-core's entity-resolution.ts exposes
   // findNearDuplicates / deduplicateExisting / mergeCoreferentNodes but no
   // `resolveEntity` mention-linker. The hallucination-resistance intent is still
   // covered by the empty-seeds and no-false-edge cases below.

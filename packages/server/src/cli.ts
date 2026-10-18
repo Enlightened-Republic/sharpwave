@@ -1,22 +1,24 @@
-// packages/server/src/cli.ts — `sharpwave-server` admin CLI.
+// packages/server/src/cli.ts — `xanima-server` admin CLI.
 //
-//   sharpwave-server serve        [--config f] [--root d] [--port n] [--tailnet-ip ip|none]... [--log-file f] [--no-sleep] [--no-backup]
-//   sharpwave-server token mint   --agent <id> [--scopes read,write] [--label txt] [--json]
-//   sharpwave-server token list   [--json]
-//   sharpwave-server token revoke <tokenId>
-//   sharpwave-server backup now   [--keep n] [--brain name]... [--no-offsite]
-//   sharpwave-server backup keygen [--key-file f] [--force]
-//   sharpwave-server backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest]
-//   sharpwave-server brain adopt  --agent <id> --from <brain.db|dir> [--mode copy|move] [--dry-run] [--force] [--backfill-writer legacy|<id>] [--json]
-//   sharpwave-server noise scan     --agent <id> [--out base] [--include-retired] [--json]
-//   sharpwave-server noise check    --agent <id> --query <text> [--limit 10] [--json]
-//   sharpwave-server noise retire   --agent <id> --ids-file <reviewed.csv|json|txt> [--dry-run] [--json]
-//   sharpwave-server noise unretire --agent <id> (--batch <id> | --ids-file <f> | --all) [--dry-run] [--json]
-//   sharpwave-server noise status   --agent <id> [--json]
-//   sharpwave-server version
+//   xanima-server serve        [--config f] [--root d] [--port n] [--tailnet-ip ip|none]... [--log-file f] [--no-sleep] [--no-backup]
+//   xanima-server token mint   --agent <id> [--scopes read,write] [--label txt] [--json]
+//   xanima-server token list   [--json]
+//   xanima-server token revoke <tokenId>
+//   xanima-server backup now   [--keep n] [--brain name]... [--no-offsite]
+//   xanima-server backup keygen [--key-file f] [--force]
+//   xanima-server backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest]
+//   xanima-server brain adopt  --agent <id> --from <brain.db|dir> [--mode copy|move] [--dry-run] [--force] [--backfill-writer legacy|<id>] [--json]
+//   xanima-server migrate [--from ~/.sharpwave] [--to ~/.xanima] [--dry-run] [--include-backups] [--json]
+//   xanima-server sleep now [--force] [--brain name ...] [--json]
+//   xanima-server noise scan     --agent <id> [--out base] [--include-retired] [--json]
+//   xanima-server noise check    --agent <id> --query <text> [--limit 10] [--json]
+//   xanima-server noise retire   --agent <id> --ids-file <reviewed.csv|json|txt> [--dry-run] [--json]
+//   xanima-server noise unretire --agent <id> (--batch <id> | --ids-file <f> | --all) [--dry-run] [--json]
+//   xanima-server noise status   --agent <id> [--json]
+//   xanima-server version
 //
 // Common: --config <file> (default <root>/config.json if present), --root <dir>
-// (default ~/.sharpwave/service), --tokens-file <file>.
+// (default ~/.xanima/service, or ~/.sharpwave/service before migrating), --tokens-file <file>.
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -30,6 +32,10 @@ import { servicePortInUse, restoreBackup } from "./restore.js";
 import { defaultKeyFile } from "./config.js";
 import { offsiteOk } from "./offsite.js";
 import { adoptBrain, formatAdoptResult, type AdoptMode } from "./adopt.js";
+import { migrateDataDir, formatMigrateResult } from "./migrate.js";
+import { SleepRunner } from "./sleep.js";
+import { BrainManager } from "./brains.js";
+import { DEFAULT_CONFIG, suppressDeprecationWarning } from "xanima-core";
 import { defaultReportBase, ftsProbe, parseSelection, registryStatus, retireItems, scanBrainFile, unretireItems, writeReport } from "./noise.js";
 import { BrainService } from "./service.js";
 import { VERSION } from "./version.js";
@@ -40,7 +46,7 @@ interface Parsed {
   flags: Map<string, string[]>;
 }
 
-const BOOL_FLAGS = new Set(["json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
+const BOOL_FLAGS = new Set(["include-backups", "skip-port-check", "json", "no-sleep", "no-backup", "help", "h", "allow-reset", "no-offsite", "force", "require-manifest", "dry-run", "include-retired", "all"]);
 
 function parse(argv: string[]): Parsed {
   const out: Parsed = { _: [], flags: new Map() };
@@ -95,38 +101,46 @@ function buildConfig(p: Parsed): ServiceConfig {
   });
 }
 
-const HELP = `sharpwave-server ${VERSION} — SharpWave brain service
+const HELP = `xanima-server ${VERSION} — Xanima brain service
 
 Usage:
-  sharpwave-server serve [--config file] [--root dir] [--port 18790] [--tailnet-ip 100.x.y.z|none] [--log-file f] [--no-sleep] [--no-backup]
-  sharpwave-server token mint --agent <id> [--scopes read,write[,shared-write][,admin|provision]] [--label text] [--json]
-  sharpwave-server token list [--json]
-  sharpwave-server token revoke <tokenId>
-  sharpwave-server backup now [--keep N] [--brain name ...] [--no-offsite]
-  sharpwave-server backup keygen [--key-file f] [--force]
-  sharpwave-server backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest]
-  sharpwave-server brain adopt --agent <id> --from <brain.db or its folder> [--mode copy|move] [--dry-run] [--force]
+  xanima-server serve [--config file] [--root dir] [--port 18790] [--tailnet-ip 100.x.y.z|none] [--log-file f] [--no-sleep] [--no-backup]
+  xanima-server token mint --agent <id> [--scopes read,write[,shared-write][,admin|provision]] [--label text] [--json]
+  xanima-server token list [--json]
+  xanima-server token revoke <tokenId>
+  xanima-server backup now [--keep N] [--brain name ...] [--no-offsite]
+  xanima-server backup keygen [--key-file f] [--force]
+  xanima-server backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest]
+  xanima-server brain adopt --agent <id> --from <brain.db or its folder> [--mode copy|move] [--dry-run] [--force]
                                [--backfill-writer legacy|<writer-id>] [--json]
       Make an existing brain.db the agent's private brain (<root>/brains/<id>/brain.db). The service must be stopped.
-      Pre-adopt backup (VACUUM INTO, WAL included) + sha256, migrate via sharpwave-core, verify integrity/counts/schema.
+      Pre-adopt backup (VACUUM INTO, WAL included) + sha256, migrate via xanima-core, verify integrity/counts/schema.
       copy (default) never touches the source; --force moves an existing non-empty target aside (never deletes).
-  sharpwave-server noise scan --agent <id> [--out <report base path>] [--include-retired] [--json]
+  xanima-server migrate [--from ~/.sharpwave] [--to ~/.xanima] [--dry-run] [--include-backups] [--skip-port-check] [--json]
+      COPY the SharpWave data folder to the Xanima one (never moves or deletes the old folder; refuses a non-empty
+      target and a running service). Every brain.db in the copy is migrated to the current schema and verified
+      (node/edge/episode counts before == after, integrity ok); config.json paths are pointed at the new folder.
+      _backup-* folders are skipped unless --include-backups. Report: <to>/MIGRATED-FROM-SHARPWAVE.json.
+  xanima-server sleep now [--force] [--brain name ...] [--json]
+      Run one sleep/consolidation cycle now (service must be stopped). --force ignores the episode gate.
+  xanima-server noise scan --agent <id> [--out <report base path>] [--include-retired] [--json]
       Read-only (safe while the service runs). Lists system-noise candidates (NO_REPLY / HEARTBEAT_OK triage,
       heartbeat/exec/cron wake markers, nodes minted from such episodes, triage phrasing) and writes
       <root>/noise-reports/<id>-<UTC>.csv + .json. High-confidence rows say action=retire, others action=review.
-  sharpwave-server noise check --agent <id> --query <text> [--limit 10] [--json]
+  xanima-server noise check --agent <id> --query <text> [--limit 10] [--json]
       Read-only FTS probe: top hits for the query among current (non-retired) nodes, flagged if candidates.
-  sharpwave-server noise retire --agent <id> --ids-file <reviewed.csv|.json|.txt> [--dry-run] [--json]
+  xanima-server noise retire --agent <id> --ids-file <reviewed.csv|.json|.txt> [--dry-run] [--json]
       Service must be stopped. Backup first (VACUUM INTO -> <backups>/<id>/noise-retire/), then soft-retire ONLY
       rows left at action=retire: nodes get valid_until=now (hidden from recall), episodes importance=0. Prior
       values are kept in meta_kv (retired:node:/retired:episode:) for unretire. Nothing is deleted. Audit-logged.
-  sharpwave-server noise unretire --agent <id> (--batch <noise-...> | --ids-file <f> | --all) [--dry-run] [--json]
+  xanima-server noise unretire --agent <id> (--batch <noise-...> | --ids-file <f> | --all) [--dry-run] [--json]
       Service must be stopped. Backup first, then restore the recorded prior values exactly.
-  sharpwave-server noise status --agent <id> [--json]
-  sharpwave-server version
+  xanima-server noise status --agent <id> [--json]
+  xanima-server version
 
 Binds 127.0.0.1 always, plus the tailnet IP (default 100.121.136.3). Never 0.0.0.0/::.
-Root defaults to ~/.sharpwave/service (brains/, backups/, audit/, tokens.json, config.json).`;
+Root defaults to ~/.xanima/service (brains/, backups/, audit/, tokens.json, config.json); ~/.sharpwave/service
+is used if ~/.xanima does not exist yet (run: xanima-server migrate). XANIMA_SERVICE_ROOT overrides.`;
 
 async function main(argv: string[]): Promise<number> {
   const p = parse(argv);
@@ -140,6 +154,8 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  // `migrate` IS the fix for the old-data-folder warning; don't print it while migrating.
+  if (cmd === "migrate") suppressDeprecationWarning("datadir");
   const cfg = buildConfig(p);
 
   if (cmd === "serve") {
@@ -169,7 +185,7 @@ async function main(argv: string[]): Promise<number> {
           `Minted token ${entry.id} for agent "${entry.agentId}" scopes=${entry.scopes.join(",")}\n` +
           `Only its sha256 hash was stored in ${cfg.tokensFile}.\n\n` +
           `  ${token}\n\n` +
-          `This is the ONLY time the token is shown. Store it now (e.g. SHARPWAVE_TOKEN or a token file).\n`,
+          `This is the ONLY time the token is shown. Store it now (e.g. XANIMA_TOKEN or a token file).\n`,
         );
       }
       return 0;
@@ -279,6 +295,39 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  if (cmd === "migrate") {
+    const { homedir } = await import("node:os");
+    const from = expandHome(one(p, "from") ?? join(homedir(), ".sharpwave"));
+    const to = expandHome(one(p, "to") ?? join(homedir(), ".xanima"));
+    if (!bool(p, "skip-port-check") && !bool(p, "dry-run") && await servicePortInUse(cfg.port)) {
+      throw new Error(`a brain service is listening on 127.0.0.1:${cfg.port} — stop it (and the gateway) before migrating, so the copy is consistent`);
+    }
+    const r = migrateDataDir({
+      from, to, dryRun: bool(p, "dry-run"), includeBackups: bool(p, "include-backups"),
+      log: bool(p, "json") ? undefined : (m) => process.stderr.write(m + "\n"),
+    });
+    process.stdout.write((bool(p, "json") ? JSON.stringify(r, null, 2) : formatMigrateResult(r)) + "\n");
+    return r.ok ? 0 : 1;
+  }
+
+  if (cmd === "sleep") {
+    if (sub !== "now") throw new Error(`unknown sleep subcommand "${sub ?? ""}" (now)`);
+    if (await servicePortInUse(cfg.port)) throw new Error(`the brain service is listening on 127.0.0.1:${cfg.port} — stop it first (sleep now writes the brain files directly)`);
+    const log = createLogger(cfg.logFile, true);
+    const brainCfg = { ...DEFAULT_CONFIG, ...(cfg.brain ?? {}) };
+    const mgr = new BrainManager(brainsDir(cfg), 1);
+    mgr.init();
+    const only = many(p, "brain");
+    try {
+      const runner = new SleepRunner(mgr, brainCfg, cfg.sleep.budgetMs, cfg.sleep.respectGate, log, new AuditLog(cfg.auditFile), only.length ? only : undefined);
+      const r = await runner.runCycle({ force: bool(p, "force") });
+      process.stdout.write((bool(p, "json") ? JSON.stringify(r, null, 2) : `sleep: ran=[${r.ran.join(",")}] gated=[${r.skippedGate.join(",")}] failed=${r.failed.length} in ${r.elapsedMs}ms`) + "\n");
+      return r.failed.length ? 1 : 0;
+    } finally {
+      await mgr.close();
+    }
+  }
+
   if (cmd === "noise") {
     const agent = one(p, "agent");
     if (!agent) throw new Error("noise needs --agent <id>");
@@ -336,7 +385,7 @@ async function main(argv: string[]): Promise<number> {
           ...(r.backup ? [`backup   ${r.backup}`, `manifest ${r.manifest}`] : []),
           ...(sel.ignored ? [`rows not marked action=retire (left alone): ${sel.ignored}`] : []),
           ...r.skipped.map((s) => `skipped ${s.id}: ${s.reason}`),
-          ...(dryRun ? [] : [`undo: sharpwave-server noise unretire --agent ${agent} --batch ${r.batch}`]),
+          ...(dryRun ? [] : [`undo: xanima-server noise unretire --agent ${agent} --batch ${r.batch}`]),
         ].join("\n"));
         return 0;
       }
@@ -352,13 +401,13 @@ async function main(argv: string[]): Promise<number> {
     throw new Error(`unknown noise subcommand "${sub ?? ""}" (scan | check | retire | unretire | status)`);
   }
 
-  throw new Error(`unknown command "${cmd}" — run sharpwave-server help`);
+  throw new Error(`unknown command "${cmd}" — run xanima-server help`);
 }
 
 main(process.argv.slice(2)).then(
   (code) => { if (code !== undefined) process.exitCode = code; },
   (e) => {
-    const msg = `sharpwave-server: ${e instanceof Error ? e.message : String(e)}`;
+    const msg = `xanima-server: ${e instanceof Error ? e.message : String(e)}`;
     process.stderr.write(msg + "\n");
     // Under the hidden Windows task there is no console, so stderr is lost:
     // also append fatal startup errors (bad config, port in use, ...) to the
@@ -370,7 +419,7 @@ main(process.argv.slice(2)).then(
       try {
         const f = expandHome(logFile);
         mkdirSync(dirname(f), { recursive: true });
-        appendFileSync(f, `${new Date().toISOString()} [sharpwave-server] fatal ${msg}\n`);
+        appendFileSync(f, `${new Date().toISOString()} [xanima-server] fatal ${msg}\n`);
       } catch { /* best effort */ }
     }
     process.exitCode = 1;

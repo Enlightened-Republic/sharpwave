@@ -1,5 +1,5 @@
 {
-  "name": "sharpwave-monorepo",
+  "name": "xanima-monorepo",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -9,13 +9,13 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "npm run build --workspace sharpwave-core && npm run build --workspace sharpwave && npm run build --workspace sharpwave-server",
-    "test": "npm run build --workspace sharpwave-core && npm run test --workspace sharpwave-core",
-    "test:mcp": "npm run build --workspace sharpwave-core && npm run build --workspace sharpwave && npm run test:mcp --workspace sharpwave",
+    "build": "npm run build --workspace xanima-core && npm run build --workspace xanima && npm run build --workspace xanima-server",
+    "test": "npm run build --workspace xanima-core && npm run test --workspace xanima-core",
+    "test:mcp": "npm run build --workspace xanima-core && npm run build --workspace xanima && npm run test:mcp --workspace xanima",
     "test:all": "npm run test && npm run test:mcp && npm run test:server",
     "test:pack": "node packages/mcp/test/pack-smoke.mjs",
     "typecheck": "tsc -b packages/core packages/mcp packages/server",
-    "test:server": "npm run build --workspace sharpwave-core && npm run test --workspace sharpwave-server"
+    "test:server": "npm run build --workspace xanima-core && npm run test --workspace xanima-server"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

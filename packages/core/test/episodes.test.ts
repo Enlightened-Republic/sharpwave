@@ -44,7 +44,7 @@ describe("episodes", () => {
   });
 
   // NOTE (Task 3): clawbrain-v4 floored short USER turns at 0.3 (2026-07-30
-  // recap fix). sharpwave-core's scoreImportance floors *all* short content
+  // recap fix). xanima-core's scoreImportance floors *all* short content
   // (<30 chars) at 0.2 regardless of role — the role-aware 0.3 floor was not
   // ported. The "short USER content = 0.3" case was removed rather than left
   // failing. If that floor is later ported, re-add it from clawbrain-v4.
@@ -82,7 +82,7 @@ describe("episodes", () => {
   });
 
   // NOTE (Task 3): clawbrain-v4's getEpisodesSince took a 4th `excludeSessionId`
-  // arg (the 2026-07-30 "echo of me" recap fix). sharpwave-core's signature is
+  // arg (the 2026-07-30 "echo of me" recap fix). xanima-core's signature is
   // `getEpisodesSince(agentId, sinceMs, minImportance = 0.2)` — no session
   // exclusion. The exclusion-specific cases were removed; the two below cover the
   // real 3-arg contract (since filter + importance floor). If `excludeSessionId`

@@ -34,7 +34,7 @@ import { join } from "node:path";
 import {
   isSilentReplyText, isInternalWakeText, isSystemNoiseEpisode, isHeartbeatSessionKey,
   RETIRED_NODE_META_PREFIX, RETIRED_EPISODE_META_PREFIX,
-} from "sharpwave-core";
+} from "xanima-core";
 
 import { snapshotBrain, snapshotStamp } from "./backup.js";
 import type { AuditLog } from "./audit.js";
@@ -363,6 +363,8 @@ export function retireItems(sel: Selection, o: RetireOptions): RetireResult {
       const by = o.by ?? "admin:cli";
       const reason = o.reason ?? "system-noise";
       const setNode = w.prepare("UPDATE nodes SET valid_until = ?, ripple_count = 0, eligibility_trace = 0 WHERE id = ?");
+      // Schema >= 19: keep the belief status in step (retired noise = archived, reason recorded).
+      const setStatus = hasStatusColumn(w) ? w.prepare("UPDATE nodes SET status = 'archived', status_reason = ?, status_changed_at = ? WHERE id = ? AND status = 'active'") : null;
       const setEp = w.prepare("UPDATE episodes SET importance = 0, llm_extracted = 1 WHERE id = ?");
       const reg = w.prepare("INSERT INTO meta_kv (key, value) VALUES (?, ?)");
       w.transaction(() => {
@@ -370,6 +372,7 @@ export function retireItems(sel: Selection, o: RetireOptions): RetireResult {
           if (p.kind === "node") {
             const prev: NodePrev = { valid_until: p.row.valid_until, ripple_count: p.row.ripple_count, eligibility_trace: p.row.eligibility_trace };
             setNode.run(p.row.valid_until && p.row.valid_until < t ? p.row.valid_until : t, p.row.id);
+            setStatus?.run(`system-noise: ${reason}`, t, p.row.id);
             reg.run(RETIRED_NODE_META_PREFIX + p.row.id, JSON.stringify({ kind: "node", batch, retiredAt: t, by, reason, prev } satisfies RegistryRow));
           } else {
             const prev: EpisodePrev = { importance: p.row.importance, llm_extracted: p.row.llm_extracted };
@@ -432,6 +435,8 @@ export function unretireItems(o: UnretireOptions): UnretireResult {
   const w = openWrite(o.dbPath);
   try {
     const setNode = w.prepare("UPDATE nodes SET valid_until = ?, ripple_count = ?, eligibility_trace = ? WHERE id = ?");
+    // Schema >= 19: a node that is live again is active again (retired noise and the v19 backfill mark it archived).
+    const reactivate = hasStatusColumn(w) ? w.prepare("UPDATE nodes SET status = 'active', status_reason = NULL, status_changed_at = ? WHERE id = ? AND status = 'archived' AND (valid_until IS NULL OR valid_until > ?)") : null;
     const setEp = w.prepare("UPDATE episodes SET importance = ?, llm_extracted = ? WHERE id = ?");
     const del = w.prepare("DELETE FROM meta_kv WHERE key = ?"); // registry row only — never a memory
     w.transaction(() => {
@@ -439,6 +444,8 @@ export function unretireItems(o: UnretireOptions): UnretireResult {
         if (p.row.kind === "node") {
           const prev = p.row.prev as NodePrev;
           setNode.run(prev.valid_until ?? null, prev.ripple_count ?? 0, prev.eligibility_trace ?? 0, p.id);
+          const ts = Date.now();
+          reactivate?.run(ts, p.id, ts);
         } else {
           const prev = p.row.prev as EpisodePrev;
           setEp.run(prev.importance, prev.llm_extracted, p.id);
@@ -488,5 +495,13 @@ export function ftsProbe(dbPath: string, query: string, limit = 10): Array<{ id:
     return rows.map((r) => ({ id: r.id, type: r.type, preview: preview(r.content ?? ""), retired: retired.has(r.id) }));
   } finally {
     db.close();
+  }
+}
+
+function hasStatusColumn(db: Database.Database): boolean {
+  try {
+    return (db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('nodes') WHERE name = 'status'").get() as { n: number }).n > 0;
+  } catch {
+    return false;
   }
 }

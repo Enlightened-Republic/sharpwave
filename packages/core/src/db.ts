@@ -1,8 +1,8 @@
+import { envGet, resolveDataDir } from "./env.js";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { executeWithWalRetrySync } from "./wal-retry.js";
 import { bumpCounter, logObservabilityEvent } from "./observability.js";
 
@@ -15,7 +15,7 @@ let _writeCount = 0;
 // Default threshold matches the Python reference (every 100 writes). Operators
 // can override via SHARPWAVE_FTS_OPTIMIZE_EVERY.
 const _ftsOptimizeEvery = (() => {
-  const raw = process.env["SHARPWAVE_FTS_OPTIMIZE_EVERY"];
+  const raw = envGet("FTS_OPTIMIZE_EVERY");
   const n = raw ? parseInt(raw, 10) : 100;
   return Number.isFinite(n) && n > 0 ? n : 100;
 })();
@@ -128,10 +128,9 @@ export function getFtsOptimizeEvery(): number {
 }
 
 function resolveDbPath(agentId: string): string {
-  const explicit = process.env["SHARPWAVE_DB_PATH"];
+  const explicit = envGet("DB_PATH");
   if (explicit) return explicit;
-  const dataDir = process.env["SHARPWAVE_DATA_DIR"]
-    ?? join(homedir(), ".sharpwave");
+  const dataDir = resolveDataDir();
   return join(dataDir, agentId, "brain.db");
 }
 
@@ -157,7 +156,7 @@ export function resolveBusyTimeoutMs(override?: number): number {
     return Math.min(Math.floor(n), MAX_BUSY_TIMEOUT_MS);
   };
   return pick(override)
-    ?? pick(process.env["SHARPWAVE_BUSY_TIMEOUT_MS"])
+    ?? pick(envGet("BUSY_TIMEOUT_MS"))
     ?? DEFAULT_BUSY_TIMEOUT_MS;
 }
 
@@ -395,8 +394,52 @@ function initSchema(db: Database.Database): void {
   }
 }
 
+/** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata). */
+export const SCHEMA_VERSION = 19;
+
+/**
+ * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
+ * defaults is O(1) in SQLite: existing rows read the default, nothing is
+ * rewritten), so node/edge/episode counts never change. Backfill semantics:
+ *   • source_type   'legacy'  (origin unknown — written before Xanima)
+ *   • confidence    'medium' / confidence_score 0.6
+ *   • status        'active', except nodes that were already closed
+ *                   (valid_until in the past): 'superseded' when a supersedes
+ *                   edge points at them, else 'archived' (e.g. noise-retired).
+ *                   This is the only UPDATE and it touches closed rows only.
+ *   • sensitivity   'normal'
+ * Idempotent: safe to re-run (every step swallows "duplicate column").
+ * Exported so `xanima-server migrate` and tests can call it directly.
+ */
+export function migrateV19(db: Database.Database): void {
+  const add = (sql: string) => { try { db.exec(sql); } catch { /* already exists */ } };
+  add("ALTER TABLE nodes ADD COLUMN confidence TEXT NOT NULL DEFAULT 'medium'");
+  add("ALTER TABLE nodes ADD COLUMN confidence_score REAL NOT NULL DEFAULT 0.6");
+  add("ALTER TABLE nodes ADD COLUMN source_type TEXT NOT NULL DEFAULT 'legacy'");
+  add("ALTER TABLE nodes ADD COLUMN verified_at INTEGER");
+  add("ALTER TABLE nodes ADD COLUMN contradicted_at INTEGER");
+  add("ALTER TABLE nodes ADD COLUMN evidence TEXT");
+  add("ALTER TABLE nodes ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+  add("ALTER TABLE nodes ADD COLUMN status_reason TEXT");
+  add("ALTER TABLE nodes ADD COLUMN status_changed_at INTEGER");
+  add("ALTER TABLE nodes ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'normal'");
+  add("ALTER TABLE nodes ADD COLUMN review_flagged_at INTEGER");
+  add("CREATE INDEX IF NOT EXISTS nodes_status ON nodes(status)");
+  add("CREATE INDEX IF NOT EXISTS nodes_review ON nodes(review_flagged_at) WHERE review_flagged_at IS NOT NULL");
+  try {
+    db.prepare(`
+      UPDATE nodes SET
+        status = CASE WHEN EXISTS (
+            SELECT 1 FROM edges e WHERE e.to_id = nodes.id AND e.type = 'supersedes'
+          ) THEN 'superseded' ELSE 'archived' END,
+        status_changed_at = valid_until
+      WHERE status = 'active' AND valid_until IS NOT NULL AND valid_until <= ?
+    `).run(Date.now());
+  } catch { /* edges table missing on a degenerate DB — leave active */ }
+}
+
 function runMigrations(db: Database.Database): void {
-  const TARGET = 18;
+  const TARGET = SCHEMA_VERSION;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
   const current = row?.version ?? 0;
 
@@ -666,6 +709,10 @@ function runMigrations(db: Database.Database): void {
     try { db.exec("ALTER TABLE episodes ADD COLUMN writer_agent_id TEXT"); } catch { /* already exists */ }
     try { db.exec("ALTER TABLE edges ADD COLUMN writer_agent_id TEXT"); } catch { /* already exists */ }
     try { db.exec("CREATE INDEX IF NOT EXISTS nodes_writer_agent ON nodes(writer_agent_id)"); } catch { /* ok */ }
+  }
+
+  if (current < 19) {
+    migrateV19(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers
