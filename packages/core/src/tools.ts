@@ -23,6 +23,7 @@
 // would create an import cycle.
 
 import { randomUUID } from "node:crypto";
+import { CONTINUITY_TOOL_DEFS, CONTINUITY_TOOL_NAMES, dispatchContinuityTool } from "./continuity-tools.js";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -326,6 +327,9 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
   },
 };
 
+// Xanima 0.2.0 decision ledger + goals (appended; order of the older tools unchanged).
+Object.assign(BRAIN_TOOL_DEFS, CONTINUITY_TOOL_DEFS);
+
 /**
  * The 11 tools `packages/mcp` publishes, in the exact order its `TOOLS` array
  * had them. The published order is part of the frozen surface — do not sort.
@@ -344,6 +348,7 @@ export const MCP_TOOL_NAMES: string[] = [
   "brain_reset",
   "brain_retract",
   "brain_status",
+  ...CONTINUITY_TOOL_NAMES,
 ];
 
 /** Everything the openwave plugin exposes: all 16. */
@@ -900,7 +905,10 @@ export async function dispatchBrainTool(
       }
     }
 
-    default:
+    default: {
+      const c = dispatchContinuityTool(name, agentId, args, config);
+      if (c) return c;
+    }
       // Text matches base sharpwave@0.4.0 (77bc427:src/index.ts), which returned
       // err("unknown tool: <name>") = "Error: unknown tool: <name>".
       return { text: `Error: unknown tool: ${name}`, isError: true };

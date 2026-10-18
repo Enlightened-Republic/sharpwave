@@ -394,8 +394,8 @@ function initSchema(db: Database.Database): void {
   }
 }
 
-/** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata). */
-export const SCHEMA_VERSION = 19;
+/** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
+export const SCHEMA_VERSION = 21;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -436,6 +436,135 @@ export function migrateV19(db: Database.Database): void {
       WHERE status = 'active' AND valid_until IS NOT NULL AND valid_until <= ?
     `).run(Date.now());
   } catch { /* edges table missing on a degenerate DB — leave active */ }
+}
+
+/**
+ * v20 — Xanima 0.2.0 decision ledger + goals/drift. New tables only
+ * (CREATE TABLE IF NOT EXISTS); nodes/edges/episodes are never touched, so
+ * their counts cannot change. Existing `goal` nodes that are still active get
+ * a goals row (version 1, priority 3) with tracked = 0: they keep showing in
+ * the header as before but are not drift-checked until the agent (or Hailey)
+ * opts them in with brain_update_goal action "track". Idempotent.
+ */
+export function migrateV20(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS decisions (
+      node_id              TEXT PRIMARY KEY,
+      context              TEXT NOT NULL,
+      goal_id              TEXT,
+      options_json         TEXT NOT NULL DEFAULT '[]',
+      chosen               TEXT NOT NULL,
+      rationale            TEXT,
+      predicted_outcome    TEXT,
+      predicted_confidence REAL,
+      outcome              TEXT,
+      outcome_status       TEXT,
+      outcome_at           INTEGER,
+      lesson               TEXT,
+      lesson_node_id       TEXT,
+      merged_into          TEXT,
+      merge_count          INTEGER NOT NULL DEFAULT 1,
+      auto_extracted       INTEGER NOT NULL DEFAULT 0,
+      created_at           INTEGER NOT NULL,
+      updated_at           INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS decisions_goal ON decisions(goal_id);
+    CREATE INDEX IF NOT EXISTS decisions_created ON decisions(created_at);
+    CREATE TABLE IF NOT EXISTS goals (
+      node_id           TEXT PRIMARY KEY,
+      lineage_id        TEXT NOT NULL,
+      version           INTEGER NOT NULL,
+      title             TEXT NOT NULL,
+      priority          INTEGER NOT NULL DEFAULT 3,
+      status            TEXT NOT NULL DEFAULT 'active',
+      success_criteria  TEXT,
+      keywords_json     TEXT NOT NULL DEFAULT '[]',
+      tracked           INTEGER NOT NULL DEFAULT 1,
+      last_checked_at   INTEGER,
+      last_progress_at  INTEGER,
+      alignment_summary TEXT,
+      drift_kind        TEXT,
+      drift_reason      TEXT,
+      drift_at          INTEGER,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS goals_lineage ON goals(lineage_id, version);
+    CREATE INDEX IF NOT EXISTS goals_status ON goals(status);
+    CREATE TABLE IF NOT EXISTS goal_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      lineage_id  TEXT NOT NULL,
+      version     INTEGER NOT NULL,
+      node_id     TEXT NOT NULL,
+      at          INTEGER NOT NULL,
+      action      TEXT NOT NULL,
+      change_json TEXT,
+      reason      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS goal_events_lineage ON goal_events(lineage_id, at);
+    CREATE TABLE IF NOT EXISTS goal_triggers (
+      id            TEXT PRIMARY KEY,
+      lineage_id    TEXT NOT NULL,
+      kind          TEXT NOT NULL,
+      spec_json     TEXT NOT NULL,
+      next_at       INTEGER,
+      cooldown_ms   INTEGER NOT NULL DEFAULT 21600000,
+      last_fired_at INTEGER,
+      fire_count    INTEGER NOT NULL DEFAULT 0,
+      enabled       INTEGER NOT NULL DEFAULT 1,
+      created_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS goal_triggers_lineage ON goal_triggers(lineage_id);
+    CREATE TABLE IF NOT EXISTS alignment_notes (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at       INTEGER NOT NULL,
+      text             TEXT NOT NULL,
+      lineage_ids_json TEXT NOT NULL DEFAULT '[]',
+      delivered_at     INTEGER,
+      superseded_at    INTEGER
+    );
+  `);
+  try {
+    const now = Date.now();
+    const statusCol = (db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>).some((c) => c.name === "status");
+    const rows = db.prepare(`SELECT id, label, created_at FROM nodes WHERE type = 'goal' AND (valid_until IS NULL OR valid_until > ?)${statusCol ? " AND status = 'active'" : ""}
+                              AND id NOT IN (SELECT node_id FROM goals)`).all(now) as Array<{ id: string; label: string; created_at: number }>;
+    const ins = db.prepare(`INSERT OR IGNORE INTO goals (node_id, lineage_id, version, title, priority, status, keywords_json, tracked, created_at, updated_at)
+                            VALUES (?, ?, 1, ?, 3, 'active', '[]', 0, ?, ?)`);
+    const ev = db.prepare(`INSERT INTO goal_events (lineage_id, version, node_id, at, action, reason) VALUES (?, 1, ?, ?, 'backfill', 'existing goal node (pre-0.2.0), not drift-checked until tracked')`);
+    db.transaction(() => { for (const r of rows) { ins.run(r.id, r.id, r.label, r.created_at ?? now, now); ev.run(r.id, r.id, now); } })();
+  } catch { /* nodes table missing on a degenerate DB */ }
+}
+
+/**
+ * v21 (Xanima 0.2.0 hardening, additive):
+ *   decisions.draft_status ('pending' | 'confirmed' | 'expired' for auto-extracted drafts, NULL otherwise), confirmed_at, expired_at
+ *   alignment_notes.offered_at / offered_count (offered ≠ delivered; delivered only on a real reply)
+ *   lesson_merges: history of lessons merged into an existing skill instead of a new one
+ */
+export function migrateV21(db: Database.Database): void {
+  const add = (t: string, c: string) => { try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* already exists */ } };
+  add("decisions", "draft_status TEXT");
+  add("decisions", "confirmed_at INTEGER");
+  add("decisions", "expired_at INTEGER");
+  add("alignment_notes", "offered_at INTEGER");
+  add("alignment_notes", "offered_count INTEGER NOT NULL DEFAULT 0");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lesson_merges (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      skill_id      TEXT NOT NULL,
+      decision_id   TEXT NOT NULL,
+      lesson        TEXT NOT NULL,
+      similarity    REAL NOT NULL,
+      method        TEXT NOT NULL,
+      confidence_before REAL,
+      confidence_after  REAL,
+      at            INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS lesson_merges_skill ON lesson_merges(skill_id);
+  `);
+  try { db.exec("UPDATE decisions SET draft_status = 'pending' WHERE auto_extracted = 1 AND draft_status IS NULL AND outcome_at IS NULL"); } catch { /* ok */ }
+  try { db.exec("UPDATE alignment_notes SET offered_count = 1, offered_at = delivered_at WHERE delivered_at IS NOT NULL AND offered_count = 0"); } catch { /* ok */ }
 }
 
 function runMigrations(db: Database.Database): void {
@@ -713,6 +842,14 @@ function runMigrations(db: Database.Database): void {
 
   if (current < 19) {
     migrateV19(db);
+  }
+
+  if (current < 20) {
+    migrateV20(db);
+  }
+
+  if (current < 21) {
+    migrateV21(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

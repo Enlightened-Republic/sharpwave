@@ -142,6 +142,7 @@ export function importanceForType(type: NodeType | string): number {
     identity:   0.85,
     goal:       0.80,
     schema:     0.80,
+    decision:   0.70,
     skill:      0.75,
     procedural: 0.75,
     pattern:    0.70,

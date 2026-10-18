@@ -17,6 +17,7 @@ const HALF_LIFE_DAYS: Record<string, number> = {
   emotion:       7,
   procedural:   90,
   schema:      180,
+  decision:     90,
 };
 
 // ── FSRS-6 forgetting model ────────────────────────────────────────────────────
@@ -691,7 +692,14 @@ export function getOperationalProcedures(
 export function getActiveGoals(agentId: string): BrainNode[] {
   const db = getDb(agentId);
   return db.prepare(
-    "SELECT * FROM nodes WHERE type = 'goal' AND retrievability > 0.1 AND (valid_until IS NULL OR valid_until > ?) ORDER BY salience DESC LIMIT 10"
+    // v20: goals with a goals row are filtered by goal status (paused / done /
+    // archived / superseded versions are not "active") and never fade out of
+    // the header; ordered by priority (1 = highest), then salience.
+    `SELECT n.* FROM nodes n LEFT JOIN goals g ON g.node_id = n.id
+      WHERE n.type = 'goal' AND n.status = 'active' AND (n.valid_until IS NULL OR n.valid_until > ?)
+        AND (g.node_id IS NULL OR g.status = 'active')
+        AND (n.retrievability > 0.1 OR g.tracked = 1)
+      ORDER BY COALESCE(g.priority, 3) ASC, n.salience DESC LIMIT 10`
   ).all(Date.now()) as BrainNode[];
 }
 

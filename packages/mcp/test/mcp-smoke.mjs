@@ -123,6 +123,20 @@ const leaked = (t) => /postgres|jwt|thursday/i.test(t);
   check("superseded node id prefix present", !!fullNew && newId.startsWith(fullNew), `${newId} vs ${fullNew}`);
   const statusTxt = text(await call(a, "brain_status", {}));
   check("brain_status reports superseded + injection estimate", /superseded 1/.test(statusTxt) && /injection: ~\d+ tokens/.test(statusTxt), statusTxt.slice(0, 240));
+  // Xanima 0.2.0: decision ledger + goals over MCP
+  check("tools/list has the 0.2.0 decision + goal tools", ["brain_record_decision", "brain_update_decision_outcome", "brain_query_decisions", "brain_set_goal", "brain_update_goal", "brain_list_goals"].every((n) => toolNames.includes(n)), toolNames.join(","));
+  const goalTxt = text(await call(a, "brain_set_goal", { title: "Ship the smoke test", priority: "high" }));
+  const goalId = /Goal set: (\S+)/.exec(goalTxt)?.[1] ?? "";
+  check("brain_set_goal", /P2 \[active\] Ship the smoke test/.test(goalTxt), goalTxt.slice(0, 160));
+  const decTxt = text(await call(a, "brain_record_decision", { context: "smoke runner", chosen: "node --test", options: ["vitest"], goal_id: goalId }));
+  const decId = /decision ([0-9a-f-]{36})/.exec(decTxt)?.[1] ?? "";
+  check("brain_record_decision linked to the goal", !!decId && /advances goal "Ship the smoke test"/.test(decTxt), decTxt.slice(0, 160));
+  const outTxt = text(await call(a, "brain_update_decision_outcome", { decision_id: decId, outcome: "ran in 2s", outcome_status: "matched", lesson: "keep smoke tests dependency-free" }));
+  check("brain_update_decision_outcome logs goal progress", /Progress logged on goal/.test(outTxt), outTxt.slice(0, 160));
+  const supTxt = text(await call(a, "brain_update_goal", { goal_id: goalId, action: "supersede", title: "Ship the smoke test v2", reason: "scope grew" }));
+  check("brain_update_goal supersede keeps history", /v1 → v2/.test(supTxt), supTxt.slice(0, 160));
+  const qd = text(await call(a, "brain_query_decisions", { query: "smoke" }));
+  check("brain_query_decisions", /chose: node --test/.test(qd) && /lesson: keep smoke tests dependency-free/.test(qd), qd.slice(0, 200));
   const badRetract = text(await call(a, "brain_retract", { node_id: "nope", reason: "x" }));
   check("brain_retract unknown id errors", /not found/.test(badRetract), badRetract.slice(0, 80));
 
