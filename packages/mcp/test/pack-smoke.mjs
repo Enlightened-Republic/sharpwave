@@ -105,7 +105,7 @@ try {
 
   const tools = await rpc("tools/list", {});
   const n = tools?.result?.tools?.length ?? 0;
-  check("tools/list returns exactly 19", n === 19, `${n} tools`);
+  check("tools/list returns exactly 32", n === 32, `${n} tools`);
 
   await call("brain_write", { type: "semantic", label: "db", content: "The production database is PostgreSQL 16 on RDS." });
   const hit = text(await call("brain_query", { query: "what database do we use in production?" }));

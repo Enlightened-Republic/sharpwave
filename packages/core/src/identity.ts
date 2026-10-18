@@ -13,7 +13,7 @@
 // it) that the operator can read (`xanima-server identity history`, brain_status, brain_changes
 // topic "identity") and revert (`xanima-server identity revert <version>`, itself a new version).
 //
-// Hailey's rule (Oct 18): identity changes ONLY from the agent's own reflection on its experience and its
+// The rule: identity changes ONLY from the agent's own reflection on its experience and its
 // conversations with its owner — never from outside content. Research / web / tool content goes to knowledge,
 // skills and tools (brain_write), not identity. There is no review queue on this path.
 //

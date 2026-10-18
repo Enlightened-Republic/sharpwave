@@ -443,7 +443,7 @@ export function migrateV19(db: Database.Database): void {
  * (CREATE TABLE IF NOT EXISTS); nodes/edges/episodes are never touched, so
  * their counts cannot change. Existing `goal` nodes that are still active get
  * a goals row (version 1, priority 3) with tracked = 0: they keep showing in
- * the header as before but are not drift-checked until the agent (or Hailey)
+ * the header as before but are not drift-checked until the agent (or the user)
  * opts them in with brain_update_goal action "track". Idempotent.
  */
 export function migrateV20(db: Database.Database): void {
@@ -1032,7 +1032,7 @@ function runMigrations(db: Database.Database): void {
   if (current < 16) {
     // v16 — SIGMA per-node FSRS calibration. Each node accumulates a JSON review
     // history and a stability_sigma multiplier fit from observed vs. FSRS-predicted
-    // stability growth. Sigma drifts away from 1.0 as Marley's per-concept recall
+    // stability growth. Sigma drifts away from 1.0 as the agent's per-concept recall
     // pattern diverges from the population-average FSRS-6 weights.
     try { db.exec("ALTER TABLE nodes ADD COLUMN review_history TEXT"); } catch { /* already exists */ }
     try { db.exec("ALTER TABLE nodes ADD COLUMN stability_sigma REAL NOT NULL DEFAULT 1.0"); } catch { /* already exists */ }

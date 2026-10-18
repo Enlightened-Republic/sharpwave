@@ -42,7 +42,7 @@ const MAX_CANDIDATE_SCAN = 200;
 
 /**
  * Normalize text for shingling: lowercase, strip non-alphanumeric, collapse
- * whitespace. This makes "Hailey's dog" and "Haileys dog" produce the same
+ * whitespace. This makes "Sam's dog" and "Sams dog" produce the same
  * trigrams, which is what we want for near-duplicate detection.
  */
 function normalizeForDedup(text: string): string {

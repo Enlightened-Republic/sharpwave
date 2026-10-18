@@ -157,7 +157,7 @@ function toFsrsQuality(q: number): number {
 // to outliers (single anomalous review doesn't corrupt calibration).
 //
 // Superbrain angle: human memory has population-average forgetting curves. We have
-// per-concept curves — a technical skill Marley uses daily consolidates 2× faster
+// per-concept curves — a technical skill the agent uses daily consolidates 2× faster
 // than FSRS-6 predicts; an infrequently-touched fact consolidates slower. Sigma
 // captures that personal deviation and adjusts future scheduling automatically.
 
