@@ -102,7 +102,9 @@ export function gateWrite(agentId: string, op: QuarantineOp, o: { sourceType?: s
     : (op.op === "write" ? op.type : op.oldType) === "goal" ? "goals" : "identity";
   // Identity / value writes from an untrusted source are HELD even in log mode (nothing stored):
   // log mode used to apply them, which let injected identity text into the brain. Goals stay log-only.
-  const hold = mode === "enforce" || section === "identity";
+  // One switch: identity.holdUntrusted (default true); false = log mode logs them again.
+  const holdIdentity = (o.config as { identity?: { holdUntrusted?: boolean } }).identity?.holdUntrusted !== false;
+  const hold = mode === "enforce" || (section === "identity" && holdIdentity);
   const status = hold ? "pending" : "logged";
   const id = `rv-q${createHash("sha256").update(`${JSON.stringify(op)}|${now}|${Math.random()}`).digest("hex").slice(0, 11)}`;
   db.prepare(`INSERT INTO review_items (id, kind, section, status, package_id, origin_id, local_id, label, base_json, ours_json, theirs_json, markers, reason, flags_json, created_at, resolved_at, resolved_by, resolution_note)

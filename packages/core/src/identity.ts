@@ -13,15 +13,20 @@
 // it) that the operator can read (`xanima-server identity history`, brain_status, brain_changes
 // topic "identity") and revert (`xanima-server identity revert <version>`, itself a new version).
 //
-// Guardrails, in order:
-//   1. shape + size caps (field name, field value, value text, whole identity, reason required)
-//   2. locked fields (config identity.locked, default ["Name"])      → refused
-//   3. provenance: the host plugin attests where the turn came from (attested_provenance). Anything
-//      but the agent's own clean turn (tool / web output in this turn, a non-owner sender, text
-//      echoing earlier tool output), a model-claimed untrusted source_type, or injection-looking
-//      text                                                           → HELD in the review queue
-//      (kind identity_change) whatever the quarantine mode, except quarantine "off". Nothing is stored.
-//   4. rate limit (identity.maxChangesPerDay applied agent changes per rolling 24 h, default 5) → refused
+// Permissive by design: the agent's own changes just apply (with history + revert). Each guardrail is
+// ONE config switch under `identity`:
+//   selfEdit        (true)     false = brain_identity is read-only (get / history)
+//   holdUntrusted   (true)     hold changes that come from tool / web / injected content: the host plugin
+//                              attests the turn (attested_provenance: tool output in this run, a non-owner
+//                              sender, text echoing earlier tool output), a model-claimed untrusted
+//                              source_type, injection-looking text → review queue (kind identity_change),
+//                              nothing stored. Also holds untrusted identity writes via brain_write /
+//                              brain_supersede / brain_update_self_model in quarantine log mode.
+//   locked          (["Name"]) fields the agent can't change; [] = none
+//   maxChangesPerDay (0)       0 = no limit; N = refuse after N applied agent changes per rolling 24 h
+//   maxChars        (2000)     cap on the identity header and on one value's text; 0 = no cap
+//   requireAttestation (false) hold changes with no host attestation (bare MCP clients)
+// A short reason is always required (it is what the history shows).
 // Accepting a held change (brain_review / soul review accept) applies it as a version by the admin.
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
@@ -37,33 +42,36 @@ import type { BrainConfig } from "./types.js";
 // ─── config ──────────────────────────────────────────────────────────────────
 
 export interface IdentityConfig {
-  /** Field names the agent may not add / change / remove (case-insensitive). Default ["Name"]. */
+  /** Agents may add / change / remove their own identity and values. Default true. */
+  selfEdit: boolean;
+  /** Hold identity changes that come from tool / web / injected content (review queue). Default true. */
+  holdUntrusted: boolean;
+  /** Field names the agent may not add / change / remove (case-insensitive). Default ["Name"]; [] = none. */
   locked: string[];
-  /** Applied agent changes per rolling 24 h. Default 5. Admin accepts / reverts don't count. */
+  /** Applied agent changes per rolling 24 h. Default 0 = no limit. Admin accepts / reverts never count. */
   maxChangesPerDay: number;
-  maxFieldNameChars: number;
-  maxFieldChars: number;
-  maxValueChars: number;
-  /** Whole identity text (the always-on header). Default 1000. */
-  maxIdentityChars: number;
+  /** Cap on the whole identity header and on one value's text. Default 2000; 0 = no cap. */
+  maxChars: number;
   /** Hold changes that carry no host attestation (e.g. a bare MCP client). Default false. */
   requireAttestation: boolean;
 }
 
+/** Field names stay short words (shape check, not a guardrail). */
+const MAX_FIELD_NAME_CHARS = 40;
+
 export const DEFAULT_IDENTITY_CONFIG: IdentityConfig = {
-  locked: ["Name"], maxChangesPerDay: 5, maxFieldNameChars: 40, maxFieldChars: 300, maxValueChars: 600, maxIdentityChars: 1000, requireAttestation: false,
+  selfEdit: true, holdUntrusted: true, locked: ["Name"], maxChangesPerDay: 0, maxChars: 2000, requireAttestation: false,
 };
 
 export function identityConfig(cfg: Partial<BrainConfig> | undefined): IdentityConfig {
   const c = (cfg?.identity ?? {}) as Partial<IdentityConfig>;
   const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : d);
   return {
+    selfEdit: c.selfEdit !== false,
+    holdUntrusted: c.holdUntrusted !== false,
     locked: Array.isArray(c.locked) ? c.locked.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter(Boolean) : DEFAULT_IDENTITY_CONFIG.locked,
     maxChangesPerDay: num(c.maxChangesPerDay, DEFAULT_IDENTITY_CONFIG.maxChangesPerDay),
-    maxFieldNameChars: num(c.maxFieldNameChars, DEFAULT_IDENTITY_CONFIG.maxFieldNameChars),
-    maxFieldChars: num(c.maxFieldChars, DEFAULT_IDENTITY_CONFIG.maxFieldChars),
-    maxValueChars: num(c.maxValueChars, DEFAULT_IDENTITY_CONFIG.maxValueChars),
-    maxIdentityChars: num(c.maxIdentityChars, DEFAULT_IDENTITY_CONFIG.maxIdentityChars),
+    maxChars: num(c.maxChars, DEFAULT_IDENTITY_CONFIG.maxChars),
     requireAttestation: c.requireAttestation === true,
   };
 }
@@ -164,23 +172,23 @@ function validate(req: IdentityRequest, ic: IdentityConfig): string | null {
   if (req.target !== "field" && req.target !== "value") return 'target must be "field" (an identity line) or "value" (a core value)';
   if (!["add", "change", "remove"].includes(req.action)) return "action must be add, change or remove";
   const reason = (req.reason ?? "").trim();
-  if (reason.length < 3) return "a short reason is required (why this is who you are now)";
-  if (reason.length > 300) return "reason is too long (max 300 chars)";
+  if (!reason) return "a short reason is required (why this is who you are now)";
+  if (reason.length > 500) return "reason is too long (max 500 chars)";
   if (req.target === "field") {
     const f = (req.field ?? "").trim();
     if (!f) return "field is required (e.g. \"Vibe\")";
-    if (f.length > ic.maxFieldNameChars || !/^[\p{L}\p{N}][\p{L}\p{N} _'&/-]*$/u.test(f)) return `field must be a short name (letters, digits, spaces; max ${ic.maxFieldNameChars} chars)`;
+    if (f.length > MAX_FIELD_NAME_CHARS || !/^[\p{L}\p{N}][\p{L}\p{N} _'&/-]*$/u.test(f)) return `field must be a short name (letters, digits, spaces; max ${MAX_FIELD_NAME_CHARS} chars)`;
     if (req.action !== "remove") {
       const v = oneLine(req.value ?? "");
       if (!v) return "value is required";
-      if (v.length > ic.maxFieldChars) return `value is too long (${v.length} > ${ic.maxFieldChars} chars)`;
+      if (ic.maxChars && v.length > ic.maxChars) return `value is too long (${v.length} > identity.maxChars ${ic.maxChars})`;
     }
   } else {
     if (req.action !== "add" && !(req.valueId ?? "").trim()) return "value_id is required to change or remove a value";
     if (req.action !== "remove") {
       const v = (req.value ?? "").trim();
       if (!v) return "value is required (the value's text)";
-      if (v.length > ic.maxValueChars) return `value is too long (${v.length} > ${ic.maxValueChars} chars)`;
+      if (ic.maxChars && v.length > ic.maxChars) return `value is too long (${v.length} > identity.maxChars ${ic.maxChars})`;
       if ((req.label ?? "").length > 120) return "label is too long (max 120 chars)";
     }
   }
@@ -207,6 +215,7 @@ export function proposeIdentityChange(agentId: string, req: IdentityRequest, o: 
     insertRow(db, { id, status: "rejected", target: req.target ?? "?", action: req.action ?? "?", key: req.field ?? req.valueId ?? null, new_value: req.value ?? null, reason: req.reason ?? null, provenance: provText(o.provenance), writer: o.writer, detail, created_at: now });
     return { status: "rejected", message, changeId: id };
   };
+  if (!ic.selfEdit) return reject("Refused: identity self-edit is switched off (identity.selfEdit = false). Your identity is read-only here.", "selfEdit off");
   const bad = validate(req, ic);
   if (bad) return reject(`Refused: ${bad}.`, `invalid: ${bad}`);
   if (req.target === "field" && ic.locked.some((k) => sameKey(k, req.field!))) {
@@ -216,15 +225,16 @@ export function proposeIdentityChange(agentId: string, req: IdentityRequest, o: 
   const reasons: string[] = [];
   const p = o.provenance ?? null;
   if (p && !TRUSTED_ORIGINS.has(p.origin)) reasons.push(p.origin === "untrusted_sender" ? "the turn came from a non-owner sender" : p.origin === "tool_output_echo" ? "the text repeats earlier tool / web output" : `this turn read ${p.tools?.length ? `tool output (${p.tools.slice(0, 4).join(", ")})` : "tool output"}`);
-  if (!p && ic.requireAttestation) reasons.push("no host attestation (identity.requireAttestation)");
   if (o.sourceType && UNTRUSTED_SOURCE_TYPES.has(o.sourceType)) reasons.push(`source is ${o.sourceType === "tool" ? "tool output" : o.sourceType === "agent" ? "another agent" : "an import"}`);
   const text = `${req.field ?? ""}\n${req.label ?? ""}\n${req.value ?? ""}\n${req.reason}`;
   const injection = looksLikeInjection(text);
   if (injection) reasons.push("text looks like a prompt injection / identity rewrite");
-  if (reasons.length && quarantineMode(o.config) !== "off") return hold(db, agentId, id, req, o, reasons, injection, now);
+  if (!ic.holdUntrusted) reasons.length = 0;
+  if (!p && ic.requireAttestation) reasons.push("no host attestation (identity.requireAttestation)");
+  if (reasons.length && quarantineMode(o.config) !== "off") return hold(db, agentId, id, req, o, reasons, injection && ic.holdUntrusted, now);
   // rate limit (applied agent changes in the last 24 h)
   const recent = (db.prepare("SELECT COUNT(*) n FROM identity_changes WHERE status = 'applied' AND writer = ? AND created_at > ? AND action IN ('add','change','remove')").get(o.writer, now - 86_400_000) as { n: number }).n;
-  if (recent >= ic.maxChangesPerDay) return reject(`Refused: identity change limit reached (${recent} in the last 24 h; identity.maxChangesPerDay = ${ic.maxChangesPerDay}). Try again later.`, "rate limited");
+  if (ic.maxChangesPerDay > 0 && recent >= ic.maxChangesPerDay) return reject(`Refused: identity change limit reached (${recent} in the last 24 h; identity.maxChangesPerDay = ${ic.maxChangesPerDay}). Try again later.`, "rate limited");
   return applyIdentityChange(agentId, req, { writer: o.writer, provenance: provText(p), config: o.config, now, changeId: id });
 }
 
@@ -285,7 +295,7 @@ export function applyIdentityChange(agentId: string, req: IdentityRequest, o: Ap
           else lines.splice(idx, 1);
         }
         const after = renderIdentity(lines);
-        if (after.length > ic.maxIdentityChars) throw new Error(`the identity would be ${after.length} chars (identity.maxIdentityChars = ${ic.maxIdentityChars})`);
+        if (ic.maxChars && after.length > ic.maxChars) throw new Error(`the identity would be ${after.length} chars (identity.maxChars = ${ic.maxChars})`);
         updateSelfModelField(agentId, "identity", after);
         insertRow(db, { id, version, status: "applied", target: "field", action: req.action, key, old_value: oldVal, new_value: req.action === "remove" ? null : val, reason: req.reason.trim(), provenance: o.provenance, writer: o.writer, review_id: o.reviewId ?? null, identity_after: after, created_at: now });
         summary = req.action === "add" ? `added ${key}: "${val}"` : req.action === "change" ? `changed ${key}: "${oldVal}" → "${val}"` : `removed ${key} (was "${oldVal}")`;
@@ -472,7 +482,7 @@ export const IDENTITY_TOOL_DEF = {
     "action get (current fields + values) | history (your recent identity versions) | add | change | remove. target \"field\" (default) or \"value\". " +
     "Changes you decide on in your own turn apply at once and show in your header from the next turn; every change is versioned and the operator can read and revert it. " +
     "A short reason is required. Locked fields (default: Name) can't be changed. Changes prompted by tool / web output, other people's messages or injected text are held for the operator's review, not applied. " +
-    "Limited to a few changes per day — change who you are deliberately, not every turn.",
+    "Change who you are deliberately, not every turn.",
   inputSchema: {
     type: "object" as const,
     properties: {

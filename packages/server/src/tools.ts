@@ -573,7 +573,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
           const cats = injectionCategories(cfg);
           const identity = cats.identity ? ((db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "").trim() : "";
           const goals = !cats.goals ? [] : (db.prepare("SELECT title FROM goals g WHERE status = 'active' AND tracked = 1 AND version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id) ORDER BY priority ASC, created_at DESC LIMIT 3").all() as Array<{ title: string }>).map((g) => g.title);
-          return { identity: identity.slice(0, Math.max(400, identityConfig(cfg).maxIdentityChars)), goals };
+          return { identity: (identityConfig(cfg).maxChars ? identity.slice(0, Math.max(400, identityConfig(cfg).maxChars)) : identity), goals };
         });
         return ok(JSON.stringify({ ...r, ...(sm.identity ? { identity: sm.identity } : {}), ...(sm.goals.length ? { activeGoals: sm.goals } : {}) }));
       }

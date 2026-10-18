@@ -58,9 +58,19 @@ Agents may add to and change their **own** identity (the `- **Field:** value` li
 * **Readable:** `xanima-server identity history --agent X [--all]` (read-only; `--all` adds held and refused attempts), `identity show`, `brain_status` (`identity: vN (last …) · changes in 24 h · held · refused · locked`), `brain_changes {topic: "identity"}`, the audit log.
 * **Revertible:** `xanima-server identity revert <version> --agent X` (service stopped, backup first) applies the inverse as a **new** version. It refuses when the same field / value changed later, unless `--force`.
 * **Provenance:** the OpenClaw plugin attests each call (`attested_provenance`, overwriting anything the model put there): `agent_turn` (clean), `tool_output` (a non-memory tool returned output in this run, e.g. web_fetch, read, exec), `untrusted_sender` (the run started from a non-owner message, when `commands.ownerAllowFrom` is set), `tool_output_echo` (the new text repeats recent tool output from the session). Anything but `agent_turn`, a model-supplied `source_type` tool / agent / import, or injection-looking text is **held** in the review queue (kind `identity_change`, `pending`) whatever the quarantine mode (except `off`). Nothing is stored until an admin accepts (applied as a version) or rejects.
-* **Locked fields:** `identity.locked` (default `["Name"]`) can't be added, changed or removed by the agent, and an accept can't move them either. Hailey changes them via a soul import + review.
-* **Caps:** `identity.maxChangesPerDay` (5 applied agent changes per rolling 24 h), `maxFieldChars` 300, `maxValueChars` 600, `maxIdentityChars` 1000 (whole header), `maxFieldNameChars` 40, reason 3–300 chars. Over the limit = refused (recorded).
-* **Unattested callers** (a bare MCP client with no host plugin) are treated as the agent's own turn, subject to every other check. Set `identity.requireAttestation: true` to hold them instead.
+* **Permissive by default; every guardrail is one switch** (`identity.*` in the brain config):
+
+  | switch | default | effect |
+  |---|---|---|
+  | `selfEdit` | `true` | `false` = `brain_identity` is read-only (get / history). |
+  | `holdUntrusted` | `true` | Hold changes that come from tool / web / injected content (above). `false` = they apply like any other change (still versioned, provenance recorded), and quarantine log mode logs untrusted identity writes again instead of holding them. |
+  | `locked` | `["Name"]` | Fields the agent can't change; an accept can't move them either. `[]` = nothing locked. Hailey changes a locked field via a soul import + review. |
+  | `maxChangesPerDay` | `0` (off) | `N` = refuse after N applied agent changes per rolling 24 h. |
+  | `maxChars` | `2000` | Cap on the identity header and on one value's text. `0` = no cap. |
+  | `requireAttestation` | `false` | `true` = hold changes that carry no host attestation (bare MCP clients). |
+
+  A short reason is always required (it is what the history shows). Refused attempts are recorded (`identity history --all`).
+* **Unattested callers** (a bare MCP client with no host plugin) are treated as the agent's own turn, subject to every other check, unless `requireAttestation` is on.
 * **Workspace mirror (plugin, off by default):** with `identityMirror: true` the OpenClaw plugin writes the applied identity back to the workspace `IDENTITY.md` (only the `- **Field:**` lines change) and agent-made values into a managed block in `SOUL.md`, so OpenClaw's files stay in sync.
 
 Soul package imports are unchanged: identity, values and goals from a package always wait in review.
