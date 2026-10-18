@@ -253,6 +253,8 @@ export interface BrainStatus {
   open: ReturnType<typeof openItemCounts>;
   commitments: ReturnType<typeof commitmentCounts>;
   reflections: { total: number; lastAt: number | null };
+  /** Xanima 0.4.0: pending-review queue (soul imports / merges) */
+  reviews?: { pending: number; byKind: Record<string, number>; flagged: number };
   lastSleep: { at: number | null; ago: string; summary: SleepSummary | null };
   injection: {
     budgetChars: number;
@@ -340,6 +342,13 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
   const commitments = commitmentCounts(db, now);
   let reflections = { total: 0, lastAt: null as number | null };
   try { const r = db.prepare("SELECT COUNT(*) n, MAX(updated_at) m FROM reflections").get() as { n: number; m: number | null }; reflections = { total: r.n, lastAt: r.m }; } catch { /* pre-v22 */ }
+  const reviews = { pending: 0, byKind: {} as Record<string, number>, flagged: 0 };
+  try {
+    for (const r of db.prepare("SELECT kind, flags_json FROM review_items WHERE status = 'pending'").all() as Array<{ kind: string; flags_json: string }>) {
+      reviews.pending++; reviews.byKind[r.kind] = (reviews.byKind[r.kind] ?? 0) + 1; if (r.flags_json !== "[]") reviews.flagged++;
+    }
+  } catch { /* pre-v23 */ }
+  if (reviews.flagged) attention.push(`${reviews.flagged} imported identity/goal change${reviews.flagged === 1 ? "" : "s"} flagged as a possible rewrite — held in review (brain_review list)`);
   for (const a of open.contradictedAssumptions.slice(0, 2)) attention.push(`load-bearing assumption CONTRADICTED: "${a.text.slice(0, 60)}" — re-check what rests on it`);
   if (commitments.overdue.length) attention.push(`${commitments.overdue.length} commitment${commitments.overdue.length === 1 ? "" : "s"} overdue ("${commitments.overdue[0]!.title.slice(0, 40)}")`);
   if (commitments.blocked.length) attention.push(`${commitments.blocked.length} commitment${commitments.blocked.length === 1 ? "" : "s"} blocked`);
@@ -357,6 +366,7 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
     open,
     commitments,
     reflections,
+    reviews,
     lastSleep: { at: lastAt, ago: lastAt ? relativeTime(lastAt, now) : "never", summary },
     injection: { budgetChars, headerChars, recallCapChars, estimatedTokens: Math.ceil((headerChars + recallCapChars) / 4) },
     attention,
@@ -388,6 +398,7 @@ export function formatBrainStatus(s: BrainStatus, label = ""): string {
     for (const c of s.commitments.blocked.slice(0, 3)) L.push(`    BLOCKED ${c.id.slice(0, 8)}: ${c.title.slice(0, 60)} — waiting on ${c.waiting.slice(0, 60)}`);
     if (s.commitments.pendingNudge) L.push(`  commitment nudge pending (consumed by the next real reply): ${s.commitments.pendingNudge}`);
   }
+  if (s.reviews?.pending) L.push(`  review queue: ${s.reviews.pending} pending (${Object.entries(s.reviews.byKind).map(([k, v]) => `${k} ${v}`).join(", ")})${s.reviews.flagged ? `, ${s.reviews.flagged} flagged as possible identity rewrite` : ""} — nothing in review is applied until accepted`);
   if (s.reflections?.total) L.push(`  reflections: ${s.reflections.total} (last ${relativeTime(s.reflections.lastAt)})`);
   if (s.goals.pendingNote) L.push(`  alignment note pending (${s.goals.pendingNoteOffers ? `offered ${s.goals.pendingNoteOffers}×, ` : ""}not yet delivered — consumed by the next real reply): ${s.goals.pendingNote}`);
   if (s.hotConflicts.length) {

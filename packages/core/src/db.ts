@@ -395,7 +395,7 @@ function initSchema(db: Database.Database): void {
 }
 
 /** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 23;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -663,6 +663,69 @@ export function migrateV22(db: Database.Database): void {
   `);
   add("alignment_notes", "kind TEXT NOT NULL DEFAULT 'alignment'");
   add("alignment_notes", "ref_id TEXT");
+}
+
+/**
+ * v23 (Xanima 0.4.0 Soul Package, additive, new tables only):
+ *   review_items    pending-review queue (identity / goal / value changes from imports,
+ *                   three-way merge conflicts, removals) — nothing is applied until accepted
+ *   soul_id_map     origin id (in a package) ↔ local id (in this brain), per package
+ *   soul_provenance original provenance of imported nodes (writer, source_type, confidence, times)
+ *   soul_events     export / import / merge / review audit trail inside the brain
+ */
+export function migrateV23(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS review_items (
+      id            TEXT PRIMARY KEY,
+      kind          TEXT NOT NULL,
+      section       TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'pending',
+      package_id    TEXT,
+      origin_id     TEXT,
+      local_id      TEXT,
+      label         TEXT NOT NULL,
+      base_json     TEXT,
+      ours_json     TEXT,
+      theirs_json   TEXT,
+      markers       TEXT,
+      reason        TEXT,
+      flags_json    TEXT NOT NULL DEFAULT '[]',
+      created_at    INTEGER NOT NULL,
+      resolved_at   INTEGER,
+      resolved_by   TEXT,
+      resolution_note TEXT
+    );
+    CREATE INDEX IF NOT EXISTS review_items_status ON review_items(status, created_at);
+    CREATE TABLE IF NOT EXISTS soul_id_map (
+      origin_id   TEXT NOT NULL,
+      local_id    TEXT NOT NULL,
+      package_id  TEXT NOT NULL,
+      section     TEXT NOT NULL,
+      at          INTEGER NOT NULL,
+      PRIMARY KEY (origin_id, local_id)
+    );
+    CREATE INDEX IF NOT EXISTS soul_id_map_local ON soul_id_map(local_id);
+    CREATE TABLE IF NOT EXISTS soul_provenance (
+      local_id     TEXT PRIMARY KEY,
+      origin_id    TEXT NOT NULL,
+      package_id   TEXT NOT NULL,
+      source_agent TEXT,
+      writer       TEXT,
+      source_type  TEXT,
+      confidence   REAL,
+      created_at   INTEGER,
+      updated_at   INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS soul_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      at          INTEGER NOT NULL,
+      action      TEXT NOT NULL,
+      package_id  TEXT,
+      parent_id   TEXT,
+      by          TEXT,
+      detail_json TEXT
+    );
+  `);
 }
 
 function runMigrations(db: Database.Database): void {
@@ -952,6 +1015,10 @@ function runMigrations(db: Database.Database): void {
 
   if (current < 22) {
     migrateV22(db);
+  }
+
+  if (current < 23) {
+    migrateV23(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

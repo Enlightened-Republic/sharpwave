@@ -10,7 +10,7 @@ import {
 import { writeNode, getNode } from "../src/nodes.js";
 import { closeDb } from "../src/db.js";
 
-// The full 35-def union (16 + Xanima 0.1.0 brain_retract, brain_status + 0.2.0 decisions/goals + 0.3.0 reflection/open items/plans/meta-tools), sorted. Written out longhand on purpose: this list is
+// The full 36-def union (16 + Xanima 0.1.0 brain_retract, brain_status + 0.2.0 decisions/goals + 0.3.0 reflection/open items/plans/meta-tools + 0.4.0 brain_export_soul), sorted. Written out longhand on purpose: this list is
 // the contract both hosts read from, so a rename or a dropped tool has to be a
 // deliberate edit here, not a silent diff.
 const ALL_TOOLS = [
@@ -22,6 +22,7 @@ const ALL_TOOLS = [
   "brain_docs",
   "brain_edges",
   "brain_expand",
+  "brain_export_soul",
   "brain_forget",
   "brain_forget_impact",
   "brain_generate_skill",
@@ -51,8 +52,8 @@ const ALL_TOOLS = [
   "brain_write",
 ];
 
-test("union holds 35 tool defs", () => {
-  expect(ALL_TOOLS).toHaveLength(35);
+test("union holds 36 tool defs", () => {
+  expect(ALL_TOOLS).toHaveLength(36);
   expect(Object.keys(BRAIN_TOOL_DEFS).sort()).toEqual(ALL_TOOLS);
 });
 
@@ -63,14 +64,14 @@ test("every def has a description and an object input schema", () => {
   }
 });
 
-test("mcp subset is 31 and every name exists in the union", () => {
-  expect(MCP_TOOL_NAMES).toHaveLength(31);
+test("mcp subset is 32 and every name exists in the union", () => {
+  expect(MCP_TOOL_NAMES).toHaveLength(32);
   for (const n of MCP_TOOL_NAMES) expect(BRAIN_TOOL_DEFS).toHaveProperty(n);
 });
 
-test("openwave subset is all 35", () => {
+test("openwave subset is all 36", () => {
   expect([...OPENWAVE_TOOL_NAMES].sort()).toEqual(Object.keys(BRAIN_TOOL_DEFS).sort());
-  expect(OPENWAVE_TOOL_NAMES).toHaveLength(35);
+  expect(OPENWAVE_TOOL_NAMES).toHaveLength(36);
 });
 
 // No embedding provider is reachable in tests (setup.ts points Ollama at a dead

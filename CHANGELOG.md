@@ -2,6 +2,19 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
+## 0.4.0 (Xanima) — unreleased
+
+Portable Soul Package: export / import / fork / three-way merge / review (design: Xanima phase 3 "Soul Package and fork/merge", released as 0.4.0). Stacks on 0.3.0. No LLM involved. Guide: [docs/portability.md](docs/portability.md).
+
+- **Format `xanima-soul/1`:** deterministic, human-readable JSON (sorted keys, items sorted by origin id, no wall-clock fields) with identity, values, active goals with history, top skills, decision lessons, key facts above `soulMinFactConfidence`, optional open items / commitments / shared facts, per-item provenance, source agent, brain fingerprint, schema version, package id, parent id (forks), sha256 content hash + per-section manifest, optional ed25519 signature. JSON Schema: `packages/core/schema/xanima-soul-1.schema.json`; validator `validateSoul()`. Optional SQLite subset dump (`--sqlite`). Raw episodes are never exported; sensitive, retired / superseded / expired, draft, in-review and shared items are left out by default.
+- **Schema v23 (additive, new tables only):** `review_items` (pending-review queue), `soul_id_map` (origin ↔ local ids), `soul_provenance` (original provenance of imported nodes), `soul_events`. New source type `import`, new edge type `imported_from`. Node/edge/episode counts never change on migration.
+- **Import:** validates schema + hash (+ trusted signature), backup first, audit entry, refuses while the service runs (CLI). Imported memories are `source_type: import`, confidence capped at `soulImportConfidence` (0.5), linked `imported_from` an archived provenance anchor; ids are mapped. **Identity, values and goals always go to the review queue** (the first step of the poisoning protections; text that looks like an identity rewrite is flagged and shown in `brain_status`). Differences never overwrite: they become conflict review items.
+- **Fork + three-way merge:** `soul fork` (full profile, fork flag), later exports carry `parent_id`; `soul diff A B`; `soul merge --base --theirs --into` per item: unchanged / ours-only (kept) / theirs-only (applied as supersede with history for skills, facts, lessons, open items; review for identity, values, goals; removals → review) / conflicts (review items with ours / base / theirs markers). `soul review list|show|accept|reject`.
+- **Tools:** `brain_export_soul` (agent, own brain only, read scope; compact JSON or summary). `brain_review` gains a queue mode (`action: list | show | accept | reject`; accept / reject need admin) next to its FSRS form (`node_id` + `quality`). `brain_import_soul` (admin scope only, listed to admin tokens only, backup first). Library: `exportSoul`, `importSoul`, `mergeSoul`, `diffSoul`, `validateSoul`, `signSoul`, `listReviews`, `acceptReview`, `rejectReview`, … exported from `xanima-core`.
+- **xanima-server CLI:** `soul export | fork | import | diff | merge | review | validate | keygen`.
+- **Flags:** `soulExportProfile` ("compact"), `soulTokenBudget` (2000), `soulMinFactConfidence` (0.6), `soulImportConfidence` (0.5), `soulMergeApplyTheirs` (true), `soulPackageOnExport` (false: `backup now` also writes a compact package per private brain from the snapshot).
+- The `SHARPWAVE_*` env aliases are still accepted in 0.4.0 (no breaking renames in this release); their removal moves to a later release.
+
 ## 0.3.0 (Xanima) — unreleased
 
 Reflection, experience replay, open items, commitments + plans, meta-tools (design: Xanima phase 3). Stacks on 0.2.0. Everything works without an LLM; the only LLM path (`reflectionLlm`) is opt-in.

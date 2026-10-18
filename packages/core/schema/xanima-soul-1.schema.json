@@ -1,0 +1,451 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Enlightened-Republic/sharpwave/packages/core/schema/xanima-soul-1.schema.json",
+  "title": "Xanima Soul Package (xanima-soul/1)",
+  "description": "Portable, high-signal subset of a Xanima brain. Deterministic: keys sorted, items sorted by id. integrity.content_hash = sha256 of the canonical JSON (keys sorted recursively, no whitespace) of the package without package_id, integrity and signature; package_id = 'xs1-' + first 24 hex chars of that hash. signature (optional) = ed25519 over 'xanima-soul/1\\n<package_id>\\n<content_hash>'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "package_id",
+    "parent_id",
+    "fork",
+    "created_at",
+    "profile",
+    "generator",
+    "source",
+    "options",
+    "stats",
+    "content",
+    "integrity"
+  ],
+  "properties": {
+    "format": {
+      "const": "xanima-soul/1"
+    },
+    "package_id": {
+      "type": "string",
+      "pattern": "^xs1-[0-9a-f]{24}$"
+    },
+    "parent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fork": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "newest updated_at among the included items (deterministic)"
+    },
+    "profile": {
+      "enum": [
+        "compact",
+        "full"
+      ]
+    },
+    "generator": {
+      "type": "string"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "agent_id",
+        "brain_fingerprint",
+        "schema_version"
+      ],
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "brain_fingerprint": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "integer"
+        }
+      }
+    },
+    "options": {
+      "type": "object",
+      "required": [
+        "include_sensitive",
+        "include_shared",
+        "include_open_items",
+        "min_fact_confidence",
+        "token_budget"
+      ],
+      "properties": {
+        "include_sensitive": {
+          "type": "boolean"
+        },
+        "include_shared": {
+          "type": "boolean"
+        },
+        "include_open_items": {
+          "type": "boolean"
+        },
+        "min_fact_confidence": {
+          "type": "number"
+        },
+        "token_budget": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": [
+        "counts",
+        "approx_tokens",
+        "content_chars",
+        "trimmed"
+      ],
+      "properties": {
+        "counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "approx_tokens": {
+          "type": "integer"
+        },
+        "content_chars": {
+          "type": "integer"
+        },
+        "trimmed": {
+          "type": "integer"
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "values",
+        "goals",
+        "skills",
+        "lessons",
+        "facts"
+      ],
+      "properties": {
+        "identity": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "goals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/goal"
+          }
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "lessons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lesson"
+          }
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "open_items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "commitments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "shared_facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "required": [
+        "alg",
+        "content_hash",
+        "manifest"
+      ],
+      "properties": {
+        "alg": {
+          "const": "sha256"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "required": [
+        "alg",
+        "key_id",
+        "public_key",
+        "value"
+      ],
+      "properties": {
+        "alg": {
+          "const": "ed25519"
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "public_key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "required": [
+        "writer",
+        "source_type",
+        "confidence",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "writer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_type": {
+          "type": "string",
+          "description": "user | self_observation | inference | tool | agent | seed | legacy | import"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "label",
+        "content",
+        "importance",
+        "sensitivity",
+        "provenance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "origin id: stable across forks (the id in the brain the item first came from)"
+        },
+        "type": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "importance": {
+          "type": "number"
+        },
+        "sensitivity": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "sensitive",
+            "confirm_before_acting"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "goal": {
+      "type": "object",
+      "required": [
+        "id",
+        "version",
+        "title",
+        "priority",
+        "status",
+        "success_criteria",
+        "keywords",
+        "provenance",
+        "history"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "goal lineage id"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "status": {
+          "type": "string"
+        },
+        "success_criteria": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "version",
+              "at",
+              "action"
+            ],
+            "properties": {
+              "version": {
+                "type": "integer"
+              },
+              "at": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "change": {}
+            }
+          }
+        }
+      }
+    },
+    "lesson": {
+      "type": "object",
+      "required": [
+        "id",
+        "context",
+        "chosen",
+        "outcome",
+        "outcome_status",
+        "lesson",
+        "provenance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "chosen": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lesson": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    }
+  }
+}
