@@ -370,7 +370,7 @@ export type { InjectionCategories } from "./types.js";
 
 // Xanima 0.5.0 follow-up: agent-evolved identity (versioned, revertible, guarded)
 export {
-  IDENTITY_TOOL_DEF, IDENTITY_TOOL_NAME, DEFAULT_IDENTITY_CONFIG, identityConfig, parseIdentity, renderIdentity, identityFields,
+  IDENTITY_TOOL_DEF, IDENTITY_TOOL_NAME, IDENTITY_STEERING_NOTE, IDENTITY_ORIGINS, DEFAULT_IDENTITY_CONFIG, identityConfig, parseIdentity, renderIdentity, identityFields,
   proposeIdentityChange, applyIdentityChange, revertIdentityVersion, identityHistory, formatIdentityHistory, formatIdentityChange,
   identityStatus, listValues, dispatchIdentityTool, recordIdentityImport, lockedFieldChange, acceptHeldIdentityChange,
 } from "./identity.js";
