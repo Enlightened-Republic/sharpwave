@@ -52,28 +52,29 @@ Soul imports keep their 0.4.0 rule: identity, values and goals from a package **
 
 ## Agent-evolved identity (`brain_identity`)
 
-Agents may add to and change their **own** identity (the `- **Field:** value` lines of the always-on header, `self_model.identity`) and core values (`identity` nodes) with `brain_identity {action: add | change | remove, target: field | value, field / value_id, value, reason}`. `get` / `history` read.
+**Rule:** identity changes only from the agent's own reflection on its experience and its conversations with its owner, never from outside content. Research, web and tool content goes into knowledge, skills and tools (`brain_write`), not identity. There is no review queue on this path.
 
-* **Applied at once** when the change comes from the agent's own turn. Every applied change is a numbered **version** in `identity_changes`: target, old and new value, the required reason, provenance, writer, the identity text after it. Values are superseded / retracted, never deleted. Soul-review accepts and legacy `brain_update_self_model` identity writes are versioned too.
-* **Readable:** `xanima-server identity history --agent X [--all]` (read-only; `--all` adds held and refused attempts), `identity show`, `brain_status` (`identity: vN (last …) · changes in 24 h · held · refused · locked`), `brain_changes {topic: "identity"}`, the audit log.
-* **Revertible:** `xanima-server identity revert <version> --agent X` (service stopped, backup first) applies the inverse as a **new** version. It refuses when the same field / value changed later, unless `--force`.
-* **Provenance:** the OpenClaw plugin attests each call (`attested_provenance`, overwriting anything the model put there): `agent_turn` (clean), `tool_output` (a non-memory tool returned output in this run, e.g. web_fetch, read, exec), `untrusted_sender` (the run started from a non-owner message, when `commands.ownerAllowFrom` is set), `tool_output_echo` (the new text repeats recent tool output from the session). Anything but `agent_turn`, a model-supplied `source_type` tool / agent / import, or injection-looking text is **held** in the review queue (kind `identity_change`, `pending`) whatever the quarantine mode (except `off`). Nothing is stored until an admin accepts (applied as a version) or rejects.
-* **Permissive by default; every guardrail is one switch** (`identity.*` in the brain config):
+* **What the agent can change:** the `- **Field:** value` lines of its always-on header (`self_model.identity`) and its core values (`identity` nodes), with `brain_identity {action: add | change | remove, target: field | value, …, reason}`. `get` / `history` read.
+* **Applied at once and versioned** when the host plugin attests the run as `owner_turn` (started by an owner message), `reflection` (a cron / heartbeat / self-reflection run with no outside input) or `agent_turn` (a clean own turn; single-user setups with no owner list). Every applied change is a numbered version in `identity_changes` (old / new value, reason, provenance, writer, identity text after). Values are superseded / retracted, never deleted.
+* **Refused** (not held) when the run read outside content: `tool_output` (a non-memory tool such as web_fetch / read / exec returned output in the run), `untrusted_sender` (a non-owner message started the run, when `commands.ownerAllowFrom` is set), `tool_output_echo` (the new text repeats recent tool output), a model-claimed `source_type` tool / agent / import, or injection-looking text. The refusal tells the agent to save what it learned with `brain_write` as a fact or skill. No review item is created. The model can't claim its own provenance: the plugin overwrites `attested_provenance`.
+* **Nothing lost:** a refused proposal is kept as a candidate knowledge note (`semantic`, `source_type: tool`, confidence 0.4, tags `source:web`, `identity-candidate`). The note goes through the normal quarantine gate first, so injection text is quarantined, not stored.
+* **Readable / revertible:** `xanima-server identity history --agent X [--all]` (`--all` adds refused attempts), `identity show`, `brain_status` (`identity: vN … refused in 24 h`), `brain_changes {topic: "identity"}`. `identity revert <version>` (service stopped, backup first) applies the inverse as a new version.
+* **Switches** (`identity.*` in the brain config, one each):
 
   | switch | default | effect |
   |---|---|---|
-  | `selfEdit` | `true` | `false` = `brain_identity` is read-only (get / history). |
-  | `holdUntrusted` | `true` | Hold changes that come from tool / web / injected content (above). `false` = they apply like any other change (still versioned, provenance recorded), and quarantine log mode logs untrusted identity writes again instead of holding them. |
-  | `locked` | `["Name"]` | Fields the agent can't change; an accept can't move them either. `[]` = nothing locked. Hailey changes a locked field via a soul import + review. |
+  | `selfEdit` | `true` | `false` = `brain_identity` is read-only. |
+  | `refuseUntrusted` | `true` | The refusal above. `false` = such changes apply like any other (still versioned), and quarantine log mode logs untrusted identity writes again instead of holding them. |
+  | `saveRefusedAsNote` | `true` | Keep a refused proposal as a candidate knowledge note. |
+  | `locked` | `["Name"]` | Fields the agent can't change. `[]` = none. Hailey changes a locked field via a soul import + review. |
   | `maxChangesPerDay` | `0` (off) | `N` = refuse after N applied agent changes per rolling 24 h. |
-  | `maxChars` | `2000` | Cap on the identity header and on one value's text. `0` = no cap. |
-  | `requireAttestation` | `false` | `true` = hold changes that carry no host attestation (bare MCP clients). |
+  | `maxChars` | `2000` | Cap on the identity header and one value's text. `0` = no cap. |
+  | `requireAttestation` | `false` | `true` = refuse changes with no host attestation (bare MCP clients). |
 
-  A short reason is always required (it is what the history shows). Refused attempts are recorded (`identity history --all`).
-* **Unattested callers** (a bare MCP client with no host plugin) are treated as the agent's own turn, subject to every other check, unless `requireAttestation` is on.
-* **Workspace mirror (plugin, off by default):** with `identityMirror: true` the OpenClaw plugin writes the applied identity back to the workspace `IDENTITY.md` (only the `- **Field:**` lines change) and agent-made values into a managed block in `SOUL.md`, so OpenClaw's files stay in sync.
-
-Soul package imports are unchanged: identity, values and goals from a package always wait in review.
+* **Steering:** the tool description and the per-turn identity header carry a one-line note: identity = who you are, changed only by your own reflection and conversations with your owner; what you learn goes to knowledge / skills.
+* **Workspace mirror (plugin, off by default):** `identityMirror: true` writes applied changes back to the workspace `IDENTITY.md` field lines and a managed block in `SOUL.md`.
+* **Soul package imports** (an explicit external source the operator triggers) still wait in review.
+* `brain_write` / `brain_supersede` of `identity` nodes from untrusted sources stay a quarantine matter: held as `pending` (kind `quarantine`) in log and enforce mode.
 
 ## Injection control
 

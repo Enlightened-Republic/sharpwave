@@ -1,3 +1,4 @@
+import { IDENTITY_STEERING_NOTE } from "./identity.js";
 import { getSelfModel, formatSelfModelForContext } from "./self-model.js";
 import { getMorningBrief, formatMorningBlock } from "./morning.js";
 import { getActiveGoals, getReviewQueue, getOperationalProcedures } from "./nodes.js";
@@ -89,7 +90,7 @@ export async function buildSelfModelHeader(
       const selfModel = getSelfModel(agentId);
       if (selfModel?.identity && cats.identity) {
         const max = isVoice ? 200 : 400;
-        parts.push(`[identity] ${selfModel.identity.trim().slice(0, max)}`);
+        parts.push(`[identity] ${selfModel.identity.trim().slice(0, max)}${isVoice ? "" : ` ${IDENTITY_STEERING_NOTE}`}`);
       }
       // [T1.5] user_model on every turn. Previously only in session_start
       // bootstrap, so the mentalizing slot evaporated after turn 1.
