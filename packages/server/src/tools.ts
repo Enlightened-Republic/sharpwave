@@ -24,7 +24,7 @@ import {
   dispatchBrainTool, BRAIN_TOOL_DEFS,
   validateBrainQuery, validateBrainWrite, validateBrainLink, validateBrainSupersede,
   validateBrainHistory, validateBrainExpand, validateBrainEdges, formatValidationErrors,
-  getDb, forgetNodeById,
+  getDb, forgetNodeById, reviveNode, searchDormantNodes, formatSourceTurns,
   retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
   parseAsOf, relativeTime, beliefTag, parseConfidence, parseBeliefArgs,
   CONTINUITY_TOOL_NAMES, CONTINUITY_READ_ONLY_TOOLS, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost,
@@ -610,7 +610,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         if (!has(p, "read")) return err("forbidden — this token has no read scope");
         const v = validateBrainQuery(stripClientFields(args));
         if (!v.ok) return err(`Invalid arguments:\n${formatValidationErrors(v.errors!)}`);
-        const { query, type: typeFilter, limit } = v.data!;
+        const { query, type: typeFilter, limit, includeDormant } = v.data!;
         const scopeArg = args["scope"] ?? "all";
         if (scopeArg !== "all" && scopeArg !== "private" && scopeArg !== "shared") return err(`scope must be all, private, or shared`);
         const metaOn = cfg.beliefMetadata !== false;
@@ -682,6 +682,24 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
           roomHits = c2.items.slice(0, cap);
           control = { suppressedByFocus: c1.report.suppressedByFocus + c2.report.suppressedByFocus, sensitiveHeld: c1.report.sensitiveHeld + c2.report.sensitiveHeld, boosted: c1.report.boosted + c2.report.boosted, focus: focus ? describeFocus(focus) : null };
         }
+        // Dormant memories (sleep took them out of recall; never deleted): an explicit cue
+        // from the agent is how one earns its way back. Matches are revived and tagged.
+        const revived = new Set<string>();
+        if (includeDormant) {
+          const seen = new Set(merged.map((h) => h.node.id));
+          for (const brain of readBrains(ctx, scopeArg)) {
+            const found = await ctx.brains.write(brain, () => {
+              const out: BrainNode[] = [];
+              for (const d of searchDormantNodes(brain, query, limit ?? 10)) {
+                if (seen.has(d.id) || (typeFilter && d.type !== typeFilter)) continue;
+                if (reviveNode(brain, d.id, `revived: matched an explicit brain_query by ${p.agentId}`)) revived.add(d.id);
+                out.push(getNode(brain, d.id) ?? d);
+              }
+              return out;
+            });
+            for (const node of found) merged.push({ brain: label(ctx, brain), node: { ...node, activation: 0 } as ActivatedNode });
+          }
+        }
         merged = merged.slice(0, limit ?? 10);
         if (args["format"] === "json") {
           return ok(JSON.stringify({
@@ -690,6 +708,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
               score: round(h.node.activation), retrievability: round(h.node.retrievability),
               importance: round(h.node.importance), writer: h.node.writer_agent_id ?? null,
               source: h.node.source ?? null,
+              ...(revived.has(h.node.id) ? { revived_from_dormant: true } : {}),
               ...beliefJson(h.node),
             })), ...roomHits.map((it) => ({
               brain: "room", room: it.room, id: it.id, type: it.type, label: it.label, content: it.content, writer: it.writer,
@@ -699,11 +718,12 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
             ...(control ? { control } : {}),
           }, null, 2));
         }
-        if (merged.length === 0 && roomHits.length === 0) return ok("No matching nodes found.");
+        if (merged.length === 0 && roomHits.length === 0) return ok(includeDormant ? "No matching nodes found (dormant memories included)." : "No matching nodes found.");
         return ok([...merged.map((h) => {
           const n = h.node;
           const writer = n.writer_agent_id ? ` writer=${n.writer_agent_id}` : "";
-          return `[${h.brain}] ${n.id} (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  score=${n.activation.toFixed(2)} R=${n.retrievability.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}${beliefText(n)}`;
+          const dormantTag = revived.has(n.id) ? " (revived from dormant)" : "";
+          return `[${h.brain}] ${n.id} (${n.type}) ${n.label}${dormantTag}\n  ${n.content.slice(0, 300)}\n  score=${n.activation.toFixed(2)} R=${n.retrievability.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}${beliefText(n)}`;
         }), ...roomHits.map((it) => `[${it.room}·${it.writer ?? "?"}] ${it.id} (${it.type}) ${it.label}\n  ${it.content.slice(0, 300)}\n  from ${it.origin_node_id ?? "?"}${it.contradicted_at ? " DISPUTED" : ""}`)].join("\n\n"));
       }
 
@@ -884,13 +904,16 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         if (vis === "invalid") return err(`visibility must be "private" or "shared"`);
         const v = validateBrainExpand(stripClientFields(args));
         if (!v.ok) return err(`Invalid arguments:\n${formatValidationErrors(v.errors!)}`);
-        const { node_id } = v.data!;
+        const { node_id, sourceTurns } = v.data!;
         const brain = findNodeBrain(ctx, node_id, vis);
         if (!brain) return err(`node ${node_id} not found`);
         const node = ctx.brains.read(brain, (db) => readNode(db, node_id))!;
+        // The conversation the memory came from (source turn ± N in its session, or the turns
+        // around when it was written). Read on the brain's own connection: core's helpers resolve by agent id.
+        const sourceLines = sourceTurns > 0 ? await ctx.brains.write(brain, () => formatSourceTurns(brain, node, sourceTurns)) : [];
         if (args["format"] === "json") {
           const { embedding: _e, ps_hash: _p, ...rest } = node;
-          return ok(JSON.stringify({ brain: label(ctx, brain), node: rest }, null, 2));
+          return ok(JSON.stringify({ brain: label(ctx, brain), node: rest, ...(sourceTurns > 0 ? { source_turns: sourceLines.join("\n").trim() } : {}) }, null, 2));
         }
         const lines = [
           `Node: ${node.id} (${node.type}) ${node.label}   [${label(ctx, brain)}]`,
@@ -901,6 +924,8 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
           `Writer: ${node.writer_agent_id ?? "(none)"} | Source: ${node.source ?? "(none)"}`,
         ];
         if (node.valid_until) lines.push(`Valid until: ${new Date(node.valid_until).toISOString()} (superseded/expired)`);
+        if (node.status && node.status !== "active") lines.push(`Status: ${node.status}${node.status_reason ? ` — ${node.status_reason}` : ""}`);
+        lines.push(...sourceLines);
         return ok(lines.join("\n"));
       }
 

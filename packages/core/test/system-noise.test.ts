@@ -88,7 +88,7 @@ describe("retire registry: sleep never prunes or downscales a retired node", () 
     const old = Date.now() - 3 * 86_400_000;
     db.prepare("UPDATE nodes SET retrievability = 0.001, stability = 0.5, created_at = ?, valid_until = ? WHERE id IN (?, ?)").run(old, Date.now(), keep, gone);
     setMeta(id, `${RETIRED_NODE_META_PREFIX}${keep}`, JSON.stringify({ retiredAt: Date.now() }));
-    await runConsolidation(id, DEFAULT_CONFIG, log);
+    await runConsolidation(id, { ...DEFAULT_CONFIG, forgetting: "delete" }, log);
     const ids = (db.prepare("SELECT id, stability FROM nodes").all() as Array<{ id: string; stability: number }>);
     expect(ids.find((r) => r.id === keep)?.stability).toBe(0.5); // not downscaled either
     expect(ids.some((r) => r.id === gone)).toBe(false);

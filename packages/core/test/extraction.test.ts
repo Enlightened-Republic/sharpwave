@@ -89,9 +89,12 @@ describe("extraction", () => {
     const result = await drainExtractionQueue(agentId, { ...enabled, openRouterApiKey: "" }, log);
     // Heuristic fallback classifies sentences — should extract at least one fact
     expect(Array.isArray(result)).toBe(true);
-    // Sentence starting with "I am" should be classified as identity
-    const identityFacts = result.filter((f) => f.type === "identity");
-    expect(identityFacts.length).toBeGreaterThan(0);
+    // A sentence starting with "I am" is classified as identity by the heuristic,
+    // but an extracted identity fact is about the OWNER, not the agent: it comes
+    // back as a semantic "About the owner" fact (identity changes only via brain_identity).
+    expect(result.filter((f) => f.type === "identity").length).toBe(0);
+    const ownerFacts = result.filter((f) => f.type === "semantic" && f.label.startsWith("About the owner:"));
+    expect(ownerFacts.length).toBeGreaterThan(0);
     // T1.3: heuristic fallback path still returns the consumed episode id so
     // index.ts can flip llm_extracted = 1 for it.
     expect(result.episodeIds.length).toBeGreaterThan(0);

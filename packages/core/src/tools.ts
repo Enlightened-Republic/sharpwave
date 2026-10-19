@@ -48,7 +48,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { writeNode, getNode, touchNode, getActiveGoals } from "./nodes.js";
+import { writeNode, getNode, touchNode, getActiveGoals, reviveNode, searchDormantNodes } from "./nodes.js";
 import { writeEdge } from "./edges.js";
 import {
   retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
@@ -58,7 +58,8 @@ import {
 } from "./belief-meta.js";
 import type { SourceType, Sensitivity } from "./types.js";
 import { getSelfModel, updateSelfModelField } from "./self-model.js";
-import { searchEpisodes, getEpisodesByIds } from "./episodes.js";
+import { searchEpisodes, getEpisodesByIds, formatSourceTurns } from "./episodes.js";
+import { getProcedure, PROCEDURE_SOURCE } from "./procedures.js";
 import { getDb } from "./db.js";
 import { forgetNodeById } from "./consolidation.js";
 import { hybridRetrieve } from "./retrieval.js";
@@ -134,6 +135,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
         type:  { type: "string", description: "Filter by node type: identity|semantic|episodic|pattern|skill|goal|emotion|procedural|schema|decision|reflection|hypothesis|question|assumption|commitment|plan" },
         limit: { type: "number", description: "Max results to return (default 10)" },
         as_of: { type: ["string", "number"], description: "Time travel: what did I believe at this time? ISO date/time (\"2026-10-01\", \"2026-10-01T14:00:00Z\"), \"yesterday\", \"3 days ago\", or epoch milliseconds. Includes beliefs later retracted or superseded (marked as such)." },
+        include_dormant: { type: "boolean", description: "Also search memories that sleep made dormant (decayed out of recall; never deleted). Matches are revived and marked (revived from dormant). Use when something feels familiar but normal recall finds nothing." },
       },
       required: ["query"],
     },
@@ -213,11 +215,12 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
   },
   brain_expand: {
     description:
-      "Get full detail for a specific node: content, FSRS metrics, encoding context, and source episodes.",
+      "Get full detail for a specific node: content, FSRS metrics, encoding context, and source episodes. With source_turns, read the original conversation the memory came from: the source turn and N turns either side in that session (or, for a memory with no recorded source turn, the conversation around when it was written).",
     inputSchema: {
       type: "object",
       properties: {
         node_id: { type: "string", description: "Node ID to expand" },
+        source_turns: { type: "integer", minimum: 0, maximum: 10, description: "Turns of conversation to show either side of each source turn (default 0: source episode ids and excerpts only). Use 2-3 to read what was actually said." },
       },
       required: ["node_id"],
     },
@@ -509,7 +512,7 @@ export async function dispatchBrainTool(
       if (!validation.ok) {
         return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
       }
-      const { query, type: typeFilter, limit } = validation.data!;
+      const { query, type: typeFilter, limit, includeDormant } = validation.data!;
       const showMeta = config.beliefMetadata !== false;
       const rel = config.relativeTimeLabels !== false;
 
@@ -530,14 +533,28 @@ export async function dispatchBrainTool(
 
       let results = await hybridRetrieve(agentId, query, TOOL_SESSION_ID, config);
       if (typeFilter) results = results.filter((n) => n.type === typeFilter);
-      if (results.length === 0) return ok("No matching nodes found.");
+
+      // Dormant memories (sleep took them out of recall; never deleted): an explicit
+      // cue from the agent is how one earns its way back. Matches are revived.
+      const revived = new Set<string>();
+      if (includeDormant) {
+        const seen = new Set(results.map((n) => n.id));
+        for (const d of searchDormantNodes(agentId, query, limit)) {
+          if (seen.has(d.id) || (typeFilter && d.type !== typeFilter)) continue;
+          if (reviveNode(agentId, d.id, "revived: matched an explicit brain_query")) revived.add(d.id);
+          const back = getNode(agentId, d.id) ?? d;
+          results.push({ ...back, activation: 0 } as unknown as (typeof results)[number]);
+        }
+      }
+      if (results.length === 0) return ok(includeDormant ? "No matching nodes found (dormant memories included)." : "No matching nodes found.");
 
       const lines = results.slice(0, limit).map((n) => {
         const writer = n.writer_agent_id ? ` writer=${n.writer_agent_id}` : "";
         const meta = showMeta
           ? ` conf=${n.confidence ?? "medium"} src=${n.source_type ?? "legacy"}${rel ? ` (${relativeTime(n.created_at)})` : ""}${n.contradicted_at ? " DISPUTED" : ""}${n.sensitivity && n.sensitivity !== "normal" ? ` [${n.sensitivity}]` : ""}`
           : "";
-        return `[${n.id.slice(0, 8)}] (${n.type}) ${n.label}\n  ${n.content.slice(0, 300)}\n  R=${n.retrievability.toFixed(2)} sal=${n.salience.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}${meta}`;
+        const dormantTag = revived.has(n.id) ? " (revived from dormant)" : "";
+        return `[${n.id.slice(0, 8)}] (${n.type}) ${n.label}${dormantTag}\n  ${n.content.slice(0, 300)}\n  R=${n.retrievability.toFixed(2)} sal=${n.salience.toFixed(2)} imp=${n.importance.toFixed(2)}${writer}${meta}`;
       });
       return ok(lines.join("\n\n"));
     }
@@ -677,7 +694,7 @@ export async function dispatchBrainTool(
       if (!validation.ok) {
         return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
       }
-      const { node_id } = validation.data!;
+      const { node_id, sourceTurns } = validation.data!;
 
       const node = getNode(agentId, node_id);
       if (!node) return err(`node ${node_id} not found`);
@@ -696,6 +713,13 @@ export async function dispatchBrainTool(
         const from = node.valid_from ? new Date(node.valid_from).toISOString() : "always";
         const until = node.valid_until ? new Date(node.valid_until).toISOString() : "current";
         lines.push(`Valid: ${from} → ${until}`);
+      }
+      if (node.status && node.status !== "active") {
+        lines.push(`Status: ${node.status}${node.status_reason ? ` — ${node.status_reason}` : ""}${node.status === "dormant" ? " (kept on disk; brain_query include_dormant revives it)" : ""}`);
+      }
+      if (node.source === PROCEDURE_SOURCE) {
+        const p = getProcedure(agentId, node.id);
+        if (p) lines.push(`Procedure ledger: worked ${p.successes}×, failed ${p.failures}×; ${p.verified_at ? `verified ${new Date(p.verified_at).toISOString().slice(0, 10)} (injected as an operational rule)` : `unverified (verified after ${Math.max(1, Math.floor(config.procedureVerifyAfter ?? 2))} successful runs)`}`);
       }
 
       if (node.encoding_context) {
@@ -718,6 +742,8 @@ export async function dispatchBrainTool(
           }
         } catch { /* skip */ }
       }
+      // The conversation itself, lossless: the source turn(s) with context either side.
+      if (sourceTurns > 0) lines.push(...formatSourceTurns(agentId, node, sourceTurns));
 
       return ok(lines.join("\n"));
     }

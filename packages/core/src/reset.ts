@@ -46,6 +46,8 @@ const LEARNED_STATE_TABLES: readonly string[] = [
   "soul_id_map", "soul_provenance", "soul_events", "review_items",
   // rooms: this brain's copy of room items + conflicts (the registry is a separate db)
   "room_items", "room_conflicts",
+  // procedures compiled from plans + their run ledger
+  "procedures", "procedure_runs",
 ];
 
 /**

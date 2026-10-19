@@ -22,6 +22,8 @@ export interface BrainQueryArgs {
   query: string;
   type?: string;
   limit?: number;
+  /** Also search memories sleep made dormant, and revive the ones that match. */
+  includeDormant?: boolean;
 }
 
 export function validateBrainQuery(args: Record<string, unknown>): ValidationResult<BrainQueryArgs> {
@@ -70,6 +72,7 @@ export function validateBrainQuery(args: Record<string, unknown>): ValidationRes
       query: (query as string).trim(),
       type: type ? String(type) : undefined,
       limit: limit ?? 10,
+      includeDormant: args["include_dormant"] === true,
     },
   };
 }
@@ -392,6 +395,8 @@ export function validateBrainHistory(args: Record<string, unknown>): ValidationR
  */
 export interface BrainExpandArgs {
   node_id: string;
+  /** Turns of conversation to show either side of each source turn (0 = ids only, as before). */
+  sourceTurns: number;
 }
 
 export function validateBrainExpand(args: Record<string, unknown>): ValidationResult<BrainExpandArgs> {
@@ -404,6 +409,13 @@ export function validateBrainExpand(args: Record<string, unknown>): ValidationRe
     errors.push({ field: "node_id", message: "node_id cannot be empty" });
   }
 
+  let sourceTurns = 0;
+  if (args["source_turns"] !== undefined && args["source_turns"] !== null) {
+    const n = Number(args["source_turns"]);
+    if (!Number.isInteger(n) || n < 0 || n > 10) errors.push({ field: "source_turns", message: "source_turns must be an integer 0..10" });
+    else sourceTurns = n;
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors };
   }
@@ -412,6 +424,7 @@ export function validateBrainExpand(args: Record<string, unknown>): ValidationRe
     ok: true,
     data: {
       node_id: (node_id as string).trim(),
+      sourceTurns,
     },
   };
 }

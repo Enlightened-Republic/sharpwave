@@ -14,7 +14,8 @@ const own = { origin: "agent_turn", via: "openclaw" };
 
 describe("agent-evolved identity over the service + CLI", () => {
   it("applies, versions, holds, refuses, and the operator can read and revert", async () => {
-    const h = await startService();
+    // self-evolution from the agent's own turns is opt-in now (identity.changesFrom); the owner-only default is covered in identity-owner.test.ts
+    const h = await startService({ brain: { identity: { changesFrom: ["owner_turn", "reflection", "agent_turn"] } } });
     const port = String(h.url.split(":").pop());
     const cli = (args: string[]) => run(process.execPath, [SERVER_CLI, ...args, "--root", h.root, "--tailnet-ip", "none", "--port", port]);
     try {

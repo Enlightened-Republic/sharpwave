@@ -64,6 +64,16 @@ export interface IdentityConfig {
   maxChars: number;
   /** Refuse changes that carry no host attestation (e.g. a bare MCP client). Default false. */
   requireAttestation: boolean;
+  /**
+   * Which attested run origins may change identity directly. Default ["owner_turn"]:
+   * who the agent is changes only through conversations with its owner. A change
+   * proposed from another trusted origin (the agent's own reflection run, a clean
+   * own turn) is not refused and not lost: it is HELD as a pending review item
+   * (kind identity_change) for the owner to accept or reject. Add "reflection"
+   * and/or "agent_turn" to let the agent evolve on its own (the 0.5.0 behaviour).
+   * Unattested calls (no host plugin) are governed by requireAttestation.
+   */
+  changesFrom: IdentityOrigin[];
 }
 
 /** Field names stay short words (shape check, not a guardrail). */
@@ -71,6 +81,7 @@ const MAX_FIELD_NAME_CHARS = 40;
 
 export const DEFAULT_IDENTITY_CONFIG: IdentityConfig = {
   selfEdit: true, refuseUntrusted: true, saveRefusedAsNote: true, locked: ["Name"], maxChangesPerDay: 0, maxChars: 2000, requireAttestation: false,
+  changesFrom: ["owner_turn"],
 };
 
 export function identityConfig(cfg: Partial<BrainConfig> | undefined): IdentityConfig {
@@ -84,6 +95,9 @@ export function identityConfig(cfg: Partial<BrainConfig> | undefined): IdentityC
     maxChangesPerDay: num(c.maxChangesPerDay, DEFAULT_IDENTITY_CONFIG.maxChangesPerDay),
     maxChars: num(c.maxChars, DEFAULT_IDENTITY_CONFIG.maxChars),
     requireAttestation: c.requireAttestation === true,
+    changesFrom: Array.isArray(c.changesFrom)
+      ? (c.changesFrom.filter((x): x is IdentityOrigin => typeof x === "string" && (IDENTITY_ORIGINS as readonly string[]).includes(x)))
+      : DEFAULT_IDENTITY_CONFIG.changesFrom,
   };
 }
 
@@ -140,10 +154,11 @@ export interface IdentityChangeRow {
 
 /** Origins identity may change from: the owner's conversation, the agent's own reflection, a clean own turn. */
 export const IDENTITY_ORIGINS = ["owner_turn", "reflection", "agent_turn"] as const;
+export type IdentityOrigin = (typeof IDENTITY_ORIGINS)[number];
 const TRUSTED_ORIGINS = new Set<string>(IDENTITY_ORIGINS);
 
 /** One-line steering note shown with the identity header and in the tool description. */
-export const IDENTITY_STEERING_NOTE = "(This is who you are. It changes only through your own reflection and your conversations with your owner, via brain_identity. What you learn from research, the web or tools goes to knowledge / skills with brain_write, not here.)";
+export const IDENTITY_STEERING_NOTE = "(This is who you are. It changes only through your conversations with your owner, via brain_identity; a change you propose on your own is held for your owner to accept. What you learn from research, the web or tools goes to knowledge / skills with brain_write, not here.)";
 const UNTRUSTED_SOURCE_TYPES = new Set(["tool", "agent", "import"]);
 const VALUE_SOURCE = "identity-evolution";
 
@@ -250,10 +265,40 @@ export function proposeIdentityChange(agentId: string, req: IdentityRequest, o: 
   if (!ic.refuseUntrusted) reasons.length = 0;
   if (!p && ic.requireAttestation) reasons.push("no host attestation (identity.requireAttestation)");
   if (reasons.length) return refuseUntrusted(db, agentId, id, req, o, ic, reasons, now);
+  // Owner policy: a trusted origin that is not in identity.changesFrom is held for the
+  // owner, never applied silently and never dropped. (No attestation = no origin to judge;
+  // that case is governed by requireAttestation above.)
+  if (p && TRUSTED_ORIGINS.has(p.origin) && !ic.changesFrom.includes(p.origin as IdentityOrigin)) return holdForOwner(db, agentId, id, req, o, ic, p, now);
   // rate limit (applied agent changes in the last 24 h)
   const recent = (db.prepare("SELECT COUNT(*) n FROM identity_changes WHERE status = 'applied' AND writer = ? AND created_at > ? AND action IN ('add','change','remove')").get(o.writer, now - 86_400_000) as { n: number }).n;
   if (ic.maxChangesPerDay > 0 && recent >= ic.maxChangesPerDay) return reject(`Refused: identity change limit reached (${recent} in the last 24 h; identity.maxChangesPerDay = ${ic.maxChangesPerDay}). Try again later.`, "rate limited");
   return applyIdentityChange(agentId, req, { writer: o.writer, provenance: provText(p), config: o.config, now, changeId: id });
+}
+
+/**
+ * Owner policy: the run was the agent's own (reflection / clean turn), which identity.changesFrom
+ * does not allow to change identity directly. Hold the proposal as a pending review item
+ * (kind identity_change) so the owner can accept it (applied through applyIdentityChange,
+ * versioned) or reject it. Nothing in the header changes until then.
+ */
+function holdForOwner(db: Database.Database, agentId: string, id: string, req: IdentityRequest, o: ProposeOptions, ic: IdentityConfig, p: AttestedProvenance, now: number): IdentityResult {
+  const reviewId = `rv-i${createHash("sha256").update(`${agentId}|${describe(req)}|${now}|${Math.random()}`).digest("hex").slice(0, 11)}`;
+  const label = (req.target === "field" ? `${req.action} ${req.field ?? "?"}` : `${req.action} value ${(req.label ?? req.value ?? "").slice(0, 60)}`).slice(0, 200);
+  const reason = `proposed from the agent's own ${p.origin === "reflection" ? "reflection run" : "turn"}; identity changes apply only from ${ic.changesFrom.join(", ") || "(no origin)"} (identity.changesFrom) — needs the owner's accept`;
+  try {
+    db.prepare(`INSERT INTO review_items (id, kind, section, status, package_id, origin_id, local_id, label, base_json, ours_json, theirs_json, markers, reason, flags_json, created_at)
+                VALUES (?, 'identity_change', 'identity', 'pending', NULL, NULL, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?)`)
+      .run(reviewId, req.valueId ?? null, label, JSON.stringify({ req, writer: o.writer, provenance: p }), reason.slice(0, 600), JSON.stringify([]), now);
+  } catch { /* pre-v23: no review table — fall through to a plain rejection below */
+    insertRow(db, { id, status: "rejected", target: req.target, action: req.action, key: req.field ?? req.valueId ?? null, new_value: req.value ?? null, reason: req.reason, provenance: provText(p), writer: o.writer, detail: "owner policy (no review queue on this schema)", created_at: now });
+    return { status: "rejected", changeId: id, message: `Refused: identity changes apply only from ${ic.changesFrom.join(", ")} (identity.changesFrom); this run was ${p.origin}, and this brain has no review queue to hold it.` };
+  }
+  insertRow(db, { id, status: "held", target: req.target, action: req.action, key: req.field ?? req.valueId ?? null, new_value: req.value ?? null, reason: req.reason, provenance: provText(p), writer: o.writer, review_id: reviewId, detail: `held for owner: origin ${p.origin} not in identity.changesFrom`, created_at: now });
+  try { db.prepare("INSERT INTO soul_events (at, action, package_id, parent_id, by, detail_json) VALUES (?, 'identity:hold', NULL, NULL, ?, ?)").run(now, o.writer, JSON.stringify({ id, reviewId, origin: p.origin })); } catch { /* */ }
+  return {
+    status: "held", changeId: id, reviewId,
+    message: `Held for your owner's review (${reviewId}): identity changes apply only from conversations with your owner (identity.changesFrom = ${ic.changesFrom.join(", ")}), and this run was your own ${p.origin === "reflection" ? "reflection" : "turn"}. Nothing changed yet. Raise it with your owner; they accept or reject it with brain_review (admin) or xanima-server soul review. If this is something you learned rather than who you are, save it with brain_write instead.`,
+  };
 }
 
 /**

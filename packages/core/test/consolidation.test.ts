@@ -215,7 +215,7 @@ describe("consolidation", () => {
   // association hygiene sweep is ever ported into runDeepPhase.
 
   // ── T1.4 — Physical pruning ────────────────────────────────────────────
-  it("runConsolidation physically deletes orphan nodes with retrievability < 0.01", async () => {
+  it("runConsolidation physically deletes orphan nodes with retrievability < 0.01 (forgetting: delete)", async () => {
     const id = fresh();
     const db = getDb(id);
 
@@ -246,7 +246,7 @@ describe("consolidation", () => {
     expect(beforeCount).toBe(6);
 
     setMeta(id, "last_consolidation", String(Date.now() - 8 * 24 * 3600 * 1000));
-    await runConsolidation(id, DEFAULT_CONFIG, log);
+    await runConsolidation(id, { ...DEFAULT_CONFIG, forgetting: "delete" }, log);
 
     const afterCount = (db.prepare("SELECT COUNT(*) as n FROM nodes").get() as { n: number }).n;
     // 5 orphans deleted, identity survives.

@@ -142,12 +142,19 @@ async function extractBatch(
   const apiKey = config.openRouterApiKey || process.env["OPENROUTER_API_KEY"] || "";
   if (!apiKey) {
     log.warn("[xanima] extraction: no API key for any chain model — using heuristic fallback");
-    return { facts: heuristicFallback(episodes), temporal: heuristicTemporal(episodes) };
+    return ownerFactsNotIdentity({ facts: heuristicFallback(episodes), temporal: heuristicTemporal(episodes) });
   }
 
   const prompt = buildExtractionPrompt(episodes);
 
   try {
+    return ownerFactsNotIdentity(await extractWithModel());
+  } catch (err) {
+    log.warn(`[xanima] extraction failed on ${config.ingestionModel}: ${String(err)} — using heuristic fallback`);
+    return ownerFactsNotIdentity({ facts: heuristicFallback(episodes), temporal: heuristicTemporal(episodes) });
+  }
+
+  async function extractWithModel(): Promise<{ facts: ExtractedFact[]; temporal: TemporalRelation[] }> {
     // 1500-token budget + temperature 0.1 preserved from clawbrain-v4's inline
     // fetch (extraction.ts:159-168) — low temperature keeps the JSON payload
     // near-deterministic and prose-free. The shared callOpenRouter defaults to
@@ -162,10 +169,21 @@ async function extractBatch(
 
     log.info(`[xanima] extraction: ${parsed.facts.length} facts + ${parsed.temporal.length} temporal from ${episodes.length} episodes (model=${config.ingestionModel})`);
     return parsed;
-  } catch (err) {
-    log.warn(`[xanima] extraction failed on ${config.ingestionModel}: ${String(err)} — using heuristic fallback`);
-    return { facts: heuristicFallback(episodes), temporal: heuristicTemporal(episodes) };
   }
+}
+
+/**
+ * An extracted "identity" fact is about the OWNER ("I'm a morning person", "my name
+ * is X" in a user message). Stored with type identity it would become one of the
+ * AGENT's core values (the identity header, the Soul Package's values section).
+ * Who the agent is changes only through brain_identity with the owner's say, so
+ * such facts are kept as semantic facts about the owner instead.
+ */
+function ownerFactsNotIdentity<T extends { facts: ExtractedFact[] }>(r: T): T {
+  r.facts = r.facts.map((f) => f.type === "identity"
+    ? { ...f, type: "semantic" as NodeType, label: `About the owner: ${f.label}`.slice(0, 80) }
+    : f);
+  return r;
 }
 
 /**

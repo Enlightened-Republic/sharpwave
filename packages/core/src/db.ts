@@ -395,7 +395,7 @@ function initSchema(db: Database.Database): void {
 }
 
 /** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 27;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -810,6 +810,39 @@ export function migrateV26(db: Database.Database): void {
   try { db.exec("CREATE INDEX IF NOT EXISTS nodes_accessed_at ON nodes(accessed_at)"); } catch { /* ok */ }
 }
 
+/**
+ * v27 — procedures: learning that became a step-by-step skill (procedures.ts).
+ *   procedures      one row per compiled `procedural` node: the ordered steps, the
+ *                   success / failure ledger, and when it was verified.
+ *   procedure_runs  one row per plan that was counted (success / failure / skipped /
+ *                   unmatched), so a plan never counts twice.
+ * Additive; node / edge / episode counts never change.
+ */
+export function migrateV27(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS procedures (
+      node_id         TEXT PRIMARY KEY,
+      title           TEXT NOT NULL,
+      steps_json      TEXT NOT NULL DEFAULT '[]',
+      successes       INTEGER NOT NULL DEFAULT 0,
+      failures        INTEGER NOT NULL DEFAULT 0,
+      last_success_at INTEGER,
+      last_failure_at INTEGER,
+      verified_at     INTEGER,
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS procedure_runs (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      procedure_id TEXT,
+      plan_id      TEXT NOT NULL UNIQUE,
+      outcome      TEXT NOT NULL,
+      at           INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS procedure_runs_proc ON procedure_runs(procedure_id, at);
+  `);
+}
+
 function runMigrations(db: Database.Database): void {
   const TARGET = SCHEMA_VERSION;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
@@ -1110,6 +1143,9 @@ function runMigrations(db: Database.Database): void {
   }
   if (current < 26) {
     migrateV26(db);
+  }
+  if (current < 27) {
+    migrateV27(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

@@ -102,7 +102,7 @@ export type SourceType = "user" | "self_observation" | "inference" | "tool" | "a
 export const SOURCE_TYPES: readonly SourceType[] = ["user", "self_observation", "inference", "tool", "agent", "seed", "legacy", "import"];
 
 /** Lifecycle of a belief. Only `active` nodes are recalled or injected. */
-export type BeliefStatus = "active" | "superseded" | "retracted" | "archived";
+export type BeliefStatus = "active" | "superseded" | "retracted" | "archived" | "dormant";
 export const BELIEF_STATUSES: readonly BeliefStatus[] = ["active", "superseded", "retracted", "archived"];
 
 /** `confirm_before_acting`: shown with a marker; the agent should check before acting on it. */
@@ -181,6 +181,29 @@ export interface BrainConfig {
   consolidationTimeGateHours: number;
   consolidationEpisodeGate: number;
   pruneAfterDays: number;
+  /**
+   * What sleep's Deep phase does with memories whose retrievability has decayed
+   * to nothing (< 0.01, no live links; old episodic < 0.05 past pruneAfterDays).
+   *   "dormant" (default): keep the row; mark it dormant and take it out of
+   *     recall ranking. A dormant memory comes back when the agent searches for
+   *     it (brain_query include_dormant) — forgetting is a retrieval failure,
+   *     not erasure.
+   *   "delete": the pre-0.6 behaviour — physically delete the row.
+   */
+  forgetting: "dormant" | "delete";
+  /**
+   * Sleep compiles plans that were carried out (brain_plan ... done, >= 2 done
+   * steps) into `procedural` nodes with numbered steps and a success / failure
+   * ledger (procedures.ts). Default true.
+   */
+  procedures: boolean;
+  /**
+   * Successful runs before a compiled procedure is marked verified and enters
+   * the always-on operational-rules block. Default 2 (one success is a story,
+   * two is a procedure). A matching abandoned plan counts as a failure; when
+   * failures catch up, the procedure is demoted again.
+   */
+  procedureVerifyAfter: number;
   ingestionModel: string;
   remModel?: string;
   openRouterApiKey: string;
@@ -269,7 +292,7 @@ export interface BrainConfig {
   quarantine?: "off" | "log" | "enforce";
   /** Agent-evolved identity (brain_identity): locked fields (default ["Name"]), rate limit, size caps. See identity.ts. */
   /** brain_identity guardrails; each is one switch (see identity.ts). */
-  identity?: { selfEdit?: boolean; refuseUntrusted?: boolean; saveRefusedAsNote?: boolean; locked?: string[]; maxChangesPerDay?: number; maxChars?: number; requireAttestation?: boolean };
+  identity?: { selfEdit?: boolean; refuseUntrusted?: boolean; saveRefusedAsNote?: boolean; locked?: string[]; maxChangesPerDay?: number; maxChars?: number; requireAttestation?: boolean; changesFrom?: Array<"owner_turn" | "reflection" | "agent_turn"> };
 }
 
 export interface InjectionCategories {
@@ -302,6 +325,9 @@ export const DEFAULT_CONFIG: BrainConfig = {
   consolidationTimeGateHours: 4,
   consolidationEpisodeGate: 10,
   pruneAfterDays: 90,
+  forgetting: "dormant",
+  procedures: true,
+  procedureVerifyAfter: 2,
   ingestionModel: "openrouter/deepseek/deepseek-v4-flash",
   openRouterApiKey: process.env["OPENROUTER_API_KEY"] ?? envGet("OPENROUTER_API_KEY") ?? "",
   embeddingModel: envGet("EMBEDDING_MODEL") ?? "ollama/qwen3-embedding:0.6b",

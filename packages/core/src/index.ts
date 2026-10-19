@@ -30,7 +30,7 @@ export type { GetDbOptions } from "./db.js";
 // ---------------------------------------------------------------------------
 export {
   writeNode, getNode, touchNode, ftsSearchNodes, getNeighbors, getTopByType,
-  getOperationalProcedures,
+  getOperationalProcedures, markNodesAccessed, reviveNode, searchDormantNodes,
   getActiveGoals, getReviewQueue, propagateDopamineSpike, decayEligibilityTraces,
   decayRetrievability, fsrsRetrievability, getRetrievability, computeSalience,
   computePsHash, psHashHamming, updatePsHash,
@@ -66,7 +66,7 @@ export { hybridRetrieve, bootstrapRetrieve } from "./retrieval.js";
 export {
   appendEpisode, getEpisodesSince, getEpisodeCount, getEpisodesByIds,
   getRecentEpisodes, searchEpisodes, incrementEpisodeRipple, scoreImportance,
-  getSessionSummaries,
+  getSessionSummaries, getTurnsAround, getEpisodesNear, formatSourceTurns,
 } from "./episodes.js";
 
 // ---------------------------------------------------------------------------
@@ -112,6 +112,9 @@ export { detectSkillCandidates, generateSkill } from "./skill-evolution.js";
 // reset — full brain wipe
 // ---------------------------------------------------------------------------
 export { resetBrain } from "./reset.js";
+// procedures — learning that became a step-by-step skill
+export { runProcedurePass, getProcedure, listProcedures, procedureCounts, formatProcedure, PROCEDURE_SOURCE } from "./procedures.js";
+export type { ProcedureRow, ProcedureView, ProcedurePassResult } from "./procedures.js";
 export type { ResetResult } from "./reset.js";
 
 // ---------------------------------------------------------------------------

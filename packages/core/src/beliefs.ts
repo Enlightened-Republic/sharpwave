@@ -10,6 +10,7 @@
 // WAL connections.
 
 import { openItemCounts } from "./open-items.js";
+import { procedureCounts } from "./procedures.js";
 import { commitmentCounts } from "./plans.js";
 import type Database from "better-sqlite3";
 import { getDb, getMeta, setMeta, bumpWriteCounter, SCHEMA_VERSION } from "./db.js";
@@ -236,11 +237,16 @@ export interface SleepSummary {
   commitmentNudgeQueued?: boolean;
   goalsDrifting?: number;
   alignmentNoteQueued?: boolean;
+  // procedures (0.6)
+  proceduresCompiled?: number;
+  proceduresReinforced?: number;
+  proceduresVerified?: number;
+  proceduresDemoted?: number;
 }
 
 export interface BrainStatus {
   schemaVersion: number;
-  nodes: { total: number; active: number; retracted: number; superseded: number; archived: number };
+  nodes: { total: number; active: number; retracted: number; superseded: number; archived: number; dormant: number };
   episodes: number;
   beliefs: {
     lowConfidence: number;
@@ -260,6 +266,8 @@ export interface BrainStatus {
   reviews?: { pending: number; byKind: Record<string, number>; flagged: number };
   /** Xanima 0.5.0: poisoning quarantine counts (review_items kind "quarantine") */
   quarantine?: { mode: "off" | "log" | "enforce"; held: number; logged: number; accepted: number; rejected: number };
+  /** Procedures compiled from carried-out plans; verified ones are injected as operational rules. */
+  procedures?: { total: number; verified: number };
   /** Xanima 0.5.0 follow-up: agent-evolved identity (versions, held changes, locked fields) */
   identity?: IdentityStatus | null;
   /** Xanima 0.5.0: active brain_focus, described */
@@ -289,7 +297,7 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
   })();
   const total = one("SELECT COUNT(*) AS n FROM nodes");
   const live = "(valid_until IS NULL OR valid_until > ?)";
-  const byStatus: Record<string, number> = { active: 0, retracted: 0, superseded: 0, archived: 0 };
+  const byStatus: Record<string, number> = { active: 0, retracted: 0, superseded: 0, archived: 0, dormant: 0 };
   let lowConfidence = 0, contradicted = 0, flagged = 0;
   const bySource: Record<string, number> = {};
   const byConfidence: Record<string, number> = {};
@@ -373,7 +381,7 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
 
   return {
     schemaVersion: (() => { try { return (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined)?.version ?? SCHEMA_VERSION; } catch { return SCHEMA_VERSION; } })(),
-    nodes: { total, active: byStatus["active"] ?? 0, retracted: byStatus["retracted"] ?? 0, superseded: byStatus["superseded"] ?? 0, archived: byStatus["archived"] ?? 0 },
+    nodes: { total, active: byStatus["active"] ?? 0, retracted: byStatus["retracted"] ?? 0, superseded: byStatus["superseded"] ?? 0, archived: byStatus["archived"] ?? 0, dormant: byStatus["dormant"] ?? 0 },
     episodes,
     beliefs: { lowConfidence, contradicted, flaggedForReview: flagged, bySource, byConfidence },
     hotConflicts: conflicts.map((c) => ({ a: { id: c.aid, label: c.al }, b: { id: c.bid, label: c.bl }, since: c.at })),
@@ -386,6 +394,7 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
     quarantine,
     identity,
     focus,
+    procedures: procedureCounts(db),
     lastSleep: { at: lastAt, ago: lastAt ? relativeTime(lastAt, now) : "never", summary },
     injection: { budgetChars, headerChars, recallCapChars, estimatedTokens: Math.ceil((headerChars + recallCapChars) / 4) },
     attention,
@@ -395,13 +404,14 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
 export function formatBrainStatus(s: BrainStatus, label = ""): string {
   const L: string[] = [];
   L.push(`${label ? `[${label}] ` : ""}Brain status (schema v${s.schemaVersion})`);
-  L.push(`  nodes: ${s.nodes.active} active / ${s.nodes.total} total (retracted ${s.nodes.retracted}, superseded ${s.nodes.superseded}, archived ${s.nodes.archived}); episodes ${s.episodes}`);
+  L.push(`  nodes: ${s.nodes.active} active / ${s.nodes.total} total (retracted ${s.nodes.retracted}, superseded ${s.nodes.superseded}, archived ${s.nodes.archived}${s.nodes.dormant ? `, dormant ${s.nodes.dormant}` : ""}); episodes ${s.episodes}`);
   L.push(`  beliefs: ${s.beliefs.lowConfidence} low-confidence, ${s.beliefs.contradicted} disputed, ${s.beliefs.flaggedForReview} flagged for review`);
   const src = Object.entries(s.beliefs.bySource).map(([k, n]) => `${k}=${n}`).join(" ");
   if (src) L.push(`  sources: ${src}`);
   L.push(`  injection: ~${s.injection.estimatedTokens} tokens (header ${s.injection.headerChars} + recall cap ${s.injection.recallCapChars} chars; budget ${s.injection.budgetChars})`);
   const ss = s.lastSleep.summary;
   L.push(`  last sleep: ${s.lastSleep.ago}${ss ? ` — nodes ${ss.nodesBefore}→${ss.nodesAfter}, edges ${ss.edgesBefore}→${ss.edgesAfter}, pruned ${ss.pruned}, new contradictions ${ss.newContradictions}, flagged ${ss.flaggedForReview}${ss.decisionsMerged || ss.decisionsCalibrated || ss.lessonsPromoted ? `, decisions merged ${ss.decisionsMerged ?? 0} / calibrated ${ss.decisionsCalibrated ?? 0} / lessons promoted ${ss.lessonsPromoted ?? 0}` : ""}${ss.lessonsMerged ? `, lessons merged into existing skills ${ss.lessonsMerged}` : ""}${ss.draftsExpired ? `, decision drafts expired ${ss.draftsExpired}` : ""}${ss.reflectionsWritten || ss.reflectionsMerged ? `, reflections written ${ss.reflectionsWritten ?? 0} / merged ${ss.reflectionsMerged ?? 0}` : ""}${ss.openDraftsExpired ? `, open-item drafts expired ${ss.openDraftsExpired}` : ""}${ss.commitmentsOverdue ? `, commitments overdue ${ss.commitmentsOverdue}` : ""}${ss.goalsChecked ? `, goals checked ${ss.goalsChecked} (${ss.goalsDrifting ?? 0} drifting)` : ""}${ss.legacyNoiseFlagged ? ` (${ss.legacyNoiseFlagged} look like legacy heartbeat/NO_REPLY noise — review, then retire with xanima-server noise)` : ""}` : ""}`);
+  if (s.procedures?.total) L.push(`  procedures: ${s.procedures.total} compiled from carried-out plans (${s.procedures.verified} verified → injected as operational rules)`);
   if (s.decisions.total || s.decisions.draftsExpired) L.push(`  decisions: ${s.decisions.total} (${s.decisions.pending} awaiting outcome, ${s.decisions.resolved} resolved, ${s.decisions.lessonsPromoted} lessons promoted${s.decisions.lessonsMerged ? `, ${s.decisions.lessonsMerged} merged into existing skills` : ""})`);
   if (s.decisions.draftsPending || s.decisions.draftsExpired) L.push(`  decision drafts: ${s.decisions.draftsPending} pending (auto-extracted, unconfirmed), ${s.decisions.draftsExpired} expired`);
   if (s.goals.active || s.goals.paused || s.goals.done || s.goals.untracked) L.push(`  goals: ${s.goals.active} active (${s.goals.tracked} drift-checked), ${s.goals.paused} paused, ${s.goals.done} done${s.goals.untracked ? ` · ${s.goals.untracked} untracked legacy (not injected; brain_update_goal action=track to adopt, or xanima-server goals pause-legacy)` : ""}`);

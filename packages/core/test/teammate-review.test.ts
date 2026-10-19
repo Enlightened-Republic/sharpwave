@@ -31,7 +31,7 @@ import type { BrainNode, NeuromodState } from "../src/types.js";
 
 // xanima-core's db.ts does not export SCHEMA_VERSION — assert against the
 // known current migration target (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 26; // v26 = created_at / accessed_at indexes (v25 = identity_changes, v24 = rooms + nodes.scope_tags)
+const SCHEMA_VERSION = 27; // v27 = procedures (v26 = created_at / accessed_at indexes, v25 = identity_changes)
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 import { runBeliefReviewPass, saveSleepSummary, countNodesEdges } from "./beliefs.js";
 import { runDecisionPass, prepareLessonVectors } from "./decisions.js";
+import { runProcedurePass } from "./procedures.js";
 import { runDriftPass } from "./goals.js";
 import { runReflectionPass } from "./reflection.js";
 import { expireOpenItemDrafts } from "./open-items.js";
@@ -255,6 +256,11 @@ export async function runConsolidation(
   if ((config.intentDriftCheck ?? "sleep") === "sleep") {
     try { drift = runDriftPass(agentId, config, log); } catch (err) { log.warn(`[xanima] drift pass failed (agent=${agentId}): ${String(err)}`); }
   }
+  // Procedural learning: plans that were carried out become step-by-step procedures;
+  // repeated success verifies them, failure demotes them (procedures.ts).
+  let procs = { compiled: 0, reinforced: 0, failed: 0, verified: 0, demoted: 0, ids: [] as string[] };
+  try { procs = runProcedurePass(agentId, config, log); } catch (err) { log.warn(`[xanima] procedure pass failed (agent=${agentId}): ${String(err)}`); }
+  if (procs.compiled || procs.verified || procs.demoted) log.info(`[xanima] procedures: ${procs.compiled} compiled, ${procs.reinforced} reinforced, ${procs.verified} verified, ${procs.demoted} demoted (agent=${agentId})`);
 
   // Xanima 0.3.0: reflection phase (reflection: "sleep"), captured open-item
   // draft expiry, commitment overdue / blocked check (queues one nudge).
@@ -265,7 +271,8 @@ export async function runConsolidation(
   try { openExpired = expireOpenItemDrafts(agentId, config).length; } catch (err) { log.warn(`[xanima] open-item expiry failed (agent=${agentId}): ${String(err)}`); }
   try { commit = runCommitmentCheck(agentId, config); } catch (err) { log.warn(`[xanima] commitment check failed (agent=${agentId}): ${String(err)}`); }
 
-  // Phase 4: Deep — physically prune near-zero retrievability orphans
+  // Phase 4: Deep — near-zero retrievability orphans go dormant (config.forgetting
+  // "dormant", default) or are physically pruned ("delete").
   const pruned = runDeepPhase(agentId, config, log);
 
   // Reset ripple counts after consolidation
@@ -286,6 +293,7 @@ export async function runConsolidation(
       goalsChecked: drift.checked, goalsDrifting: drift.drifting.length, alignmentNoteQueued: drift.noteId !== null,
       reflectionsWritten: refl.written, reflectionsMerged: refl.merged, openDraftsExpired: openExpired,
       commitmentsOverdue: commit.overdue, commitmentsBlocked: commit.blocked, commitmentNudgeQueued: commit.nudged !== null,
+      proceduresCompiled: procs.compiled, proceduresReinforced: procs.reinforced, proceduresVerified: procs.verified, proceduresDemoted: procs.demoted,
     });
   } catch { /* summary is best-effort */ }
 
@@ -544,8 +552,20 @@ async function extractNodesFromEpisode(
     .filter((s) => s.length > 20);
 
   for (const sentence of sentences) {
-    const type = classifySentence(sentence);
+    let type = classifySentence(sentence);
     if (!type) continue;
+
+    // Who the agent is never changes by being slept on. A sentence that reads like
+    // an identity statement ("I am …", "I value …", "I prefer …") in the OWNER's
+    // turns is a fact about the owner and is kept as one; in the agent's own or a
+    // tool's turns it is dropped — identity changes only through brain_identity,
+    // with the owner's say (identity.changesFrom).
+    let ownerStatement = false;
+    if (type === "identity") {
+      if (episode.role !== "user") continue;
+      type = "semantic";
+      ownerStatement = true;
+    }
 
     let importance = importanceForType(type);
     // T4.2 — NE arousal multiplier: when NE high, sweep more aggressively.
@@ -553,12 +573,12 @@ async function extractNodesFromEpisode(
     // Skip low importance sentences unless user role
     if (importance < 0.5 && episode.role !== "user") continue;
 
-    const label = sentence.slice(0, 60).replace(/\s+/g, " ");
+    const label = (ownerStatement ? `Owner said: ${sentence.slice(0, 48)}` : sentence.slice(0, 60)).replace(/\s+/g, " ");
     const existing = ftsSearchNodes(agentId, label, 3);
     const duplicate = existing.some((n) => jaccardSim(n.label, label) > 0.8);
     if (duplicate) continue;
 
-    const id = writeNode(agentId, type, label, sentence, {
+    const id = writeNode(agentId, type, label, ownerStatement ? `The owner said: "${sentence}"` : sentence, {
       importance,
       source: "sws",
       writerAgentId: SYSTEM_SLEEP_WRITER,
@@ -1263,7 +1283,9 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): number
   // Xanima: never prune history (retracted / superseded beliefs back `as_of`)
   // or items sleep flagged for review. Guarded so pre-v19 schemas still work.
   const hasBelief = (db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('nodes') WHERE name = 'review_flagged_at'").get() as { n: number }).n > 0;
-  const beliefKeep = hasBelief ? "AND n.review_flagged_at IS NULL AND n.status NOT IN ('retracted', 'superseded')" : "";
+  // Already-dormant rows are not candidates again (they would be re-counted every sleep).
+  const beliefKeep = hasBelief ? "AND n.review_flagged_at IS NULL AND n.status NOT IN ('retracted', 'superseded', 'dormant')" : "";
+  const dormantMode = hasBelief && config.forgetting !== "delete";
 
   // Gather candidates in one query. UNION the two prune predicates that
   // existed in v3:
@@ -1294,6 +1316,33 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): number
   `).all(cutoff) as { id: string; rowid: number }[];
 
   if (candidates.length === 0) return 0;
+
+  if (dormantMode) {
+    // Forgetting is a retrieval failure, not erasure. The row, its vector and its
+    // Hebbian associations stay; valid_until takes it out of every recall path
+    // (the same mechanism the retire registry uses) and status = 'dormant' marks
+    // why. reviveNode() / brain_query {include_dormant} bring it back.
+    const now = Date.now();
+    const sleep = db.prepare(`
+      UPDATE nodes
+      SET status = 'dormant',
+          status_reason = ?,
+          status_changed_at = ?,
+          valid_until = COALESCE(valid_until, ?),
+          updated_at = ?
+      WHERE id = ? AND status = 'active'
+    `);
+    const delWm = db.prepare("DELETE FROM working_memory WHERE node_id = ?");
+    let dormant = 0;
+    db.transaction(() => {
+      for (const c of candidates) {
+        const r = sleep.run("dormant: retrievability decayed to nothing with no live links (sleep Deep phase)", now, now, now, c.id);
+        if (r.changes > 0) { delWm.run(c.id); dormant++; }
+      }
+    })();
+    if (dormant > 0) log.info(`[xanima] Deep: ${dormant} node(s) made dormant (kept on disk; revive with brain_query include_dormant)`);
+    return dormant;
+  }
 
   const delVec = db.prepare("DELETE FROM nodes_vec WHERE rowid = ?");
   const delWm = db.prepare("DELETE FROM working_memory WHERE node_id = ?");

@@ -5,7 +5,20 @@ import { bumpCounter, logObservabilityEvent } from "./observability.js";
 import { findNearDuplicates } from "./entity-resolution.js";
 import { blendEmotionalWeight } from "./utils.js";
 import type { BrainNode, BrainConfig, NodeType, NeuromodState, SourceType, ConfidenceLevel, Sensitivity } from "./types.js";
+import { SENSITIVITIES } from "./types.js";
 import { inferSourceType, parseConfidence, confidenceLevel, DEFAULT_CONFIDENCE_BY_SOURCE } from "./belief-meta.js";
+
+/** Stricter sensitivity wins on a merge: normal < sensitive < confirm_before_acting. */
+function stricterSensitivity(a: string | null | undefined, b: string | null | undefined): Sensitivity {
+  const rank = (s: string | null | undefined) => Math.max(0, (SENSITIVITIES as readonly string[]).indexOf(s ?? "normal"));
+  return (rank(a) >= rank(b) ? (a ?? "normal") : (b ?? "normal")) as Sensitivity;
+}
+function unionJson(existing: string | null, add: string[] | undefined, cap: number): string | null {
+  let cur: string[] = [];
+  try { cur = existing ? (JSON.parse(existing) as string[]) : []; } catch { cur = []; }
+  const out = [...new Set([...cur, ...(add ?? [])])].slice(0, cap);
+  return out.length ? JSON.stringify(out) : null;
+}
 
 const HALF_LIFE_DAYS: Record<string, number> = {
   identity:    180,
@@ -319,6 +332,14 @@ export function writeNode(
   const stability = halfLife * importance * (1 + Math.abs(emotionalWeight) * 0.5);
   const salience = computeSalience(importance, emotionalWeight, 1.0, 0, 0);
 
+  const sourceType: SourceType = opts.sourceType ?? inferSourceType({ source: opts.source, writerAgentId: opts.writerAgentId, brainAgentId: agentId });
+  const parsedConf = parseConfidence(opts.confidence);
+  const belief = {
+    sourceType,
+    score: parsedConf?.score ?? DEFAULT_CONFIDENCE_BY_SOURCE[sourceType],
+    level: parsedConf?.level ?? confidenceLevel(DEFAULT_CONFIDENCE_BY_SOURCE[sourceType]),
+  };
+
   // Pre-write near-duplicate gate (item #4 / feature parity with Python
   // `_find_near_duplicates`). Skipped when caller passes `deduplicate: false`
   // so the embedding pipeline (which deliberately wants fresh rows even if
@@ -337,24 +358,45 @@ export function writeNode(
         // ripple_count + 1 treats the row's own creation write as weight 1,
         // so the first merge adopts the new observation fully and each
         // subsequent merge resists outliers a little more.
+        // Never downgrade: the merge used to keep only the canonical row's belief
+        // metadata, so a user restating an inferred fact with high confidence (or
+        // marking it confirm-before-acting) left the stored belief as a low-confidence
+        // guess. The merged belief keeps the higher confidence, the stricter
+        // sensitivity, the stronger source type, the union of evidence / source
+        // episodes, and stays verified once verified. The writer stays the creator.
         executeWithWalRetrySync(
           db,
           (d) => {
             const existing = d.prepare(
-              "SELECT emotional_weight, ripple_count FROM nodes WHERE id = ?",
-            ).get(canonical) as { emotional_weight: number; ripple_count: number } | undefined;
+              "SELECT emotional_weight, ripple_count, confidence_score, sensitivity, source_type, evidence, episode_ids, verified_at FROM nodes WHERE id = ?",
+            ).get(canonical) as { emotional_weight: number; ripple_count: number; confidence_score: number | null; sensitivity: string | null; source_type: string | null; evidence: string | null; episode_ids: string | null; verified_at: number | null } | undefined;
             const blended = existing
               ? blendEmotionalWeight(existing.emotional_weight, existing.ripple_count + 1, emotionalWeight, 1)
               : { value: emotionalWeight, weight: 1 };
+            const score = Math.max(existing?.confidence_score ?? 0, belief.score);
+            const existingSource = (existing?.source_type ?? "legacy") as SourceType;
+            const strongerSource = (DEFAULT_CONFIDENCE_BY_SOURCE[belief.sourceType] ?? 0) > (DEFAULT_CONFIDENCE_BY_SOURCE[existingSource] ?? 0) ? belief.sourceType : existingSource;
             d.prepare(`
               UPDATE nodes
               SET importance = MAX(importance, ?),
                   access_count = access_count + 1,
                   emotional_weight = ?,
                   ripple_count = ripple_count + 1,
+                  confidence_score = ?,
+                  confidence = ?,
+                  sensitivity = ?,
+                  source_type = ?,
+                  evidence = ?,
+                  episode_ids = ?,
+                  verified_at = COALESCE(verified_at, ?),
                   updated_at = ?
               WHERE id = ?
-            `).run(importance, blended.value, Date.now(), canonical);
+            `).run(
+              importance, blended.value, score, confidenceLevel(score),
+              stricterSensitivity(existing?.sensitivity, opts.sensitivity), strongerSource,
+              unionJson(existing?.evidence ?? null, opts.evidence, 50), unionJson(existing?.episode_ids ?? null, opts.episode_ids, 50),
+              opts.verifiedAt ?? null, Date.now(), canonical,
+            );
           },
           { op: `nodes.dedupeMerge:${canonical.slice(0, 8)}` },
         );
@@ -373,14 +415,6 @@ export function writeNode(
       // Never block a write on the dedupe path — fall through to insert.
     }
   }
-
-  const sourceType: SourceType = opts.sourceType ?? inferSourceType({ source: opts.source, writerAgentId: opts.writerAgentId, brainAgentId: agentId });
-  const parsedConf = parseConfidence(opts.confidence);
-  const belief = {
-    sourceType,
-    score: parsedConf?.score ?? DEFAULT_CONFIDENCE_BY_SOURCE[sourceType],
-    level: parsedConf?.level ?? confidenceLevel(DEFAULT_CONFIDENCE_BY_SOURCE[sourceType]),
-  };
 
   executeWithWalRetrySync(
     db,
@@ -556,6 +590,67 @@ export function touchNode(agentId: string, nodeId: string, quality = 4): void {
   );
 }
 
+/** Retrievability a revived memory comes back with: findable, but it has to earn its stability again. */
+const REVIVE_RETRIEVABILITY = 0.3;
+
+/**
+ * Bring a dormant memory back into recall: status active, valid_until cleared,
+ * retrievability lifted to a floor, access recorded. Returns false when the
+ * node is not dormant (nothing changed).
+ */
+export function reviveNode(agentId: string, nodeId: string, reason = "revived"): boolean {
+  const db = getDb(agentId);
+  const now = Date.now();
+  let changed = 0;
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      changed = d.prepare(`
+        UPDATE nodes
+        SET status = 'active',
+            status_reason = ?,
+            status_changed_at = ?,
+            valid_until = NULL,
+            retrievability = MAX(retrievability, ?),
+            stability = MAX(stability, 1.0),
+            access_count = access_count + 1,
+            accessed_at = ?,
+            updated_at = ?
+        WHERE id = ? AND status = 'dormant'
+      `).run(reason, now, REVIVE_RETRIEVABILITY, now, now, nodeId).changes;
+    },
+    { op: `nodes.revive:${nodeId.slice(0, 8)}` },
+  );
+  if (changed > 0) { bumpWriteCounter(db); bumpCounter("memories_revived"); logObservabilityEvent("revive", { nodeId, reason }); }
+  return changed > 0;
+}
+
+/**
+ * Full-text search restricted to dormant memories (the ones sleep took out of
+ * recall). Used by brain_query {include_dormant}: an explicit cue is how a
+ * dormant memory earns its way back.
+ */
+export function searchDormantNodes(agentId: string, query: string, limit = 10): BrainNode[] {
+  const db = getDb(agentId);
+  const safe = query.replace(/"/g, "").trim();
+  if (!safe) return [];
+  const run = (matchExpr: string): BrainNode[] => {
+    try {
+      return db.prepare(`
+        SELECT n.* FROM nodes n
+        JOIN nodes_fts f ON n.rowid = f.rowid
+        WHERE nodes_fts MATCH ? AND n.status = 'dormant'
+        ORDER BY rank
+        LIMIT ?
+      `).all(matchExpr, limit) as BrainNode[];
+    } catch { return []; }
+  };
+  const phrase = run(`"${safe}"`);
+  if (phrase.length) return phrase;
+  const terms = safe.toLowerCase().split(/\s+/).filter((t) => t.length >= 3 && !FTS_STOPWORDS.has(t)).map((t) => `"${t}"`);
+  return terms.length ? run(terms.join(" OR ")) : [];
+}
+
 export function getNode(agentId: string, id: string): BrainNode | null {
   const db = getDb(agentId);
   return db.prepare("SELECT * FROM nodes WHERE id = ?").get(id) as BrainNode | null;
@@ -699,10 +794,11 @@ export function getTopByType(agentId: string, type: NodeType, limit = 5): BrainN
  * title-fragment artifacts like "## Step 1: Register Your Agent" (35 chars)
  * that would otherwise outrank real rules on importance alone.
  *
- * Sleep extractions (`source='sws'`) are excluded unless someone verified them
+ * Sleep-derived nodes (`source` sws / sws:procedure) are excluded until verified
  * (`verified_at`): SWS turns any "do the following / step 1 ..." sentence in an
  * episode into a procedural node, and episodes carry pasted emails, web pages
- * and tool output. This block is presented to the model as rules "verified on
+ * and tool output; a compiled procedure is verified by repeated success
+ * (procedures.ts). This block is presented to the model as rules "verified on
  * THIS machine, follow them over your priors" — untrusted text must not reach
  * it by being slept on. Those nodes still take part in ordinary recall ranking.
  */
@@ -718,7 +814,7 @@ export function getOperationalProcedures(
       AND status = 'active'
       AND (valid_until IS NULL OR valid_until > ?)
       AND length(content) >= ?
-      AND (source IS NULL OR source != 'sws' OR verified_at IS NOT NULL)
+      AND (source IS NULL OR source NOT LIKE 'sws%' OR verified_at IS NOT NULL)
     ORDER BY (CASE WHEN source = 'brain_manager' THEN 1 ELSE 0 END) DESC,
              importance DESC,
              salience DESC
