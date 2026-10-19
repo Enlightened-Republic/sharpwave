@@ -279,7 +279,7 @@ export interface BrainConfig {
   quarantine?: "off" | "log" | "enforce";
   /** Agent-evolved identity (brain_identity): locked fields (default ["Name"]), rate limit, size caps. See identity.ts. */
   /** brain_identity guardrails; each is one switch (see identity.ts). */
-  identity?: { selfEdit?: boolean; refuseUntrusted?: boolean; saveRefusedAsNote?: boolean; locked?: string[]; maxChangesPerDay?: number; maxChars?: number; requireAttestation?: boolean };
+  identity?: { selfEdit?: boolean; refuseUntrusted?: boolean; saveRefusedAsNote?: boolean; locked?: string[]; maxChangesPerDay?: number; maxChars?: number; requireAttestation?: boolean; changesFrom?: Array<"owner_turn" | "reflection" | "agent_turn"> };
 }
 
 export interface InjectionCategories {

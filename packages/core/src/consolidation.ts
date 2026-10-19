@@ -545,8 +545,20 @@ async function extractNodesFromEpisode(
     .filter((s) => s.length > 20);
 
   for (const sentence of sentences) {
-    const type = classifySentence(sentence);
+    let type = classifySentence(sentence);
     if (!type) continue;
+
+    // Who the agent is never changes by being slept on. A sentence that reads like
+    // an identity statement ("I am …", "I value …", "I prefer …") in the OWNER's
+    // turns is a fact about the owner and is kept as one; in the agent's own or a
+    // tool's turns it is dropped — identity changes only through brain_identity,
+    // with the owner's say (identity.changesFrom).
+    let ownerStatement = false;
+    if (type === "identity") {
+      if (episode.role !== "user") continue;
+      type = "semantic";
+      ownerStatement = true;
+    }
 
     let importance = importanceForType(type);
     // T4.2 — NE arousal multiplier: when NE high, sweep more aggressively.
@@ -554,12 +566,12 @@ async function extractNodesFromEpisode(
     // Skip low importance sentences unless user role
     if (importance < 0.5 && episode.role !== "user") continue;
 
-    const label = sentence.slice(0, 60).replace(/\s+/g, " ");
+    const label = (ownerStatement ? `Owner said: ${sentence.slice(0, 48)}` : sentence.slice(0, 60)).replace(/\s+/g, " ");
     const existing = ftsSearchNodes(agentId, label, 3);
     const duplicate = existing.some((n) => jaccardSim(n.label, label) > 0.8);
     if (duplicate) continue;
 
-    const id = writeNode(agentId, type, label, sentence, {
+    const id = writeNode(agentId, type, label, ownerStatement ? `The owner said: "${sentence}"` : sentence, {
       importance,
       source: "sws",
       writerAgentId: SYSTEM_SLEEP_WRITER,

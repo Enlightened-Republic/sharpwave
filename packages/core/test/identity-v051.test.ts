@@ -21,7 +21,10 @@ import { DEFAULT_CONFIG } from "../src/types.js";
 const opened: string[] = [];
 function fresh(prefix = "idv"): string { const id = `${prefix}-${randomUUID().slice(0, 8)}`; opened.push(id); return id; }
 afterEach(() => { for (const id of opened.splice(0)) closeDb(id); });
-const cfg = { ...DEFAULT_CONFIG };
+// These tests cover the agent evolving its own identity, which is now opt-in
+// (identity.changesFrom; the default is owner_turn only — see stronger-brain.test.ts).
+const SELF = ["owner_turn", "reflection", "agent_turn"] as Array<"owner_turn" | "reflection" | "agent_turn">;
+const cfg = { ...DEFAULT_CONFIG, identity: { changesFrom: SELF } };
 const TRIPP = ["# IDENTITY.md - Who Am I?", "", "- **Name:** Tripp", "- **Creature:** familiar — a friendly navigator spirit", "- **Vibe:** warm, direct", "- **Emoji:** 🧭"].join("\n");
 const own = { origin: "agent_turn", via: "openclaw" };
 const idText = (a: string) => (getDb(a).prepare("SELECT identity FROM self_model").get() as { identity: string }).identity;
@@ -75,7 +78,7 @@ describe("brain_identity", () => {
     expect(tool(a, { action: "change", field: "Vibe", value: "x".repeat(2001), reason: "long", attested_provenance: own }).text).toMatch(/too long/);
     expect(idText(a)).toBe(TRIPP);
     // custom lock list (Name AND Emoji) + rate limit 2/day
-    const c2 = { ...cfg, identity: { locked: ["Name", "Emoji"], maxChangesPerDay: 2 } };
+    const c2 = { ...cfg, identity: { changesFrom: SELF, locked: ["Name", "Emoji"], maxChangesPerDay: 2 } };
     expect(tool(a, { action: "change", field: "Emoji", value: "🗺️", reason: "maps", attested_provenance: own }, c2).text).toMatch(/locked/);
     expect(tool(a, { action: "add", field: "Trait", value: "one", reason: "first", attested_provenance: own }, c2).isError).toBeFalsy();
     expect(tool(a, { action: "change", field: "Trait", value: "two", reason: "second", attested_provenance: own }, c2).isError).toBeFalsy();
@@ -97,10 +100,10 @@ describe("brain_identity", () => {
     const open = { ...cfg, identity: { refuseUntrusted: false } };
     expect(tool(a, { action: "change", field: "Mood", value: "from a page", reason: "r", attested_provenance: { origin: "tool_output", tools: ["web_fetch"] } }, open).text).toMatch(/Identity updated \(v13\)/);
     expect(identityHistory(getDb(a))[0]!.provenance).toMatch(/tool_output/);
-    const free = { ...cfg, identity: { locked: [], maxChars: 0 } };
+    const free = { ...cfg, identity: { changesFrom: SELF, locked: [], maxChars: 0 } };
     expect(tool(a, { action: "change", field: "Name", value: "Tripp II", reason: "r", attested_provenance: own }, free).text).toMatch(/Identity updated \(v14\)/);
     expect(tool(a, { action: "add", field: "Long", value: "y".repeat(3000), reason: "r", attested_provenance: own }, free).text).toMatch(/Identity updated \(v15\)/);
-    expect(identityConfig(undefined)).toEqual({ selfEdit: true, refuseUntrusted: true, saveRefusedAsNote: true, locked: ["Name"], maxChangesPerDay: 0, maxChars: 2000, requireAttestation: false });
+    expect(identityConfig(undefined)).toEqual({ selfEdit: true, refuseUntrusted: true, saveRefusedAsNote: true, locked: ["Name"], maxChangesPerDay: 0, maxChars: 2000, requireAttestation: false, changesFrom: ["owner_turn"] });
   });
 
   it("owner conversation and reflection runs apply; the steering note is in the tool and the header", async () => {
