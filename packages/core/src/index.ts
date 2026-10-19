@@ -112,6 +112,9 @@ export { detectSkillCandidates, generateSkill } from "./skill-evolution.js";
 // reset — full brain wipe
 // ---------------------------------------------------------------------------
 export { resetBrain } from "./reset.js";
+// procedures — learning that became a step-by-step skill
+export { runProcedurePass, getProcedure, listProcedures, procedureCounts, formatProcedure, PROCEDURE_SOURCE } from "./procedures.js";
+export type { ProcedureRow, ProcedureView, ProcedurePassResult } from "./procedures.js";
 export type { ResetResult } from "./reset.js";
 
 // ---------------------------------------------------------------------------

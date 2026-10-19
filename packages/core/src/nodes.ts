@@ -794,10 +794,11 @@ export function getTopByType(agentId: string, type: NodeType, limit = 5): BrainN
  * title-fragment artifacts like "## Step 1: Register Your Agent" (35 chars)
  * that would otherwise outrank real rules on importance alone.
  *
- * Sleep extractions (`source='sws'`) are excluded unless someone verified them
+ * Sleep-derived nodes (`source` sws / sws:procedure) are excluded until verified
  * (`verified_at`): SWS turns any "do the following / step 1 ..." sentence in an
  * episode into a procedural node, and episodes carry pasted emails, web pages
- * and tool output. This block is presented to the model as rules "verified on
+ * and tool output; a compiled procedure is verified by repeated success
+ * (procedures.ts). This block is presented to the model as rules "verified on
  * THIS machine, follow them over your priors" — untrusted text must not reach
  * it by being slept on. Those nodes still take part in ordinary recall ranking.
  */
@@ -813,7 +814,7 @@ export function getOperationalProcedures(
       AND status = 'active'
       AND (valid_until IS NULL OR valid_until > ?)
       AND length(content) >= ?
-      AND (source IS NULL OR source != 'sws' OR verified_at IS NOT NULL)
+      AND (source IS NULL OR source NOT LIKE 'sws%' OR verified_at IS NOT NULL)
     ORDER BY (CASE WHEN source = 'brain_manager' THEN 1 ELSE 0 END) DESC,
              importance DESC,
              salience DESC

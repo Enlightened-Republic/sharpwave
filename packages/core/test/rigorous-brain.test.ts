@@ -34,7 +34,7 @@ import type { BrainNode } from "../src/types.js";
 
 // xanima-core's db.ts does not export a SCHEMA_VERSION symbol — assert against
 // the known current migration target (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 26; // v26 = created_at / accessed_at indexes (v25 = identity_changes, v24 = rooms + nodes.scope_tags)
+const SCHEMA_VERSION = 27; // v27 = procedures (v26 = created_at / accessed_at indexes, v25 = identity_changes)
 
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 function freshSession(): string { return `sess-${randomUUID()}`; }

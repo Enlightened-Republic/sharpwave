@@ -1,5 +1,6 @@
 import { runBeliefReviewPass, saveSleepSummary, countNodesEdges } from "./beliefs.js";
 import { runDecisionPass, prepareLessonVectors } from "./decisions.js";
+import { runProcedurePass } from "./procedures.js";
 import { runDriftPass } from "./goals.js";
 import { runReflectionPass } from "./reflection.js";
 import { expireOpenItemDrafts } from "./open-items.js";
@@ -255,6 +256,11 @@ export async function runConsolidation(
   if ((config.intentDriftCheck ?? "sleep") === "sleep") {
     try { drift = runDriftPass(agentId, config, log); } catch (err) { log.warn(`[xanima] drift pass failed (agent=${agentId}): ${String(err)}`); }
   }
+  // Procedural learning: plans that were carried out become step-by-step procedures;
+  // repeated success verifies them, failure demotes them (procedures.ts).
+  let procs = { compiled: 0, reinforced: 0, failed: 0, verified: 0, demoted: 0, ids: [] as string[] };
+  try { procs = runProcedurePass(agentId, config, log); } catch (err) { log.warn(`[xanima] procedure pass failed (agent=${agentId}): ${String(err)}`); }
+  if (procs.compiled || procs.verified || procs.demoted) log.info(`[xanima] procedures: ${procs.compiled} compiled, ${procs.reinforced} reinforced, ${procs.verified} verified, ${procs.demoted} demoted (agent=${agentId})`);
 
   // Xanima 0.3.0: reflection phase (reflection: "sleep"), captured open-item
   // draft expiry, commitment overdue / blocked check (queues one nudge).
@@ -287,6 +293,7 @@ export async function runConsolidation(
       goalsChecked: drift.checked, goalsDrifting: drift.drifting.length, alignmentNoteQueued: drift.noteId !== null,
       reflectionsWritten: refl.written, reflectionsMerged: refl.merged, openDraftsExpired: openExpired,
       commitmentsOverdue: commit.overdue, commitmentsBlocked: commit.blocked, commitmentNudgeQueued: commit.nudged !== null,
+      proceduresCompiled: procs.compiled, proceduresReinforced: procs.reinforced, proceduresVerified: procs.verified, proceduresDemoted: procs.demoted,
     });
   } catch { /* summary is best-effort */ }
 

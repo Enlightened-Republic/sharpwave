@@ -59,6 +59,7 @@ import {
 import type { SourceType, Sensitivity } from "./types.js";
 import { getSelfModel, updateSelfModelField } from "./self-model.js";
 import { searchEpisodes, getEpisodesByIds, formatSourceTurns } from "./episodes.js";
+import { getProcedure, PROCEDURE_SOURCE } from "./procedures.js";
 import { getDb } from "./db.js";
 import { forgetNodeById } from "./consolidation.js";
 import { hybridRetrieve } from "./retrieval.js";
@@ -715,6 +716,10 @@ export async function dispatchBrainTool(
       }
       if (node.status && node.status !== "active") {
         lines.push(`Status: ${node.status}${node.status_reason ? ` — ${node.status_reason}` : ""}${node.status === "dormant" ? " (kept on disk; brain_query include_dormant revives it)" : ""}`);
+      }
+      if (node.source === PROCEDURE_SOURCE) {
+        const p = getProcedure(agentId, node.id);
+        if (p) lines.push(`Procedure ledger: worked ${p.successes}×, failed ${p.failures}×; ${p.verified_at ? `verified ${new Date(p.verified_at).toISOString().slice(0, 10)} (injected as an operational rule)` : `unverified (verified after ${Math.max(1, Math.floor(config.procedureVerifyAfter ?? 2))} successful runs)`}`);
       }
 
       if (node.encoding_context) {

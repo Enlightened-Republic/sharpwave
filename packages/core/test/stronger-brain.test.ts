@@ -2,9 +2,9 @@
  * "Stronger brain" follow-ups (October 2026):
  *   1. forgetting is dormancy, not deletion
  *   2. identity changes only with the owner; sleep never mints identity nodes
+ *   3. plans that were carried out become verified step-by-step procedures
  *   4. brain_expand source_turns: the conversation a memory came from
  *   5. the dedupe merge never downgrades a belief
- * (item 3 has its own describe block below as it lands)
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -18,6 +18,9 @@ import { dispatchBrainTool } from "../src/tools.js";
 import { dispatchIdentityTool, identityConfig, listValues } from "../src/identity.js";
 import { listReviews, acceptReview, rejectReview } from "../src/soul.js";
 import { appendEpisode } from "../src/episodes.js";
+import { createPlan, updatePlan } from "../src/plans.js";
+import { getOperationalProcedures } from "../src/nodes.js";
+import { listProcedures, procedureCounts, getProcedure } from "../src/procedures.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
 const opened: string[] = [];
@@ -157,6 +160,90 @@ describe("identity changes only from conversations with the owner", () => {
     expect(owner!.content).toMatch(/^The owner said: "I value honesty/);
     expect(rows.some((r) => /meticulous planner|Nova/.test(r.content))).toBe(false);
     expect(listValues(getDb(a)).length).toBe(0);
+  });
+});
+
+// ─── 3. procedures from plans that were carried out ──────────────────────────
+
+describe("procedures: a plan carried out becomes a step-by-step skill", () => {
+  const STEPS = ["run the test suite", "bump the version in package.json", "publish to npm with the release tag"];
+  function carryOut(a: string, title: string, steps: string[], outcome: "done" | "abandon" = "done", doneSteps = steps.length) {
+    const plan = createPlan(a, { title, steps }).plan!;
+    for (let i = 1; i <= doneSteps; i++) expect(updatePlan(a, plan.node_id, { action: "step", step: i, status: "done" }).ok).toBe(true);
+    expect(updatePlan(a, plan.node_id, { action: outcome }).ok).toBe(true);
+    return plan.node_id;
+  }
+  async function sleep(a: string) {
+    setMeta(a, "last_consolidation", String(Date.now() - 8 * DAY));
+    await runConsolidation(a, cfg, log);
+  }
+
+  it("compiles a done plan into an unverified procedure; a second success verifies it and it enters the operational rules", async () => {
+    const a = fresh();
+    carryOut(a, "Release the newsletter package", STEPS);
+    await sleep(a);
+    expect(procedureCounts(getDb(a))).toEqual({ total: 1, verified: 0 });
+    const [p] = listProcedures(a);
+    expect(p!.steps).toEqual(STEPS);
+    expect(p!.successes).toBe(1);
+    const node = getNode(a, p!.node_id)!;
+    expect(node.type).toBe("procedural");
+    expect(node.source).toBe("sws:procedure");
+    expect(node.content).toMatch(/^Procedure: Release the newsletter package\. Unverified: worked 1 time\.\n1\. run the test suite\n2\. bump the version/);
+    expect(node.verified_at).toBeNull();
+    expect(getOperationalProcedures(a, 10).map((n) => n.id)).not.toContain(node.id); // one success is a story
+    const ex = await dispatchBrainTool("brain_expand", a, { node_id: node.id }, cfg);
+    expect(ex.text).toMatch(/Procedure ledger: worked 1×, failed 0×; unverified \(verified after 2 successful runs\)/);
+
+    // sleeping again changes nothing: the plan was counted once
+    await sleep(a);
+    expect(getProcedure(a, node.id)!.successes).toBe(1);
+
+    // the same procedure, carried out again (slightly different wording of the title)
+    carryOut(a, "Release the newsletter package again", ["run the test suite", "bump the version in package.json", "publish to npm with the release tag"]);
+    await sleep(a);
+    expect(procedureCounts(getDb(a))).toEqual({ total: 1, verified: 1 });
+    const v = getProcedure(a, node.id)!;
+    expect(v.successes).toBe(2);
+    expect(v.verified_at).not.toBeNull();
+    expect(getNode(a, node.id)!.content).toMatch(/Verified: worked 2 times\./);
+    expect(getOperationalProcedures(a, 10).map((n) => n.id)).toContain(node.id);
+    const st = await dispatchBrainTool("brain_status", a, {}, cfg);
+    expect(st.text).toMatch(/procedures: 1 compiled from carried-out plans \(1 verified/);
+  });
+
+  it("abandoned plans that match count as failures and demote a procedure; one-step plans and unrelated abandons are ignored", async () => {
+    const a = fresh();
+    carryOut(a, "Rotate the API keys", ["revoke the old key", "mint a new key", "update the secret store"]);
+    carryOut(a, "Rotate the API keys", ["revoke the old key", "mint a new key", "update the secret store"]);
+    carryOut(a, "Restart the gateway", ["run the restart script"]); // one step: not a procedure
+    carryOut(a, "Something unrelated entirely", ["bake bread", "eat bread"], "abandon");
+    await sleep(a);
+    expect(procedureCounts(getDb(a))).toEqual({ total: 1, verified: 1 });
+    const id = listProcedures(a)[0]!.node_id;
+
+    carryOut(a, "Rotate the API keys", ["revoke the old key", "mint a new key"], "abandon", 2);
+    await sleep(a);
+    let p = getProcedure(a, id)!;
+    expect(p.failures).toBe(1);
+    expect(p.verified_at).not.toBeNull(); // 2 successes still beat 1 failure
+    carryOut(a, "Rotate the API keys", ["revoke the old key", "mint a new key"], "abandon", 2);
+    await sleep(a);
+    p = getProcedure(a, id)!;
+    expect(p.failures).toBe(2);
+    expect(p.verified_at).toBeNull(); // demoted: failures caught up
+    expect(getNode(a, id)!.content).toMatch(/Unverified: worked 2 times, failed 2\./);
+    expect(getOperationalProcedures(a, 10).map((n) => n.id)).not.toContain(id);
+    const runs = getDb(a).prepare("SELECT outcome, COUNT(*) n FROM procedure_runs GROUP BY outcome ORDER BY outcome").all() as Array<{ outcome: string; n: number }>;
+    expect(runs).toEqual([{ outcome: "failure", n: 2 }, { outcome: "skipped", n: 1 }, { outcome: "success", n: 2 }, { outcome: "unmatched", n: 1 }]);
+  });
+
+  it("procedures: false switches the pass off", async () => {
+    const a = fresh();
+    carryOut(a, "Deploy the site", ["build", "upload", "purge the cache"]);
+    setMeta(a, "last_consolidation", String(Date.now() - 8 * DAY));
+    await runConsolidation(a, { ...cfg, procedures: false }, log);
+    expect(procedureCounts(getDb(a))).toEqual({ total: 0, verified: 0 });
   });
 });
 

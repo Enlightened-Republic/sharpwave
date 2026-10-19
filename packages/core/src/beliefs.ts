@@ -10,6 +10,7 @@
 // WAL connections.
 
 import { openItemCounts } from "./open-items.js";
+import { procedureCounts } from "./procedures.js";
 import { commitmentCounts } from "./plans.js";
 import type Database from "better-sqlite3";
 import { getDb, getMeta, setMeta, bumpWriteCounter, SCHEMA_VERSION } from "./db.js";
@@ -236,6 +237,11 @@ export interface SleepSummary {
   commitmentNudgeQueued?: boolean;
   goalsDrifting?: number;
   alignmentNoteQueued?: boolean;
+  // procedures (0.6)
+  proceduresCompiled?: number;
+  proceduresReinforced?: number;
+  proceduresVerified?: number;
+  proceduresDemoted?: number;
 }
 
 export interface BrainStatus {
@@ -260,6 +266,8 @@ export interface BrainStatus {
   reviews?: { pending: number; byKind: Record<string, number>; flagged: number };
   /** Xanima 0.5.0: poisoning quarantine counts (review_items kind "quarantine") */
   quarantine?: { mode: "off" | "log" | "enforce"; held: number; logged: number; accepted: number; rejected: number };
+  /** Procedures compiled from carried-out plans; verified ones are injected as operational rules. */
+  procedures?: { total: number; verified: number };
   /** Xanima 0.5.0 follow-up: agent-evolved identity (versions, held changes, locked fields) */
   identity?: IdentityStatus | null;
   /** Xanima 0.5.0: active brain_focus, described */
@@ -386,6 +394,7 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
     quarantine,
     identity,
     focus,
+    procedures: procedureCounts(db),
     lastSleep: { at: lastAt, ago: lastAt ? relativeTime(lastAt, now) : "never", summary },
     injection: { budgetChars, headerChars, recallCapChars, estimatedTokens: Math.ceil((headerChars + recallCapChars) / 4) },
     attention,
@@ -402,6 +411,7 @@ export function formatBrainStatus(s: BrainStatus, label = ""): string {
   L.push(`  injection: ~${s.injection.estimatedTokens} tokens (header ${s.injection.headerChars} + recall cap ${s.injection.recallCapChars} chars; budget ${s.injection.budgetChars})`);
   const ss = s.lastSleep.summary;
   L.push(`  last sleep: ${s.lastSleep.ago}${ss ? ` — nodes ${ss.nodesBefore}→${ss.nodesAfter}, edges ${ss.edgesBefore}→${ss.edgesAfter}, pruned ${ss.pruned}, new contradictions ${ss.newContradictions}, flagged ${ss.flaggedForReview}${ss.decisionsMerged || ss.decisionsCalibrated || ss.lessonsPromoted ? `, decisions merged ${ss.decisionsMerged ?? 0} / calibrated ${ss.decisionsCalibrated ?? 0} / lessons promoted ${ss.lessonsPromoted ?? 0}` : ""}${ss.lessonsMerged ? `, lessons merged into existing skills ${ss.lessonsMerged}` : ""}${ss.draftsExpired ? `, decision drafts expired ${ss.draftsExpired}` : ""}${ss.reflectionsWritten || ss.reflectionsMerged ? `, reflections written ${ss.reflectionsWritten ?? 0} / merged ${ss.reflectionsMerged ?? 0}` : ""}${ss.openDraftsExpired ? `, open-item drafts expired ${ss.openDraftsExpired}` : ""}${ss.commitmentsOverdue ? `, commitments overdue ${ss.commitmentsOverdue}` : ""}${ss.goalsChecked ? `, goals checked ${ss.goalsChecked} (${ss.goalsDrifting ?? 0} drifting)` : ""}${ss.legacyNoiseFlagged ? ` (${ss.legacyNoiseFlagged} look like legacy heartbeat/NO_REPLY noise — review, then retire with xanima-server noise)` : ""}` : ""}`);
+  if (s.procedures?.total) L.push(`  procedures: ${s.procedures.total} compiled from carried-out plans (${s.procedures.verified} verified → injected as operational rules)`);
   if (s.decisions.total || s.decisions.draftsExpired) L.push(`  decisions: ${s.decisions.total} (${s.decisions.pending} awaiting outcome, ${s.decisions.resolved} resolved, ${s.decisions.lessonsPromoted} lessons promoted${s.decisions.lessonsMerged ? `, ${s.decisions.lessonsMerged} merged into existing skills` : ""})`);
   if (s.decisions.draftsPending || s.decisions.draftsExpired) L.push(`  decision drafts: ${s.decisions.draftsPending} pending (auto-extracted, unconfirmed), ${s.decisions.draftsExpired} expired`);
   if (s.goals.active || s.goals.paused || s.goals.done || s.goals.untracked) L.push(`  goals: ${s.goals.active} active (${s.goals.tracked} drift-checked), ${s.goals.paused} paused, ${s.goals.done} done${s.goals.untracked ? ` · ${s.goals.untracked} untracked legacy (not injected; brain_update_goal action=track to adopt, or xanima-server goals pause-legacy)` : ""}`);
