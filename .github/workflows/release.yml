@@ -1,0 +1,52 @@
+name: release
+
+# Publishes xanima-core and xanima (the MCP server) to npm when a version tag is
+# pushed (v0.6.0 → both packages at 0.6.0). xanima-server is private (installed
+# from source) and is not published.
+#
+# Auth: an npm automation token in the repository secret NPM_TOKEN, or npm
+# trusted publishing (OIDC) configured for both packages on npmjs.com, in which
+# case the secret can be left unset. `--provenance` attaches the build attestation.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run test:all
+      - name: tag matches the package versions
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const v = (p) => JSON.parse(fs.readFileSync(p, "utf8")).version;
+            const core = v("packages/core/package.json"), mcp = v("packages/mcp/package.json");
+            const tag = process.env.GITHUB_REF_NAME.replace(/^v/, "");
+            if (core !== tag || mcp !== tag) { console.error(`tag ${tag} != xanima-core ${core} / xanima ${mcp}`); process.exit(1); }
+            console.log(`releasing xanima-core ${core} and xanima ${mcp}`);
+          '
+      - name: publish xanima-core
+        run: npm publish --workspace xanima-core --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish xanima (MCP server)
+        run: npm publish --workspace xanima --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

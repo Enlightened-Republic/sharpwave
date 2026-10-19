@@ -2,9 +2,11 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
-## Unreleased — stronger brain
+## 0.6.0 (Xanima) — 2026-10-19
 
-Follow-ups to the audit, from the design discussion on what a brain that learns for life needs.
+A brain that learns for life. Two groups of changes, from a full audit of the three packages and the design discussion that followed. Additive schema bumps v26 (indexes) and v27 (procedures); node / edge / episode counts never change on migration. Packages: `xanima-core` 0.6.0, `xanima` 0.6.0 (MCP server), `xanima-server` 0.6.0 (brain service, from source). The OpenClaw plugin `xanima-openclaw` 0.6.0 vendors this engine.
+
+### Stronger brain
 
 - **Forgetting is dormancy, not deletion (`forgetting: "dormant"`, default):** sleep's Deep phase used to physically delete any memory whose retrievability had decayed below 0.01 with no live links (and old episodic nodes past `pruneAfterDays`). A memory now stays on disk with `status: dormant`: out of every recall path and the header, still linked to its source turns, vector kept. `brain_query {include_dormant: true}` searches dormant memories too and revives what matches (status active, retrievability lifted to 0.3, tagged "(revived from dormant)"); `brain_status` shows a dormant count and `brain_expand` the status and reason. `forgetting: "delete"` restores the physical prune. Library: `reviveNode`, `searchDormantNodes`. Raw episodes were never deleted and still are not.
 - **Identity changes only with the owner (`identity.changesFrom`, default `["owner_turn"]`):** `brain_identity` used to apply changes from the agent's own reflection runs and clean own turns at once. By default a change now applies only when the host attests the run as a conversation with the owner; a proposal from the agent's own reflection or turn is **held** as a pending review item (kind `identity_change`, `brain_status` "N held for review") for the owner to accept (`brain_review accept` as admin, `xanima-server soul review accept`) or reject. Add `"reflection"` / `"agent_turn"` to `changesFrom` for the 0.5.0 self-evolution. Unattested calls (no host plugin) stay governed by `requireAttestation`.
@@ -13,7 +15,7 @@ Follow-ups to the audit, from the design discussion on what a brain that learns 
 - **Read the conversation a memory came from (`brain_expand {source_turns: N}`):** a memory records the turns it was distilled from (`episode_ids`), and `brain_expand` showed their ids and a 300-char excerpt. With `source_turns` it now prints each source turn (marked `»`) with N turns of context either side from the same session, full text; a memory with no recorded source turn (one the agent wrote with `brain_write` mid-conversation) shows the conversation around the moment it was written. Raw turns are never deleted, so this is the lossless path from any memory back to what was actually said. Service: same option, `format: "json"` adds `source_turns`. Library: `getTurnsAround`, `getEpisodesNear`, `formatSourceTurns`.
 - **Dedupe merge never downgrades a belief (fix):** when a write is a near-duplicate of a stored node the two are merged. The merge used to keep only the stored node's belief metadata, so a user restating an inferred guess with high confidence (or marking it confirm-before-acting) left it stored as a low-confidence inference. The merged belief now keeps the higher confidence, the stricter sensitivity, the stronger source type, the union of evidence and source episodes, and stays verified once verified. The writer stays the creator.
 
-## Unreleased — audit fixes
+### Audit fixes
 
 Fixes from a full read of `packages/core`, `packages/mcp` and `packages/server` (October 2026). No new features; one additive schema bump (v26, two indexes).
 
