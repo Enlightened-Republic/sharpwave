@@ -58,7 +58,7 @@ import {
 } from "./belief-meta.js";
 import type { SourceType, Sensitivity } from "./types.js";
 import { getSelfModel, updateSelfModelField } from "./self-model.js";
-import { searchEpisodes, getEpisodesByIds } from "./episodes.js";
+import { searchEpisodes, getEpisodesByIds, formatSourceTurns } from "./episodes.js";
 import { getDb } from "./db.js";
 import { forgetNodeById } from "./consolidation.js";
 import { hybridRetrieve } from "./retrieval.js";
@@ -214,11 +214,12 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
   },
   brain_expand: {
     description:
-      "Get full detail for a specific node: content, FSRS metrics, encoding context, and source episodes.",
+      "Get full detail for a specific node: content, FSRS metrics, encoding context, and source episodes. With source_turns, read the original conversation the memory came from: the source turn and N turns either side in that session (or, for a memory with no recorded source turn, the conversation around when it was written).",
     inputSchema: {
       type: "object",
       properties: {
         node_id: { type: "string", description: "Node ID to expand" },
+        source_turns: { type: "integer", minimum: 0, maximum: 10, description: "Turns of conversation to show either side of each source turn (default 0: source episode ids and excerpts only). Use 2-3 to read what was actually said." },
       },
       required: ["node_id"],
     },
@@ -692,7 +693,7 @@ export async function dispatchBrainTool(
       if (!validation.ok) {
         return err(`Invalid arguments:\n${formatValidationErrors(validation.errors!)}`);
       }
-      const { node_id } = validation.data!;
+      const { node_id, sourceTurns } = validation.data!;
 
       const node = getNode(agentId, node_id);
       if (!node) return err(`node ${node_id} not found`);
@@ -736,6 +737,8 @@ export async function dispatchBrainTool(
           }
         } catch { /* skip */ }
       }
+      // The conversation itself, lossless: the source turn(s) with context either side.
+      if (sourceTurns > 0) lines.push(...formatSourceTurns(agentId, node, sourceTurns));
 
       return ok(lines.join("\n"));
     }

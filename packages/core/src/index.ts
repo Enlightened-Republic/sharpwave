@@ -66,7 +66,7 @@ export { hybridRetrieve, bootstrapRetrieve } from "./retrieval.js";
 export {
   appendEpisode, getEpisodesSince, getEpisodeCount, getEpisodesByIds,
   getRecentEpisodes, searchEpisodes, incrementEpisodeRipple, scoreImportance,
-  getSessionSummaries,
+  getSessionSummaries, getTurnsAround, getEpisodesNear, formatSourceTurns,
 } from "./episodes.js";
 
 // ---------------------------------------------------------------------------

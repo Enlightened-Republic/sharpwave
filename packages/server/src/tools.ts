@@ -24,7 +24,7 @@ import {
   dispatchBrainTool, BRAIN_TOOL_DEFS,
   validateBrainQuery, validateBrainWrite, validateBrainLink, validateBrainSupersede,
   validateBrainHistory, validateBrainExpand, validateBrainEdges, formatValidationErrors,
-  getDb, forgetNodeById, reviveNode, searchDormantNodes,
+  getDb, forgetNodeById, reviveNode, searchDormantNodes, formatSourceTurns,
   retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
   parseAsOf, relativeTime, beliefTag, parseConfidence, parseBeliefArgs,
   CONTINUITY_TOOL_NAMES, CONTINUITY_READ_ONLY_TOOLS, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost,
@@ -904,13 +904,16 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         if (vis === "invalid") return err(`visibility must be "private" or "shared"`);
         const v = validateBrainExpand(stripClientFields(args));
         if (!v.ok) return err(`Invalid arguments:\n${formatValidationErrors(v.errors!)}`);
-        const { node_id } = v.data!;
+        const { node_id, sourceTurns } = v.data!;
         const brain = findNodeBrain(ctx, node_id, vis);
         if (!brain) return err(`node ${node_id} not found`);
         const node = ctx.brains.read(brain, (db) => readNode(db, node_id))!;
+        // The conversation the memory came from (source turn ± N in its session, or the turns
+        // around when it was written). Read on the brain's own connection: core's helpers resolve by agent id.
+        const sourceLines = sourceTurns > 0 ? await ctx.brains.write(brain, () => formatSourceTurns(brain, node, sourceTurns)) : [];
         if (args["format"] === "json") {
           const { embedding: _e, ps_hash: _p, ...rest } = node;
-          return ok(JSON.stringify({ brain: label(ctx, brain), node: rest }, null, 2));
+          return ok(JSON.stringify({ brain: label(ctx, brain), node: rest, ...(sourceTurns > 0 ? { source_turns: sourceLines.join("\n").trim() } : {}) }, null, 2));
         }
         const lines = [
           `Node: ${node.id} (${node.type}) ${node.label}   [${label(ctx, brain)}]`,
@@ -921,6 +924,8 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
           `Writer: ${node.writer_agent_id ?? "(none)"} | Source: ${node.source ?? "(none)"}`,
         ];
         if (node.valid_until) lines.push(`Valid until: ${new Date(node.valid_until).toISOString()} (superseded/expired)`);
+        if (node.status && node.status !== "active") lines.push(`Status: ${node.status}${node.status_reason ? ` — ${node.status_reason}` : ""}`);
+        lines.push(...sourceLines);
         return ok(lines.join("\n"));
       }
 

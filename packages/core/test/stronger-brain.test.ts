@@ -2,8 +2,9 @@
  * "Stronger brain" follow-ups (October 2026):
  *   1. forgetting is dormancy, not deletion
  *   2. identity changes only with the owner; sleep never mints identity nodes
+ *   4. brain_expand source_turns: the conversation a memory came from
  *   5. the dedupe merge never downgrades a belief
- * (items 3-4 have their own describe blocks below as they land)
+ * (item 3 has its own describe block below as it lands)
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -156,6 +157,64 @@ describe("identity changes only from conversations with the owner", () => {
     expect(owner!.content).toMatch(/^The owner said: "I value honesty/);
     expect(rows.some((r) => /meticulous planner|Nova/.test(r.content))).toBe(false);
     expect(listValues(getDb(a)).length).toBe(0);
+  });
+});
+
+// ─── 4. expand a memory to its source turns ───────────────────────────────────
+
+describe("brain_expand source_turns: back to the conversation a memory came from", () => {
+  function conversation(a: string) {
+    const ids: string[] = [];
+    ids.push(appendEpisode(a, "chat-1", "user", "Can you remind me how we deploy the newsletter service?"));
+    ids.push(appendEpisode(a, "chat-1", "assistant", "Sure. Last time we used fly deploy from the newsletter directory."));
+    ids.push(appendEpisode(a, "chat-1", "user", "Right, and remember: the production database is PostgreSQL 16 on RDS in us-east-1."));
+    ids.push(appendEpisode(a, "chat-1", "assistant", "Noted: PostgreSQL 16 on RDS in us-east-1 for production."));
+    ids.push(appendEpisode(a, "chat-1", "user", "Thanks. Also the staging box is separate."));
+    appendEpisode(a, "chat-2", "user", "Unrelated: what's the weather in Kingman?");
+    return ids;
+  }
+
+  it("shows the source turn marked » with N turns either side in the same session, ids only when source_turns is 0", async () => {
+    const a = fresh();
+    const ids = conversation(a);
+    const node = writeNode(a, "semantic", "prod db", "The production database is PostgreSQL 16 on RDS in us-east-1.", { episode_ids: [ids[2]!], deduplicate: false });
+    const plain = await dispatchBrainTool("brain_expand", a, { node_id: node }, cfg);
+    expect(plain.text).toMatch(/Source episodes \(1\)/);
+    expect(plain.text).not.toMatch(/Source turn/);
+    const r = await dispatchBrainTool("brain_expand", a, { node_id: node, source_turns: 1 }, cfg);
+    expect(r.isError).toBeFalsy();
+    expect(r.text).toMatch(/Source turn [0-9a-f]{8} in session chat-1/);
+    const block = r.text.slice(r.text.indexOf("Source turn"));
+    const turnLines = block.split("\n").filter((l) => /^\s+[» ] \[/.test(l));
+    expect(turnLines.length).toBe(3);
+    expect(turnLines[0]).toMatch(/assistant: Sure\. Last time we used fly deploy/);
+    expect(turnLines[1]).toMatch(/^\s+» .*user: Right, and remember/);
+    expect(turnLines[2]).toMatch(/assistant: Noted: PostgreSQL 16/);
+    expect(block).not.toMatch(/Kingman/); // other sessions never bleed in
+    const wide = await dispatchBrainTool("brain_expand", a, { node_id: node, source_turns: 10 }, cfg);
+    expect(wide.text.slice(wide.text.indexOf("Source turn")).split("\n").filter((l) => /^\s+[» ] \[/.test(l)).length).toBe(5);
+  });
+
+  it("a memory with no recorded source turn shows the conversation around when it was written; none at all is said plainly", async () => {
+    const a = fresh();
+    conversation(a);
+    const node = writeNode(a, "semantic", "written mid-chat", "The agent wrote this itself during the chat.", { deduplicate: false });
+    const r = await dispatchBrainTool("brain_expand", a, { node_id: node, source_turns: 2 }, cfg);
+    expect(r.text).toMatch(/No source turn recorded for this memory; the conversation around when it was written \(session chat-/);
+    expect(r.text).toMatch(/» \[/);
+
+    const b = fresh();
+    const lonely = writeNode(b, "semantic", "no chat at all", "nothing was ever said here", { deduplicate: false });
+    const r2 = await dispatchBrainTool("brain_expand", b, { node_id: lonely, source_turns: 2 }, cfg);
+    expect(r2.text).toMatch(/Source turns: none recorded, and no conversation stored within 10 minutes/);
+  });
+
+  it("rejects an out-of-range source_turns", async () => {
+    const a = fresh();
+    const node = writeNode(a, "semantic", "x", "y", { deduplicate: false });
+    const r = await dispatchBrainTool("brain_expand", a, { node_id: node, source_turns: 11 }, cfg);
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/source_turns must be an integer 0\.\.10/);
   });
 });
 
