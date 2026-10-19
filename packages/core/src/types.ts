@@ -102,7 +102,7 @@ export type SourceType = "user" | "self_observation" | "inference" | "tool" | "a
 export const SOURCE_TYPES: readonly SourceType[] = ["user", "self_observation", "inference", "tool", "agent", "seed", "legacy", "import"];
 
 /** Lifecycle of a belief. Only `active` nodes are recalled or injected. */
-export type BeliefStatus = "active" | "superseded" | "retracted" | "archived";
+export type BeliefStatus = "active" | "superseded" | "retracted" | "archived" | "dormant";
 export const BELIEF_STATUSES: readonly BeliefStatus[] = ["active", "superseded", "retracted", "archived"];
 
 /** `confirm_before_acting`: shown with a marker; the agent should check before acting on it. */
@@ -181,6 +181,16 @@ export interface BrainConfig {
   consolidationTimeGateHours: number;
   consolidationEpisodeGate: number;
   pruneAfterDays: number;
+  /**
+   * What sleep's Deep phase does with memories whose retrievability has decayed
+   * to nothing (< 0.01, no live links; old episodic < 0.05 past pruneAfterDays).
+   *   "dormant" (default): keep the row; mark it dormant and take it out of
+   *     recall ranking. A dormant memory comes back when the agent searches for
+   *     it (brain_query include_dormant) — forgetting is a retrieval failure,
+   *     not erasure.
+   *   "delete": the pre-0.6 behaviour — physically delete the row.
+   */
+  forgetting: "dormant" | "delete";
   ingestionModel: string;
   remModel?: string;
   openRouterApiKey: string;
@@ -302,6 +312,7 @@ export const DEFAULT_CONFIG: BrainConfig = {
   consolidationTimeGateHours: 4,
   consolidationEpisodeGate: 10,
   pruneAfterDays: 90,
+  forgetting: "dormant",
   ingestionModel: "openrouter/deepseek/deepseek-v4-flash",
   openRouterApiKey: process.env["OPENROUTER_API_KEY"] ?? envGet("OPENROUTER_API_KEY") ?? "",
   embeddingModel: envGet("EMBEDDING_MODEL") ?? "ollama/qwen3-embedding:0.6b",

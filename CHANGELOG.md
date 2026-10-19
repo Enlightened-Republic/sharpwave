@@ -6,6 +6,7 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 Follow-ups to the audit, from the design discussion on what a brain that learns for life needs.
 
+- **Forgetting is dormancy, not deletion (`forgetting: "dormant"`, default):** sleep's Deep phase used to physically delete any memory whose retrievability had decayed below 0.01 with no live links (and old episodic nodes past `pruneAfterDays`). A memory now stays on disk with `status: dormant`: out of every recall path and the header, still linked to its source turns, vector kept. `brain_query {include_dormant: true}` searches dormant memories too and revives what matches (status active, retrievability lifted to 0.3, tagged "(revived from dormant)"); `brain_status` shows a dormant count and `brain_expand` the status and reason. `forgetting: "delete"` restores the physical prune. Library: `reviveNode`, `searchDormantNodes`. Raw episodes were never deleted and still are not.
 - **Dedupe merge never downgrades a belief (fix):** when a write is a near-duplicate of a stored node the two are merged. The merge used to keep only the stored node's belief metadata, so a user restating an inferred guess with high confidence (or marking it confirm-before-acting) left it stored as a low-confidence inference. The merged belief now keeps the higher confidence, the stricter sensitivity, the stronger source type, the union of evidence and source episodes, and stays verified once verified. The writer stays the creator.
 
 ## Unreleased — audit fixes

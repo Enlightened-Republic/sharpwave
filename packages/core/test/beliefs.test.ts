@@ -356,11 +356,12 @@ describe("sleep belief review", () => {
     await runConsolidation(a, DEFAULT_CONFIG, log);
     expect(getNode(a, keep)).not.toBeNull();
     expect(getNode(a, keep)!.review_flagged_at).not.toBeNull();
-    expect(getNode(a, drop)).toBeFalsy();
+    // default forgetting = "dormant": the faded row stays on disk, out of recall
+    expect(getNode(a, drop)!.status).toBe("dormant");
     const s = getSleepSummary(a)!;
     expect(s.flaggedForReview).toBe(1);
     expect(s.pruned).toBe(1);
-    expect(s.nodesBefore - s.nodesAfter).toBe(1);
+    expect(s.nodesBefore - s.nodesAfter).toBe(0);
     const st = computeBrainStatus(getDb(a), DEFAULT_CONFIG);
     expect(st.lastSleep.summary?.pruned).toBe(1);
     expect(st.lastSleep.ago).toBe("just now");

@@ -22,6 +22,8 @@ export interface BrainQueryArgs {
   query: string;
   type?: string;
   limit?: number;
+  /** Also search memories sleep made dormant, and revive the ones that match. */
+  includeDormant?: boolean;
 }
 
 export function validateBrainQuery(args: Record<string, unknown>): ValidationResult<BrainQueryArgs> {
@@ -70,6 +72,7 @@ export function validateBrainQuery(args: Record<string, unknown>): ValidationRes
       query: (query as string).trim(),
       type: type ? String(type) : undefined,
       limit: limit ?? 10,
+      includeDormant: args["include_dormant"] === true,
     },
   };
 }

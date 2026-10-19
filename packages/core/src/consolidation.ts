@@ -265,7 +265,8 @@ export async function runConsolidation(
   try { openExpired = expireOpenItemDrafts(agentId, config).length; } catch (err) { log.warn(`[xanima] open-item expiry failed (agent=${agentId}): ${String(err)}`); }
   try { commit = runCommitmentCheck(agentId, config); } catch (err) { log.warn(`[xanima] commitment check failed (agent=${agentId}): ${String(err)}`); }
 
-  // Phase 4: Deep — physically prune near-zero retrievability orphans
+  // Phase 4: Deep — near-zero retrievability orphans go dormant (config.forgetting
+  // "dormant", default) or are physically pruned ("delete").
   const pruned = runDeepPhase(agentId, config, log);
 
   // Reset ripple counts after consolidation
@@ -1263,7 +1264,9 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): number
   // Xanima: never prune history (retracted / superseded beliefs back `as_of`)
   // or items sleep flagged for review. Guarded so pre-v19 schemas still work.
   const hasBelief = (db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('nodes') WHERE name = 'review_flagged_at'").get() as { n: number }).n > 0;
-  const beliefKeep = hasBelief ? "AND n.review_flagged_at IS NULL AND n.status NOT IN ('retracted', 'superseded')" : "";
+  // Already-dormant rows are not candidates again (they would be re-counted every sleep).
+  const beliefKeep = hasBelief ? "AND n.review_flagged_at IS NULL AND n.status NOT IN ('retracted', 'superseded', 'dormant')" : "";
+  const dormantMode = hasBelief && config.forgetting !== "delete";
 
   // Gather candidates in one query. UNION the two prune predicates that
   // existed in v3:
@@ -1294,6 +1297,33 @@ function runDeepPhase(agentId: string, config: BrainConfig, log: Logger): number
   `).all(cutoff) as { id: string; rowid: number }[];
 
   if (candidates.length === 0) return 0;
+
+  if (dormantMode) {
+    // Forgetting is a retrieval failure, not erasure. The row, its vector and its
+    // Hebbian associations stay; valid_until takes it out of every recall path
+    // (the same mechanism the retire registry uses) and status = 'dormant' marks
+    // why. reviveNode() / brain_query {include_dormant} bring it back.
+    const now = Date.now();
+    const sleep = db.prepare(`
+      UPDATE nodes
+      SET status = 'dormant',
+          status_reason = ?,
+          status_changed_at = ?,
+          valid_until = COALESCE(valid_until, ?),
+          updated_at = ?
+      WHERE id = ? AND status = 'active'
+    `);
+    const delWm = db.prepare("DELETE FROM working_memory WHERE node_id = ?");
+    let dormant = 0;
+    db.transaction(() => {
+      for (const c of candidates) {
+        const r = sleep.run("dormant: retrievability decayed to nothing with no live links (sleep Deep phase)", now, now, now, c.id);
+        if (r.changes > 0) { delWm.run(c.id); dormant++; }
+      }
+    })();
+    if (dormant > 0) log.info(`[xanima] Deep: ${dormant} node(s) made dormant (kept on disk; revive with brain_query include_dormant)`);
+    return dormant;
+  }
 
   const delVec = db.prepare("DELETE FROM nodes_vec WHERE rowid = ?");
   const delWm = db.prepare("DELETE FROM working_memory WHERE node_id = ?");

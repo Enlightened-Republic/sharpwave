@@ -590,6 +590,67 @@ export function touchNode(agentId: string, nodeId: string, quality = 4): void {
   );
 }
 
+/** Retrievability a revived memory comes back with: findable, but it has to earn its stability again. */
+const REVIVE_RETRIEVABILITY = 0.3;
+
+/**
+ * Bring a dormant memory back into recall: status active, valid_until cleared,
+ * retrievability lifted to a floor, access recorded. Returns false when the
+ * node is not dormant (nothing changed).
+ */
+export function reviveNode(agentId: string, nodeId: string, reason = "revived"): boolean {
+  const db = getDb(agentId);
+  const now = Date.now();
+  let changed = 0;
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      changed = d.prepare(`
+        UPDATE nodes
+        SET status = 'active',
+            status_reason = ?,
+            status_changed_at = ?,
+            valid_until = NULL,
+            retrievability = MAX(retrievability, ?),
+            stability = MAX(stability, 1.0),
+            access_count = access_count + 1,
+            accessed_at = ?,
+            updated_at = ?
+        WHERE id = ? AND status = 'dormant'
+      `).run(reason, now, REVIVE_RETRIEVABILITY, now, now, nodeId).changes;
+    },
+    { op: `nodes.revive:${nodeId.slice(0, 8)}` },
+  );
+  if (changed > 0) { bumpWriteCounter(db); bumpCounter("memories_revived"); logObservabilityEvent("revive", { nodeId, reason }); }
+  return changed > 0;
+}
+
+/**
+ * Full-text search restricted to dormant memories (the ones sleep took out of
+ * recall). Used by brain_query {include_dormant}: an explicit cue is how a
+ * dormant memory earns its way back.
+ */
+export function searchDormantNodes(agentId: string, query: string, limit = 10): BrainNode[] {
+  const db = getDb(agentId);
+  const safe = query.replace(/"/g, "").trim();
+  if (!safe) return [];
+  const run = (matchExpr: string): BrainNode[] => {
+    try {
+      return db.prepare(`
+        SELECT n.* FROM nodes n
+        JOIN nodes_fts f ON n.rowid = f.rowid
+        WHERE nodes_fts MATCH ? AND n.status = 'dormant'
+        ORDER BY rank
+        LIMIT ?
+      `).all(matchExpr, limit) as BrainNode[];
+    } catch { return []; }
+  };
+  const phrase = run(`"${safe}"`);
+  if (phrase.length) return phrase;
+  const terms = safe.toLowerCase().split(/\s+/).filter((t) => t.length >= 3 && !FTS_STOPWORDS.has(t)).map((t) => `"${t}"`);
+  return terms.length ? run(terms.join(" OR ")) : [];
+}
+
 export function getNode(agentId: string, id: string): BrainNode | null {
   const db = getDb(agentId);
   return db.prepare("SELECT * FROM nodes WHERE id = ?").get(id) as BrainNode | null;

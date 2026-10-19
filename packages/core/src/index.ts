@@ -30,7 +30,7 @@ export type { GetDbOptions } from "./db.js";
 // ---------------------------------------------------------------------------
 export {
   writeNode, getNode, touchNode, ftsSearchNodes, getNeighbors, getTopByType,
-  getOperationalProcedures,
+  getOperationalProcedures, markNodesAccessed, reviveNode, searchDormantNodes,
   getActiveGoals, getReviewQueue, propagateDopamineSpike, decayEligibilityTraces,
   decayRetrievability, fsrsRetrievability, getRetrievability, computeSalience,
   computePsHash, psHashHamming, updatePsHash,

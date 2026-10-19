@@ -240,7 +240,7 @@ export interface SleepSummary {
 
 export interface BrainStatus {
   schemaVersion: number;
-  nodes: { total: number; active: number; retracted: number; superseded: number; archived: number };
+  nodes: { total: number; active: number; retracted: number; superseded: number; archived: number; dormant: number };
   episodes: number;
   beliefs: {
     lowConfidence: number;
@@ -289,7 +289,7 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
   })();
   const total = one("SELECT COUNT(*) AS n FROM nodes");
   const live = "(valid_until IS NULL OR valid_until > ?)";
-  const byStatus: Record<string, number> = { active: 0, retracted: 0, superseded: 0, archived: 0 };
+  const byStatus: Record<string, number> = { active: 0, retracted: 0, superseded: 0, archived: 0, dormant: 0 };
   let lowConfidence = 0, contradicted = 0, flagged = 0;
   const bySource: Record<string, number> = {};
   const byConfidence: Record<string, number> = {};
@@ -373,7 +373,7 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
 
   return {
     schemaVersion: (() => { try { return (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined)?.version ?? SCHEMA_VERSION; } catch { return SCHEMA_VERSION; } })(),
-    nodes: { total, active: byStatus["active"] ?? 0, retracted: byStatus["retracted"] ?? 0, superseded: byStatus["superseded"] ?? 0, archived: byStatus["archived"] ?? 0 },
+    nodes: { total, active: byStatus["active"] ?? 0, retracted: byStatus["retracted"] ?? 0, superseded: byStatus["superseded"] ?? 0, archived: byStatus["archived"] ?? 0, dormant: byStatus["dormant"] ?? 0 },
     episodes,
     beliefs: { lowConfidence, contradicted, flaggedForReview: flagged, bySource, byConfidence },
     hotConflicts: conflicts.map((c) => ({ a: { id: c.aid, label: c.al }, b: { id: c.bid, label: c.bl }, since: c.at })),
@@ -395,7 +395,7 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
 export function formatBrainStatus(s: BrainStatus, label = ""): string {
   const L: string[] = [];
   L.push(`${label ? `[${label}] ` : ""}Brain status (schema v${s.schemaVersion})`);
-  L.push(`  nodes: ${s.nodes.active} active / ${s.nodes.total} total (retracted ${s.nodes.retracted}, superseded ${s.nodes.superseded}, archived ${s.nodes.archived}); episodes ${s.episodes}`);
+  L.push(`  nodes: ${s.nodes.active} active / ${s.nodes.total} total (retracted ${s.nodes.retracted}, superseded ${s.nodes.superseded}, archived ${s.nodes.archived}${s.nodes.dormant ? `, dormant ${s.nodes.dormant}` : ""}); episodes ${s.episodes}`);
   L.push(`  beliefs: ${s.beliefs.lowConfidence} low-confidence, ${s.beliefs.contradicted} disputed, ${s.beliefs.flaggedForReview} flagged for review`);
   const src = Object.entries(s.beliefs.bySource).map(([k, n]) => `${k}=${n}`).join(" ");
   if (src) L.push(`  sources: ${src}`);
