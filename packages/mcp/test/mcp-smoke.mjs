@@ -16,7 +16,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { rmSync, mkdtempSync } from "node:fs";
+import { rmSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -230,6 +230,41 @@ const leaked = (t) => /postgres|jwt|thursday/i.test(t);
   const betaStill = text(await call(m, "brain_query", { agent: "beta", query: "what production database do we use?" }));
   check("multi: beta's brain survived alpha's reset", /mysql/i.test(betaStill), betaStill.slice(0, 120));
   m.proc.kill();
+
+  // ── Lifecycle: when the client closes stdin the server must exit on its own ──
+  // (the 30 s embedding-drain interval used to keep the process alive forever,
+  // leaving an orphan holding the brain file open after every client disconnect).
+  {
+    const o = client();
+    await o.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } });
+    o.notify("notifications/initialized", {});
+    await call(o, "brain_write", { type: "semantic", label: "orphan check", content: "written before the client disconnects" });
+    const exited = new Promise((res) => o.proc.on("exit", (code, sig) => res({ code, sig })));
+    o.proc.stdin.end();
+    const outcome = await Promise.race([exited, new Promise((r) => setTimeout(() => r(null), 8000))]);
+    check("server exits by itself when the client closes stdin", !!outcome, outcome ? `exit=${outcome.code ?? outcome.sig}` : "still running after 8 s");
+    if (!outcome) o.proc.kill();
+  }
+
+  // ── Multi-agent + XANIMA_DB_PATH would route EVERY agent into one file: refused at startup ──
+  {
+    const bad = client({ XANIMA_AGENT_ID: "", XANIMA_DB_PATH: join(DATA, "one-file.db") });
+    const code = await Promise.race([
+      new Promise((res) => bad.proc.on("exit", (c) => res(c))),
+      new Promise((r) => setTimeout(() => r("timeout"), 8000)),
+    ]);
+    check("multi: XANIMA_DB_PATH without XANIMA_AGENT_ID is refused (exit 2)", code === 2, `exit=${code}`);
+    check("multi: the refusal says how to fix it", /refusing to start: XANIMA_DB_PATH/.test(lastStderr), lastStderr.slice(-160).trim());
+    if (code === "timeout") bad.proc.kill();
+    // ...while a pinned agent may still use a single explicit db file.
+    const one = client({ XANIMA_AGENT_ID: "pinned", XANIMA_DB_PATH: join(DATA, "pinned-one-file.db") });
+    const oi = await one.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } });
+    check("pinned agent + XANIMA_DB_PATH still starts", !!oi.result, oi?.result ? "" : JSON.stringify(oi).slice(0, 120));
+    one.notify("notifications/initialized", {});
+    await call(one, "brain_write", { type: "semantic", label: "single file", content: "stored in the explicit db file" });
+    check("pinned agent writes into the explicit db file", existsSync(join(DATA, "pinned-one-file.db")));
+    one.proc.kill();
+  }
 
   try { rmSync(DATA, { recursive: true, force: true }); } catch {}
   console.log(failures ? `\n${failures} check(s) FAILED` : "\nall checks passed");

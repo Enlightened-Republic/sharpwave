@@ -47,6 +47,19 @@ const AGENT_ALLOWLIST = (envGet("AGENTS") ?? "")
   .split(",").map((s) => s.trim()).filter(Boolean);
 const AGENT_ID_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
 
+// XANIMA_DB_PATH pins core to ONE file for every agent id. That is what a
+// single-agent install wants; in multi-agent mode it would silently route every
+// agent's writes into the same brain. Refuse the combination up front rather
+// than merge brains that were meant to be separate.
+if (MULTI && envGet("DB_PATH")) {
+  process.stderr.write(
+    "[xanima] refusing to start: XANIMA_DB_PATH (or SHARPWAVE_DB_PATH) is set but XANIMA_AGENT_ID is not. " +
+    "A single db path cannot serve many agents — either pin one agent with XANIMA_AGENT_ID, " +
+    "or unset the db path and use XANIMA_DATA_DIR (one <dataDir>/<agentId>/brain.db per agent).\n",
+  );
+  process.exit(2);
+}
+
 const initedAgents = new Set<string>();
 function touchAgent(agentId: string): void {
   if (initedAgents.has(agentId)) return;
@@ -82,15 +95,19 @@ function resolveAgent(args: Record<string, unknown>): AgentResolve {
 const SESSION_ID = `mcp:${randomUUID()}`;
 
 // Start embedding drain in background every 30s — for every agent touched so far.
-setInterval(() => {
+// unref(): the timer must not keep this process alive once the client has
+// closed stdio; a stdio MCP server that outlives its client is an orphan that
+// holds the brain file open (and, on Windows, blocks the next launch).
+const drainTimer = setInterval(() => {
   const ids = PINNED_AGENT_ID ? [PINNED_AGENT_ID] : [...initedAgents];
   for (const id of ids) void drainEmbeddingQueue(id, config);
 }, 30_000);
+drainTimer.unref();
 
 // ─── Tool definitions ───────────────────────────────────────────────────────
 //
 // Schemas come straight from `xanima-core`'s BRAIN_TOOL_DEFS. This server
-// publishes exactly the 11 names in MCP_TOOL_NAMES, in that order — the
+// publishes exactly the names in MCP_TOOL_NAMES, in that order — the
 // published surface of the `sharpwave` npm package is frozen.
 
 const TOOLS = MCP_TOOL_NAMES.map((name) => ({ name, ...BRAIN_TOOL_DEFS[name] }));
@@ -167,6 +184,11 @@ if (PINNED_AGENT_ID) {
 }
 
 const transport = new StdioServerTransport();
+// When the client closes our stdin the transport reports close: stop the drain
+// timer and let the process exit on its own (the timer is unref'd, and no other
+// handle keeps the loop alive). Not process.exit(): an in-flight drain or
+// write finishes first.
+server.onclose = () => { clearInterval(drainTimer); };
 await server.connect(transport);
 
 process.stderr.write(

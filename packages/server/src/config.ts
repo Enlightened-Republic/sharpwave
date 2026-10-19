@@ -15,7 +15,6 @@ import { defaultProvisioningConfig, type ProvisioningConfig } from "./provision.
 export type { OffsiteConfig } from "./offsite.js";
 
 export const DEFAULT_PORT = 18790;
-export const DEFAULT_TAILNET_IP = "100.121.136.3";
 export const LOOPBACK = "127.0.0.1";
 
 export interface SleepConfig {
@@ -45,8 +44,10 @@ export interface ServiceConfig {
   root: string;
   port: number;
   /**
-   * Extra (non-loopback) addresses to bind — the tailnet IP. 127.0.0.1 is
-   * always bound in addition. `[]` disables. Wildcards (0.0.0.0, ::) are refused.
+   * Extra (non-loopback) addresses to bind — your tailnet IP. 127.0.0.1 is
+   * always bound in addition. Default `[]` (loopback only): there is no
+   * built-in tailnet address, set yours in config.json. Wildcards (0.0.0.0, ::)
+   * are refused.
    */
   tailnetHosts: string[];
   /** How long startup keeps retrying a tailnet bind that fails (Tailscale not up yet). */
@@ -104,7 +105,7 @@ export function defaultConfig(root = defaultRoot()): ServiceConfig {
   return {
     root,
     port: DEFAULT_PORT,
-    tailnetHosts: [DEFAULT_TAILNET_IP],
+    tailnetHosts: [],
     tailnetRetryWindowMs: 120_000,
     tailnetRetryInitialDelayMs: 1_000,
     tailnetRetryMaxDelayMs: 15_000,

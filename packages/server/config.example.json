@@ -1,7 +1,7 @@
 {
   "root": "~/.sharpwave/service",
   "port": 18790,
-  "tailnetHosts": ["100.121.136.3"],
+  "tailnetHosts": [],
   "tailnetRetryWindowMs": 120000,
   "tailnetBackgroundRetryMs": 60000,
   "tokensFile": "~/.sharpwave/service/tokens.json",

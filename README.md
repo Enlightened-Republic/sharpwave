@@ -213,7 +213,7 @@ All optional. Sharpwave runs with zero configuration.
 | Variable | Default | Purpose |
 |---|---|---|
 | `SHARPWAVE_DATA_DIR` | `~/.sharpwave` | Where the databases live |
-| `SHARPWAVE_DB_PATH` | — | Full path to a specific database file, overriding `DATA_DIR` |
+| `SHARPWAVE_DB_PATH` | — | Full path to a specific database file, overriding `DATA_DIR`. Single-agent only: with `AGENT_ID` unset the server refuses to start rather than route every agent into one file. |
 | `SHARPWAVE_AGENT_ID` | — | Pin the server to one agent. **Leave unset for multi-agent mode** — one server for the whole fleet, each `brain_*` call then requires an `agent` argument routing it to `<DATA_DIR>/<agent>/brain.db`. |
 | `SHARPWAVE_AGENTS` | — | Multi-agent mode only: comma-separated allowlist of accepted `agent` ids |
 | `SHARPWAVE_EMBEDDING_MODEL` | — | e.g. `ollama/qwen3-embedding:0.6b` |

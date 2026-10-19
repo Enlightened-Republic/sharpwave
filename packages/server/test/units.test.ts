@@ -68,12 +68,17 @@ describe("schedule + config", () => {
     expect(() => parseHHMM("25:00")).toThrow();
   });
 
-  it("defaults: port 18790, tailnet 100.121.136.3, tokens under root", () => {
+  it("defaults: port 18790, loopback only (no built-in tailnet IP), tokens under root", () => {
     const c = resolveConfig({ root: "/tmp/x" });
     expect(c.port).toBe(18790);
-    expect(c.tailnetHosts).toEqual(["100.121.136.3"]);
+    expect(c.tailnetHosts).toEqual([]);
     expect(c.tokensFile).toBe("/tmp/x/tokens.json");
     expect(c.allowReset).toBe(false);
+  });
+
+  it("tailnetHosts from config.json is honoured verbatim", () => {
+    const c = resolveConfig({ root: "/tmp/x", tailnetHosts: ["100.64.0.7"] });
+    expect(c.tailnetHosts).toEqual(["100.64.0.7"]);
   });
 });
 

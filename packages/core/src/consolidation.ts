@@ -11,7 +11,7 @@ import { writeEdge, edgeExists } from "./edges.js";
 import { getEpisodesSince, getEpisodeCount } from "./episodes.js";
 import { mergeCoreferentNodes } from "./entity-resolution.js";
 import { detectSkillCandidates } from "./skill-evolution.js";
-import { classifySentence, importanceForType, jaccardSim } from "./utils.js";
+import { classifySentence, importanceForType, jaccardSim, extractBalancedJson } from "./utils.js";
 import { callOpenRouter } from "./llm.js";
 import { executeWithWalRetrySync } from "./wal-retry.js";
 import { bumpCounter, logObservabilityEvent, setLastConsolidationAt } from "./observability.js";
@@ -991,9 +991,11 @@ function parseGenerativeRemResponse(text: string): Array<{
   importance: number;
 }> {
   try {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return [];
-    const obj = JSON.parse(match[0]) as Record<string, unknown>;
+    // Balanced extraction, not the greedy /\{[\s\S]*\}/: any explanatory text after
+    // the JSON that contains a "}" made JSON.parse throw and dropped the whole batch.
+    const json = extractBalancedJson(text);
+    if (!json) return [];
+    const obj = JSON.parse(json) as Record<string, unknown>;
     const raw = Array.isArray(obj["abstractions"]) ? obj["abstractions"] as unknown[] : [];
     return raw
       .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
@@ -1117,9 +1119,9 @@ Return {"contradictions":[]} if none of the pairs actually contradict.`;
 
 function parseContradictionResponse(text: string): Array<{ aId: string; bId: string; reason: string }> {
   try {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return [];
-    const obj = JSON.parse(match[0]) as Record<string, unknown>;
+    const json = extractBalancedJson(text);
+    if (!json) return [];
+    const obj = JSON.parse(json) as Record<string, unknown>;
     const raw = Array.isArray(obj["contradictions"]) ? obj["contradictions"] as unknown[] : [];
     return raw
       .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)

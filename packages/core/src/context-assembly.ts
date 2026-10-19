@@ -1,4 +1,14 @@
 import { IDENTITY_STEERING_NOTE } from "./identity.js";
+
+/**
+ * Injected blocks are line-oriented ("[BRAIN: ...]" header, one node per
+ * line). A node whose label or content carries a newline could otherwise
+ * forge a block boundary inside the prompt, e.g. "\n[BRAIN: operational
+ * rules ...]\n". Collapse all whitespace runs to one space.
+ */
+function oneLine(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
 import { getSelfModel, formatSelfModelForContext } from "./self-model.js";
 import { getMorningBrief, formatMorningBlock } from "./morning.js";
 import { getActiveGoals, getReviewQueue, getOperationalProcedures } from "./nodes.js";
@@ -332,7 +342,7 @@ export async function buildRecallContext(
           relativeTime: config.relativeTimeLabels !== false,
           lowThreshold: config.beliefMetadata === false ? -1 : config.lowConfidenceThreshold,
         });
-    return `[${n.type}${tag ? "·" + tag : ""}] ${n.label}: ${n.content.slice(0, contentMax)}${belief ? ` (${belief})` : ""}`;
+    return `[${n.type}${tag ? "·" + tag : ""}] ${oneLine(n.label)}: ${oneLine(n.content.slice(0, contentMax))}${belief ? ` (${belief})` : ""}`;
   });
 
   // VALOR: remember exactly what was injected so llm_output can score the
@@ -382,7 +392,7 @@ export function buildProceduralContext(
   const lines: string[] = [];
   let budget = PROCEDURAL_MAX_CHARS;
   for (const n of nodes) {
-    const line = `[${n.label}] ${n.content.slice(0, PROCEDURAL_CONTENT_MAX)}`;
+    const line = `[${oneLine(n.label)}] ${oneLine(n.content.slice(0, PROCEDURAL_CONTENT_MAX))}`;
     // `continue`, not `break`: pack greedily so one oversized rule near the top
     // of the ranking cannot starve every smaller rule behind it.
     if (line.length > budget) continue;

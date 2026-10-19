@@ -185,7 +185,7 @@ Usage:
   xanima-server soul keygen --key-file f [--force]   ed25519 signing key (keep it out of any repo).
   xanima-server version
 
-Binds 127.0.0.1 always, plus the tailnet IP (default 100.121.136.3). Never 0.0.0.0/::.
+Binds 127.0.0.1 always, plus any "tailnetHosts" IPs set in config.json (default none). Never 0.0.0.0/::.
 Root defaults to ~/.xanima/service (brains/, backups/, audit/, tokens.json, config.json); ~/.sharpwave/service
 is used if ~/.xanima does not exist yet (run: xanima-server migrate). XANIMA_SERVICE_ROOT overrides.`;
 

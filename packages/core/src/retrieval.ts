@@ -1,6 +1,6 @@
 import { applyDecisionBoost } from "./decisions.js";
 import { getDb } from "./db.js";
-import { ftsSearchNodes, getTopByType, getActiveGoals, touchNode } from "./nodes.js";
+import { ftsSearchNodes, getTopByType, getActiveGoals, markNodesAccessed } from "./nodes.js";
 import { fetchEmbedding, vectorSearchNodes, rrfFuse, drainEmbeddingQueue } from "./embeddings.js";
 import { spreadActivation, workingMemoryBoost, updateWorkingMemory } from "./activation.js";
 import { getNeuromodulatorState } from "./consolidation.js";
@@ -24,11 +24,16 @@ export async function hybridRetrieve(
   let vecResults: BrainNode[] = [];
   let queryEmbedding: Float32Array | null = null;
   if (query.length > 0) {
-    // 2-second race — fall back to FTS-only if OpenRouter embedding is slow/unavailable
-    queryEmbedding = await Promise.race([
-      fetchEmbedding(query, config),
-      new Promise<null>((r) => setTimeout(() => r(null), 2000)),
-    ]);
+    // 2-second race — fall back to FTS-only if OpenRouter embedding is slow/unavailable.
+    // Abort the request when the budget wins so it does not sit on a socket for the
+    // provider's full timeout (same pattern as proactive-monitor.ts).
+    const embedController = new AbortController();
+    const embedPromise = fetchEmbedding(query, config, undefined, embedController.signal);
+    embedPromise.catch(() => {});
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<null>((r) => { timer = setTimeout(() => { embedController.abort(); r(null); }, 2000); timer.unref?.(); });
+    queryEmbedding = await Promise.race([embedPromise, timeout]);
+    if (timer) clearTimeout(timer);
     if (queryEmbedding) {
       vecResults = vectorSearchNodes(agentId, queryEmbedding, limit * 2);
     }
@@ -59,9 +64,14 @@ export async function hybridRetrieve(
 
   const topNodes = applyDecisionBoost(activated, config).slice(0, limit);
 
-  for (const node of topNodes) {
-    touchNode(agentId, node.id);
-  }
+  // Recall is not a review. Surfacing a node is no evidence it was remembered,
+  // and scoring every recall as an FSRS "good" ratcheted every injected node
+  // toward the 365-day stability cap, promoted it to "consolidated" after five
+  // surfacings, and set eligibility_trace = 1.0 on whatever was last shown (so
+  // dopamine spikes always landed there). VALOR hits (valor.ts) and explicit
+  // brain_review calls are the only automatic review signals; here we only
+  // record the access.
+  markNodesAccessed(agentId, topNodes.map((n) => n.id));
 
   updateWorkingMemory(agentId, sessionId, topNodes, config.workingMemorySlots);
 

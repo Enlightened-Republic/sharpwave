@@ -395,7 +395,7 @@ function initSchema(db: Database.Database): void {
 }
 
 /** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
-export const SCHEMA_VERSION = 25;
+export const SCHEMA_VERSION = 26;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -799,6 +799,17 @@ export function migrateV25(db: Database.Database): void {
   `);
 }
 
+/**
+ * v26 — indexes for the two full-table scans getNeuromodulatorState runs on
+ * every turn (`COUNT(*) ... WHERE created_at > ?`, `AVG(...) WHERE accessed_at > ?`)
+ * and the proactive monitor's `ORDER BY accessed_at DESC LIMIT 50`. On a
+ * 60k-node brain those were ~0.3 s per call, three calls per turn.
+ */
+export function migrateV26(db: Database.Database): void {
+  try { db.exec("CREATE INDEX IF NOT EXISTS nodes_created_at ON nodes(created_at)"); } catch { /* ok */ }
+  try { db.exec("CREATE INDEX IF NOT EXISTS nodes_accessed_at ON nodes(accessed_at)"); } catch { /* ok */ }
+}
+
 function runMigrations(db: Database.Database): void {
   const TARGET = SCHEMA_VERSION;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
@@ -1096,6 +1107,9 @@ function runMigrations(db: Database.Database): void {
   }
   if (current < 25) {
     migrateV25(db);
+  }
+  if (current < 26) {
+    migrateV26(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

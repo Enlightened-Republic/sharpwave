@@ -31,7 +31,7 @@ const enforce = { ...DEFAULT_CONFIG, quarantine: "enforce" as const };
 describe("schema v24", () => {
   it("adds room_items / room_conflicts and nodes.scope_tags additively", () => {
     const a = fresh(); const db = getDb(a);
-    expect(SCHEMA_VERSION).toBe(25);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(24);
     for (const t of ["room_items", "room_conflicts", "review_items"]) expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name = ?").get(t)).toBeTruthy();
     expect((db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>).map((c) => c.name)).toContain("scope_tags");
   });

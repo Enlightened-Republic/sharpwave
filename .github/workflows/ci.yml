@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    name: node ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # package.json "allowScripts" lets npm >= 11 run the native install
+      # scripts (better-sqlite3, sqlite-vec, esbuild); older npm runs them anyway.
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      # core (vitest), the stdio MCP smoke test, and the brain service (vitest).
+      - run: npm run test:all
+      - run: npm audit --omit=dev --audit-level=high

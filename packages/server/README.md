@@ -27,7 +27,7 @@ nightly `VACUUM INTO` backups.
 ```bash
 npm run build --workspace xanima-server          # -> packages/server/dist/cli.js
 node packages/server/dist/cli.js token mint --agent chief-of-staff --scopes read,write
-node packages/server/dist/cli.js serve               # 127.0.0.1:18790 + 100.121.136.3:18790
+node packages/server/dist/cli.js serve               # 127.0.0.1:18790 (+ any tailnetHosts from config.json)
 curl http://127.0.0.1:18790/health                   # {"status":"ok","version":"0.1.0","addresses":[...]}
 ```
 
@@ -132,8 +132,9 @@ which keeps them distinguishable from rows written through the service
 
 - **Never 0.0.0.0 / ::.** The bind policy only accepts specific IP literals;
   wildcards (all spellings, incl. `::ffff:0.0.0.0`) and hostnames are refused and
-  the service will not start. 127.0.0.1 is always bound; the tailnet IP
-  (default `100.121.136.3`) is bound in addition. If the tailnet IP can't be bound
+  the service will not start. 127.0.0.1 is always bound; your tailnet IP is
+  bound in addition only when you list it in `tailnetHosts` (default `[]`, so a
+  fresh install is loopback-only). If the tailnet IP can't be bound
   at startup (Tailscale not up yet), the service retries with exponential backoff
   for `tailnetRetryWindowMs` (default 120 s), then keeps serving on 127.0.0.1 only,
   logs a warning, and retries in the background every `tailnetBackgroundRetryMs`

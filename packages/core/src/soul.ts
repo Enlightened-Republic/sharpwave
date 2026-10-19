@@ -30,7 +30,7 @@ import { dispatchContinuityTool } from "./continuity-tools.js";
 import { createCommitment } from "./plans.js";
 import { acceptHeldIdentityChange, markHeldIdentityRejected, recordIdentityImport } from "./identity.js";
 import type { BrainConfig, NodeType, Sensitivity } from "./types.js";
-import { DEFAULT_CONFIG } from "./types.js";
+import { DEFAULT_CONFIG, SENSITIVITIES } from "./types.js";
 
 export const SOUL_FORMAT = "xanima-soul/1";
 export const SOUL_GENERATOR = "xanima-core 0.4.0";
@@ -341,25 +341,34 @@ export function validateSoul(input: unknown, opts: { trustedKeyIds?: string[]; r
       if (typeof cf !== "number" || cf < 0 || cf > 1) e.push(`${path}.provenance.confidence must be 0..1`);
       if (typeof pv["created_at"] !== "string" || typeof pv["updated_at"] !== "string") e.push(`${path}.provenance timestamps must be ISO strings`);
     };
-    const items = (k: string, req: boolean, fields: string[]) => {
+    const items = (k: string, req: boolean, fields: string[], types?: readonly string[]) => {
       const a = c[k];
       if (a === undefined && !req) return;
       if (!Array.isArray(a)) { e.push(`content.${k} must be an array`); return; }
       a.forEach((x, i) => {
         const path = `content.${k}[${i}]`;
         if (!x || typeof x !== "object") { e.push(`${path} must be an object`); return; }
-        for (const f of fields) if (typeof (x as Record<string, unknown>)[f] !== "string") e.push(`${path}.${f} must be a string`);
-        provOk((x as Record<string, unknown>)["provenance"], path);
+        const o = x as Record<string, unknown>;
+        for (const f of fields) if (typeof o[f] !== "string") e.push(`${path}.${f} must be a string`);
+        // Node items: the section decides what the node may be. A `facts` item declaring
+        // type "goal" or "identity" would otherwise land as an active goal / value without
+        // passing the review step those sections require.
+        if (types) {
+          if (typeof o["type"] === "string" && !types.includes(o["type"])) e.push(`${path}.type must be one of ${types.join("|")} (got ${JSON.stringify(o["type"])})`);
+          if (o["importance"] !== undefined && (typeof o["importance"] !== "number" || !Number.isFinite(o["importance"]) || o["importance"] < 0 || o["importance"] > 1)) e.push(`${path}.importance must be a number 0..1`);
+          if (o["sensitivity"] !== undefined && (typeof o["sensitivity"] !== "string" || !(SENSITIVITIES as readonly string[]).includes(o["sensitivity"]))) e.push(`${path}.sensitivity must be one of ${SENSITIVITIES.join("|")}`);
+        }
+        provOk(o["provenance"], path);
       });
     };
-    items("values", true, ["id", "type", "label", "content"]);
-    items("skills", true, ["id", "type", "label", "content"]);
-    items("facts", true, ["id", "type", "label", "content"]);
+    items("values", true, ["id", "type", "label", "content"], SECTION_NODE_TYPES.values);
+    items("skills", true, ["id", "type", "label", "content"], SECTION_NODE_TYPES.skills);
+    items("facts", true, ["id", "type", "label", "content"], SECTION_NODE_TYPES.facts);
     items("lessons", true, ["id", "context", "chosen", "lesson"]);
     items("goals", true, ["id", "title", "status"]);
-    items("open_items", false, ["id", "type", "label", "content"]);
-    items("commitments", false, ["id", "type", "label", "content"]);
-    items("shared_facts", false, ["id", "type", "label", "content"]);
+    items("open_items", false, ["id", "type", "label", "content"], SECTION_NODE_TYPES.open_items);
+    items("commitments", false, ["id", "type", "label", "content"], SECTION_NODE_TYPES.commitments);
+    items("shared_facts", false, ["id", "type", "label", "content"], SECTION_NODE_TYPES.shared_facts);
     for (const k of Object.keys(c)) if (!CONTENT_KEYS.includes(k)) e.push(`content.${k} is not part of ${SOUL_FORMAT}`);
   }
   const integ = p["integrity"] as Record<string, unknown> | undefined;
@@ -393,6 +402,26 @@ export function parseSoul(text: string): SoulPackage {
 
 export type SoulSection = "identity" | "values" | "goals" | "skills" | "lessons" | "facts" | "open_items" | "commitments" | "shared_facts";
 const SECTIONS: SoulSection[] = ["identity", "values", "goals", "skills", "lessons", "facts", "open_items", "commitments", "shared_facts"];
+/**
+ * Node types a package item may declare, per section — the same sets exportSoul reads
+ * from (values = identity nodes, skills = skill|procedural, facts = semantic|schema, ...).
+ * validateSoul refuses anything else and Writer.create coerces to the section default,
+ * so an item can never smuggle a `goal` / `identity` node in through `facts`.
+ */
+const SECTION_NODE_TYPES = {
+  values: ["identity"],
+  skills: ["skill", "procedural"],
+  facts: ["semantic", "schema"],
+  open_items: ["hypothesis", "question", "assumption"],
+  commitments: ["commitment"],
+  shared_facts: ["semantic", "schema", "skill"],
+} as const satisfies Partial<Record<SoulSection, readonly NodeType[]>>;
+function nodeTypeFor(section: SoulSection, declared: string): NodeType {
+  const allowed = (SECTION_NODE_TYPES as Partial<Record<SoulSection, readonly NodeType[]>>)[section];
+  if (!allowed) return declared as NodeType;
+  return (allowed as readonly string[]).includes(declared) ? (declared as NodeType) : allowed[0]!;
+}
+const clamp01 = (n: unknown, dflt: number) => (typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : dflt);
 const NODE_SECTIONS: SoulSection[] = ["values", "skills", "facts", "open_items", "commitments", "shared_facts"];
 const REVIEW_SECTIONS: SoulSection[] = ["identity", "values", "goals"];
 type AnyItem = SoulItem | SoulGoal | SoulLesson | { id: string; text: string };
@@ -494,6 +523,11 @@ function localIdFor(db: Database.Database, originId: string, section: SoulSectio
   }
   return null;
 }
+/** True when the id names a node that exists but is no longer active (retracted, superseded, archived, expired). */
+function isNonLiveNode(db: Database.Database, id: string): boolean {
+  const n = db.prepare("SELECT status FROM nodes WHERE id = ?").get(id) as { status: string } | undefined;
+  return !!n && n.status !== "active";
+}
 function matchByLabel(db: Database.Database, section: SoulSection, x: AnyItem): string | null {
   if (section === "identity") return null;
   if (section === "goals") return (db.prepare("SELECT lineage_id FROM goals WHERE status = 'active' AND lower(trim(title)) = lower(?) LIMIT 1").get(normGoalTitle((x as SoulGoal).title)) as { lineage_id: string } | undefined)?.lineage_id ?? null;
@@ -547,7 +581,7 @@ class Writer {
       writeEdge(this.agentId, localId, this.ensureAnchor(), "imported_from", { writerAgentId: this.by, meta: { package_id: this.pkgId, origin_id: originId } });
     }
   }
-  /** Create a new local item (never touches an existing one). Identity / values / goals never come here from an import. */
+  /** Create a new local item (never touches an existing one). Identity / goals never come here from an import; values only via acceptReview. */
   create(section: SoulSection, x: AnyItem): string | null {
     const db = this.db;
     if (section === "lessons") {
@@ -575,8 +609,9 @@ class Writer {
       db.prepare("UPDATE nodes SET source_type = 'import' WHERE id = ?").run(nid);
       this.record(n.id, nid, section, n.provenance); return nid;
     }
-    const type = (section === "shared_facts" ? (n.type === "skill" ? "skill" : "semantic") : n.type) as NodeType;
-    const id = writeNode(this.agentId, type, n.label, n.content, { importance: n.importance, sourceType: "import", confidence: this.conf(n.provenance), writerAgentId: this.writer(n.provenance), deduplicate: false, source: `soul:${this.pkgId}`, sensitivity: (n.sensitivity as Sensitivity) ?? "normal" });
+    const type = nodeTypeFor(section, n.type);
+    const sensitivity: Sensitivity = (SENSITIVITIES as readonly string[]).includes(n.sensitivity) ? (n.sensitivity as Sensitivity) : "normal";
+    const id = writeNode(this.agentId, type, n.label, n.content, { importance: clamp01(n.importance, 0.5), sourceType: "import", confidence: this.conf(n.provenance), writerAgentId: this.writer(n.provenance), deduplicate: false, source: `soul:${this.pkgId}`, sensitivity });
     this.record(n.id, id, section, n.provenance);
     return id;
   }
@@ -647,10 +682,14 @@ export function importSoul(agentId: string, pkg: SoulPackage, o: ImportOptions =
       const local = s === "identity" ? null : (localIdFor(db, origin, s) ?? matchByLabel(db, s, x));
       const ours = s === "identity" ? localItem(db, s, "", "identity") : local ? localItem(db, s, local, origin) : undefined;
       if (ours && digest(s, ours) === digest(s, x)) { rep.unchanged++; if (local) plan.push(() => w.record(origin, local, s)); continue; }
-      if (REVIEW_SECTIONS.includes(s) || (ours && local)) {
-        const kind = REVIEW_SECTIONS.includes(s) ? kindFor(s) : "conflict";
+      // The item maps to a node this brain retracted / archived (localItem only returns live ones).
+      // Re-creating it would silently undo that retraction, so it goes to review instead.
+      const retracted = !ours && !!local && !REVIEW_SECTIONS.includes(s) && s !== "goals" && s !== "lessons" && isNonLiveNode(db, local);
+      if (REVIEW_SECTIONS.includes(s) || (ours && local) || retracted) {
+        const kind = REVIEW_SECTIONS.includes(s) ? kindFor(s) : retracted ? "retracted" : "conflict";
         const reason = REVIEW_SECTIONS.includes(s)
           ? (ours ? `imported ${noun(s)} differs from this brain's; needs review` : `new ${noun(s)} from an import; needs review before it reaches the header`)
+          : retracted ? "this brain retracted or archived this item; accept to re-add it from the import"
           : "this brain already has a different version; kept ours, imported version needs review";
         if (kind === "conflict") rep.conflicts++;
         const entry: RepReview = { kind, section: s, origin, label: short(label, 90), reason, flags: REVIEW_SECTIONS.includes(s) && looksLikeIdentityRewrite(textOf(s, x)) ? ["possible_identity_rewrite"] : [] };
@@ -831,7 +870,7 @@ export function acceptReview(agentId: string, idOrPrefix: string, o: { by?: stri
     } else if (s === "goals") {
       const g = t as SoulGoal;
       const cur = r.local_id ? currentGoalRow(agentId, r.local_id) : null;
-      if (cur) {
+      if (cur && (cur.status === "active" || cur.status === "paused")) {
         const u = updateGoal(agentId, cur.lineage_id, { action: "update", title: g.title, priority: g.priority, successCriteria: g.success_criteria ?? undefined, reason: `soul review ${r.id} accepted by ${by}`, writerAgentId: by });
         if (!u.ok) throw new Error(u.error ?? "goal update failed");
         w.record(g.id, cur.lineage_id, "goals");
@@ -850,7 +889,7 @@ export function acceptReview(agentId: string, idOrPrefix: string, o: { by?: stri
       applied = `replaced ${r.local_id!.slice(0, 8)} with ${String(id).slice(0, 8)} (old version kept as superseded)`;
     } else if (s === "values") {
       const n = t as SoulItem;
-      const id = writeNode(agentId, "identity", n.label, n.content, { importance: n.importance, sourceType: "import", confidence: w.conf(n.provenance), writerAgentId: w.writer(n.provenance), deduplicate: false });
+      const id = writeNode(agentId, "identity", n.label, n.content, { importance: clamp01(n.importance, 0.5), sourceType: "import", confidence: w.conf(n.provenance), writerAgentId: w.writer(n.provenance), deduplicate: false });
       w.record(n.id, id, s, n.provenance);
       applied = `value ${id.slice(0, 8)} added`;
     } else {

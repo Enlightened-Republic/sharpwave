@@ -89,17 +89,17 @@ export function createOpenItem(agentId: string, input: CreateOpenItemInput): { o
                           VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, input.kind, text, lb ? 1 : 0, ev(input.evidenceFor), ev(input.evidenceAgainst), auto ? 1 : 0, auto ? "pending" : null, JSON.stringify(deriveKeywords(text)), now, now);
   linkAll(agentId, id, input.links, input.writerAgentId ?? agentId);
-  recompute(agentId, id, now);
+  recompute(agentId, id, now, { keepConfidence: !!conf });
   bumpWriteCounter(getDb(agentId));
   return { ok: true, id };
 }
 
 /** Confidence from evidence balance; a load-bearing assumption with more against than for is contradicted. */
-function recompute(agentId: string, id: string, now: number): void {
+function recompute(agentId: string, id: string, now: number, o: { keepConfidence?: boolean } = {}): void {
   const db = getDb(agentId);
   const r = db.prepare("SELECT * FROM open_items WHERE node_id = ?").get(id) as OpenItemRow;
   const f = safeJsonArr(r.evidence_for).length, a = safeJsonArr(r.evidence_against).length;
-  if (f || a) {
+  if ((f || a) && !o.keepConfidence) {
     const base = (db.prepare("SELECT confidence_score FROM nodes WHERE id = ?").get(id) as { confidence_score: number }).confidence_score;
     const target = r.status === "refuted" ? Math.min(base, 0.15) : r.status === "supported" ? Math.max(base, 0.75) : Math.max(0.05, Math.min(0.95, 0.5 + 0.12 * f - 0.18 * a));
     db.prepare("UPDATE nodes SET confidence_score = ?, confidence = ?, updated_at = ? WHERE id = ?").run(target, confidenceLevel(target), now, id);
@@ -161,16 +161,18 @@ export function updateOpenItem(agentId: string, idOrPrefix: string, input: Updat
   const err = linkAll(agentId, cur.node_id, input.links, writer);
   if (err) return { ok: false, error: err };
   const lb = cur.kind === "assumption" ? (input.loadBearing ?? !!cur.load_bearing) : false;
+  const conf = input.confidence !== undefined ? parseConfidence(input.confidence) : null;
+  if (input.confidence !== undefined && !conf) return { ok: false, error: "confidence must be low|medium|high|certain or a number 0..1" };
   db.prepare(`UPDATE open_items SET text = ?, status = ?, load_bearing = ?, evidence_for = ?, evidence_against = ?, answer = ?, close_reason = ?,
                 draft_status = CASE WHEN draft_status = 'pending' THEN 'confirmed' ELSE draft_status END, keywords_json = ?, updated_at = ?,
                 closed_at = CASE WHEN ? IN ('closed') THEN COALESCE(closed_at, ?) ELSE NULL END WHERE node_id = ?`)
     .run(text, status, lb ? 1 : 0, JSON.stringify(evFor.slice(-30)), JSON.stringify(evAg.slice(-30)), answer, closeReason, JSON.stringify(deriveKeywords(text)), now, status, now, cur.node_id);
-  const conf = input.confidence !== undefined ? parseConfidence(input.confidence) : null;
-  if (input.confidence !== undefined && !conf) return { ok: false, error: "confidence must be low|medium|high|certain or a number 0..1" };
   const content = `${KIND_LABEL[cur.kind]}${lb ? " (load-bearing)" : ""}: ${text}${status !== "open" ? ` [${status}${closeReason && status === "closed" ? `: ${closeReason}` : ""}]` : ""}${answer ? `. Answer: ${answer}` : ""}`;
   db.prepare(`UPDATE nodes SET content = ?, label = ?, updated_at = ?${conf ? ", confidence_score = ?, confidence = ?" : ""}${status === "supported" ? ", verified_at = ?" : ""} WHERE id = ?`)
     .run(...[content.slice(0, 2000), `${KIND_LABEL[cur.kind]}: ${text.slice(0, 90)}`, now, ...(conf ? [conf.score, conf.level] : []), ...(status === "supported" ? [now] : []), cur.node_id]);
-  recompute(agentId, cur.node_id, now);
+  // An explicitly supplied confidence is the caller's judgement; the evidence-balance
+  // recompute only applies when none was given (otherwise it silently overwrote it).
+  recompute(agentId, cur.node_id, now, { keepConfidence: !!conf });
   bumpWriteCounter(db);
   return { ok: true, item: getOpenItem(agentId, cur.node_id)! };
 }
