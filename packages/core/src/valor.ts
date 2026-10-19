@@ -99,7 +99,10 @@ export function valorFactor(injectHits: number, injectCount: number, type: NodeT
   return 0.5 + (hits + 1) / (count + 2);
 }
 
-/** Called by buildRecallContext with the nodes it actually injected. */
+/** Injections recorded within this window for one session belong to the same prompt build. */
+const MERGE_WINDOW_MS = 10_000;
+
+/** Called by buildRecallContext / buildProceduralContext with the nodes they actually injected. */
 export function recordInjection(
   agentId: string,
   sessionId: string,
@@ -116,11 +119,22 @@ export function recordInjection(
     if (oldest === undefined) break;
     pending.delete(oldest);
   }
-  pending.set(`${agentId}|${sessionId}`, {
-    agentId,
-    entries: nodes.map((n) => ({ id: n.id, label: n.label, content: n.content.slice(0, 200) })),
-    ts: now,
-  });
+  // buildRecallContext and buildProceduralContext both record for the same
+  // session within one prompt build. A plain set() made the second call
+  // (procedural) overwrite the first, so recalled memories were never scored
+  // and the hit -> FSRS reward never reached them. Merge records that arrive
+  // within one build window; anything older is a previous turn whose reply
+  // was never scored, and is replaced.
+  const key = `${agentId}|${sessionId}`;
+  const prev = pending.get(key);
+  const entries = nodes.map((n) => ({ id: n.id, label: n.label, content: n.content.slice(0, 200) }));
+  if (prev && now - prev.ts < MERGE_WINDOW_MS) {
+    const seen = new Set(prev.entries.map((e) => e.id));
+    for (const e of entries) if (!seen.has(e.id)) prev.entries.push(e);
+    prev.ts = now;
+    return;
+  }
+  pending.set(key, { agentId, entries, ts: now });
 }
 
 /**

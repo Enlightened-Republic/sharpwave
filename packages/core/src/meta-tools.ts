@@ -52,7 +52,8 @@ function resolveScope(agentId: string, args: { goalId?: string; planId?: string;
   }
   const topic = clean(args.topic, 200);
   if (!topic) return { error: "give a goal_id, plan_id or topic" };
-  return { kind: "topic", label: `"${topic}"`, ids: topicIds(agentId, topic), topic };
+  // reflection.ts stores a topic scope as scope_ref = topic.toLowerCase(); match the same way.
+  return { kind: "topic", label: `"${topic}"`, ids: topicIds(agentId, topic), topic: topic.toLowerCase() };
 }
 
 // ─── replay ────────────────────────────────────────────────────────────────

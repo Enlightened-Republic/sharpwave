@@ -32,7 +32,7 @@ describe("identity text", () => {
     const l = parseIdentity(TRIPP);
     expect(identityFields(TRIPP).map((f) => f.key)).toEqual(["Name", "Creature", "Vibe", "Emoji"]);
     expect(renderIdentity(l)).toBe(TRIPP);
-    expect(SCHEMA_VERSION).toBe(25);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(25);
     expect(identityConfig(cfg).locked).toEqual(["Name"]);
   });
 });

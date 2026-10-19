@@ -176,6 +176,9 @@ export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoa
   if (cur.status === "superseded") return { ok: false, error: "that version is superseded; update the current one" };
 
   if (input.action === "update" || input.action === "supersede") {
+    // A done / archived goal must not be quietly reopened by an edit: the new version would be
+    // written as active (back in the header, drift-checked) while its triggers stay disabled.
+    if (cur.status === "done" || cur.status === "archived") return { ok: false, error: `goal is ${cur.status}; set a new goal instead of editing a finished one` };
     if (input.action === "supersede" && !reason) return { ok: false, error: "supersede needs a reason (why the goal changed)" };
     const pr = input.priority === undefined ? cur.priority : parsePriority(input.priority);
     if (pr === null) return { ok: false, error: "priority must be 1..5 or critical|high|medium|low|someday" };
@@ -212,6 +215,10 @@ export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoa
     return { ok: true, goal: row, previous: cur, related: sup.related.map((r) => ({ id: r.id, label: r.label })) };
   }
 
+  // Validate everything before the first write so a bad `triggers` value cannot leave a
+  // half-applied action (goal marked done, node archived, no goal_events row).
+  const trig = validateTriggers(input.triggers);
+  if ("error" in trig) return { ok: false, error: trig.error };
   const set = (sql: string, ...a: unknown[]) => db.prepare(`UPDATE goals SET ${sql}, updated_at = ? WHERE node_id = ?`).run(...a, now, cur.node_id);
   switch (input.action) {
     case "pause": if (cur.status !== "active") return { ok: false, error: `goal is ${cur.status}` }; set("status = 'paused'"); break;
@@ -229,8 +236,6 @@ export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoa
     case "track": set("tracked = 1, last_progress_at = COALESCE(last_progress_at, ?)", now); break;
     case "untrack": set("tracked = 0, drift_kind = NULL, drift_reason = NULL"); break;
   }
-  const trig = validateTriggers(input.triggers);
-  if ("error" in trig) return { ok: false, error: trig.error };
   addTriggers(agentId, cur.lineage_id, trig.specs, now);
   const row = currentGoalRow(agentId, cur.lineage_id)!;
   event(agentId, row, input.action, input.note ? { note: clean(input.note, 300) } : null, reason, now);

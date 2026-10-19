@@ -442,6 +442,28 @@ export function writeNode(
  *   - recomputes salience using the new retrievability
  *   - leaves `ef` untouched (SM-2 backcompat read path; new code reads `difficulty`)
  */
+/**
+ * Record that nodes were surfaced by recall WITHOUT treating that as a review.
+ * Surfacing a node is not evidence it was remembered: only VALOR hits (the
+ * reply demonstrably used the node) and explicit brain_review calls go through
+ * touchNode's FSRS update. This bumps access_count / accessed_at only, so the
+ * neuromodulator state, proactive monitor and "recently accessed" views still
+ * see the activity.
+ */
+export function markNodesAccessed(agentId: string, nodeIds: string[]): void {
+  if (nodeIds.length === 0) return;
+  const db = getDb(agentId);
+  const now = Date.now();
+  executeWithWalRetrySync(
+    db,
+    (d) => {
+      const stmt = d.prepare("UPDATE nodes SET access_count = access_count + 1, accessed_at = ? WHERE id = ?");
+      d.transaction(() => { for (const id of nodeIds) stmt.run(now, id); })();
+    },
+    { op: "nodes.accessed" },
+  );
+}
+
 export function touchNode(agentId: string, nodeId: string, quality = 4): void {
   const db = getDb(agentId);
   const now = Date.now();
@@ -673,9 +695,16 @@ export function getTopByType(agentId: string, type: NodeType, limit = 5): BrainN
  * competing in a similarity ranking it cannot win.
  *
  * Ordering prefers `source='brain_manager'` (hand-written and verified for this
- * machine) over extracted/SWS nodes, then importance. `minContentChars` drops
- * SWS title-fragment artifacts like "## Step 1: Register Your Agent" (35 chars)
+ * machine) over extracted nodes, then importance. `minContentChars` drops
+ * title-fragment artifacts like "## Step 1: Register Your Agent" (35 chars)
  * that would otherwise outrank real rules on importance alone.
+ *
+ * Sleep extractions (`source='sws'`) are excluded unless someone verified them
+ * (`verified_at`): SWS turns any "do the following / step 1 ..." sentence in an
+ * episode into a procedural node, and episodes carry pasted emails, web pages
+ * and tool output. This block is presented to the model as rules "verified on
+ * THIS machine, follow them over your priors" — untrusted text must not reach
+ * it by being slept on. Those nodes still take part in ordinary recall ranking.
  */
 export function getOperationalProcedures(
   agentId: string,
@@ -686,8 +715,10 @@ export function getOperationalProcedures(
   return db.prepare(`
     SELECT * FROM nodes
     WHERE type = 'procedural'
+      AND status = 'active'
       AND (valid_until IS NULL OR valid_until > ?)
       AND length(content) >= ?
+      AND (source IS NULL OR source != 'sws' OR verified_at IS NOT NULL)
     ORDER BY (CASE WHEN source = 'brain_manager' THEN 1 ELSE 0 END) DESC,
              importance DESC,
              salience DESC

@@ -5,7 +5,8 @@
 
 import { existsSync, copyFileSync, unlinkSync, renameSync, mkdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { getDb, getMeta, setMeta } from "./db.js";
+import Database from "better-sqlite3";
+import { getDb, closeDb, getMeta, setMeta } from "./db.js";
 
 interface BackupInfo {
   timestamp: number;
@@ -34,18 +35,17 @@ export function getBackupDir(agentId: string): string {
 /**
  * Create a backup of the database before a risky operation.
  * Returns the path to the backup file on success.
- * 
+ *
+ * The snapshot is taken with `VACUUM INTO` on the live connection: a single
+ * read transaction, so it is consistent even if another connection (the
+ * openclaw plugin, a second MCP process on the same file) commits while it
+ * runs — a plain file copy of a WAL database is not. The copy is written to a
+ * .tmp file, checked with `PRAGMA quick_check`, then renamed into place.
+ *
  * Automatically prunes old backups (>7 days or >5 per agent).
  */
 export function createBackup(agentId: string, reason: string): string {
   const db = getDb(agentId);
-  
-  // Flush any pending WAL data to the main database file
-  try {
-    db.pragma("wal_checkpoint(RESTART)");
-  } catch (err) {
-    console.warn(`[xanima] backup: wal_checkpoint failed: ${String(err)}`);
-  }
 
   const dbPath = db.name as string | undefined;
   if (!dbPath) {
@@ -57,19 +57,25 @@ export function createBackup(agentId: string, reason: string): string {
   }
 
   const backupDir = getBackupDir(agentId);
-  
+
   // Create backup directory if it doesn't exist
   if (!existsSync(backupDir)) {
     mkdirSync(backupDir, { recursive: true });
   }
 
   const timestamp = Date.now();
-  const backupName = `backup-${timestamp}.db`;
-  const backupPath = join(backupDir, backupName);
+  let backupPath = join(backupDir, `backup-${timestamp}.db`);
+  // Two backups in the same millisecond (tests, a double reset) must not collide.
+  for (let bump = 1; existsSync(backupPath); bump++) backupPath = join(backupDir, `backup-${timestamp + bump}.db`);
+  const tmp = `${backupPath}.tmp`;
+  if (existsSync(tmp)) unlinkSync(tmp);
 
   try {
-    copyFileSync(dbPath, backupPath);
+    db.prepare("VACUUM INTO ?").run(tmp);
+    verifyBackupFile(tmp);
+    renameSync(tmp, backupPath);
   } catch (err) {
+    try { unlinkSync(tmp); } catch { /* nothing to clean */ }
     throw new Error(`Failed to create backup at ${backupPath}: ${String(err)}`);
   }
 
@@ -91,13 +97,33 @@ export function createBackup(agentId: string, reason: string): string {
 }
 
 /**
- * Restore from a backup. The current database is moved to .old and the backup
- * is restored to its original location.
+ * Open a snapshot read-only and run `PRAGMA quick_check`; throws if the file
+ * is not a healthy SQLite database.
+ */
+function verifyBackupFile(path: string): void {
+  const check = new Database(path, { readonly: true, fileMustExist: true });
+  try {
+    const res = check.pragma("quick_check", { simple: true });
+    if (res !== "ok") throw new Error(`snapshot ${path} failed quick_check: ${String(res)}`);
+  } finally {
+    check.close();
+  }
+}
+
+/**
+ * Restore from a backup. The agent's connection is closed first, the current
+ * database (with its -wal / -shm sidecars) is moved to `.old`, and the backup
+ * is copied to the original location. The next getDb(agentId) reopens it.
+ *
+ * The backup is verified (quick_check) before anything is touched, and the
+ * live file is only moved aside after that, so a bad backup never replaces a
+ * good brain.
  */
 export function restoreBackup(agentId: string, backupPath: string): void {
   if (!existsSync(backupPath)) {
     throw new Error(`Backup file not found: ${backupPath}`);
   }
+  verifyBackupFile(backupPath);
 
   const db = getDb(agentId);
   const dbPath = db.name as string | undefined;
@@ -105,18 +131,16 @@ export function restoreBackup(agentId: string, backupPath: string): void {
     throw new Error(`Could not determine database path for agent ${agentId}`);
   }
 
-  // Close the database connection before touching files
-  // Note: this is a simplified approach; real implementations would need
-  // proper connection lifecycle management.
+  // Close the connection before touching files: renaming an open database out
+  // from under its handle leaves the process writing to the moved file on
+  // POSIX and fails outright (EBUSY) on Windows.
+  closeDb(agentId);
 
   try {
-    // Move current DB to .old
-    if (existsSync(dbPath)) {
-      const oldPath = `${dbPath}.old`;
-      renameSync(dbPath, oldPath);
+    for (const suffix of ["", "-wal", "-shm"]) {
+      const p = `${dbPath}${suffix}`;
+      if (existsSync(p)) renameSync(p, `${p}.old`);
     }
-
-    // Restore backup
     copyFileSync(backupPath, dbPath);
   } catch (err) {
     throw new Error(`Failed to restore backup: ${String(err)}`);

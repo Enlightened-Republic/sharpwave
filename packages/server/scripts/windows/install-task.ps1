@@ -44,7 +44,7 @@ if (-not (Test-Path $ServerCli)) { throw "server CLI not found at $ServerCli - r
 $ServerCli = (Resolve-Path $ServerCli).Path
 
 if (-not (Test-Path $ConfigPath)) {
-  Write-Warning "No config at $ConfigPath - the service will use built-in defaults, which ALSO try to bind the tailnet IP 100.121.136.3. For a 127.0.0.1-only install create the config first (docs/windows-install-runbook.md step 2)."
+  Write-Warning "No config at $ConfigPath - the service will use built-in defaults (127.0.0.1 only, nightly backup + sleep under the default root). To bind your tailnet IP or change paths create the config first (docs/windows-install-runbook.md step 2)."
 }
 
 $Vbs = (Resolve-Path (Join-Path $PSScriptRoot "sharpwave-service.vbs")).Path

@@ -107,6 +107,24 @@ export function recordCoactivations(agentId: string, sessionId: string): void {
 // resets it.
 const REPLAY_LEDGER_KEY = "awake_replayed_day";
 const REPLAY_LEDGER_MAX_IDS = 1000;
+// Same dedup for prospective replay: without it the top goal neighbours were
+// bumped +0.1 importance on EVERY 30-minute tick, sitting at 1.0 within a few
+// hours and dominating the salience fill for good (nothing ever lowers importance).
+const PROSPECTIVE_LEDGER_KEY = "prospective_replayed_day";
+
+function loadDayLedger(agentId: string, key: string, today: string): Set<string> {
+  try {
+    const raw = getMeta(agentId, key);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { day?: string; ids?: string[] };
+      if (parsed.day === today && Array.isArray(parsed.ids)) return new Set(parsed.ids);
+    }
+  } catch { /* malformed ledger — treat as empty */ }
+  return new Set();
+}
+function saveDayLedger(agentId: string, key: string, today: string, ids: Set<string>): void {
+  setMeta(agentId, key, JSON.stringify({ day: today, ids: [...ids].slice(-REPLAY_LEDGER_MAX_IDS) }));
+}
 
 function replayHighRippleNodes(
   agentId: string,
@@ -231,7 +249,9 @@ function prospectiveReplay(
 
   const TOP_K = 3;
   const now = Date.now();
-  const seen = new Set<string>();
+  const today = new Date().toISOString().slice(0, 10);
+  const bumpedToday = loadDayLedger(agentId, PROSPECTIVE_LEDGER_KEY, today);
+  const seen = new Set<string>(bumpedToday);
   // Track the candidates to bump in one transaction.
   const bumps: string[] = [];
 
@@ -266,6 +286,8 @@ function prospectiveReplay(
   db.transaction(() => {
     for (const id of bumps) bump.run(now, id);
   })();
+  for (const id of bumps) bumpedToday.add(id);
+  saveDayLedger(agentId, PROSPECTIVE_LEDGER_KEY, today, bumpedToday);
 
   return bumps.length;
 }

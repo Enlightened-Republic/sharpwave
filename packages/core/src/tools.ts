@@ -3,10 +3,10 @@
 // THE single source of truth for the brain_* tool surface.
 //
 // Both consumers read from here, so the two hosts can never drift:
-//   • `packages/mcp`      publishes MCP_TOOL_NAMES     (11 tools)
+//   • `packages/mcp`      publishes MCP_TOOL_NAMES     (14 tools)
 //   • `packages/openwave` publishes OPENWAVE_TOOL_NAMES (all 16)
 //
-// The 11 MCP schemas + handler bodies were copied VERBATIM out of
+// The original 11 MCP schemas + handler bodies were copied VERBATIM out of
 // `packages/mcp/src/index.ts` — the published `sharpwave` npm package's tool
 // surface is frozen (plan Global Constraints), and `npm run test:mcp` is the
 // regression gate. Do not "tidy" a description, a key order, or an output
@@ -123,7 +123,7 @@ const NO_OP_LOGGER = {
 // ─── Tool definitions ───────────────────────────────────────────────────────
 
 export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
-  // ── the 11 published by the MCP server (VERBATIM from packages/mcp) ──────
+  // ── the tools published by the MCP server (MCP_TOOL_NAMES; the first 11 verbatim from packages/mcp) ──
   brain_query: {
     description:
       "Search and recall memories using hybrid FTS + vector + spreading activation. Returns ranked nodes with retrievability and salience scores.",
@@ -264,7 +264,7 @@ export const BRAIN_TOOL_DEFS: Record<string, BrainToolDef> = {
   },
   brain_reset: {
     description:
-      "DESTRUCTIVE. Wipe this agent's entire brain — every node, edge, episode, vector, working-memory row, and the self-model — and re-seed an empty self-model. A timestamped .db backup is taken first. Embedding config (Ollama/OpenRouter) and the vec table's dimension are untouched. Requires confirm to exactly equal this agent's id.",
+      "DESTRUCTIVE. Wipe this agent's entire brain — every node, edge, episode, vector, working-memory row, the self-model, and all continuity state (decisions, goals, plans, open items, commitments, reflections, identity history, soul provenance, review queue, room items) — and re-seed an empty self-model. A timestamped .db backup is taken first. Embedding config (Ollama/OpenRouter) and the vec table's dimension are untouched. Requires confirm to exactly equal this agent's id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -360,7 +360,7 @@ BRAIN_TOOL_DEFS[IDENTITY_TOOL_NAME] = IDENTITY_TOOL_DEF;
 BRAIN_TOOL_DEFS["brain_export_soul"] = SOUL_TOOL_DEFS["brain_export_soul"]!;
 
 /**
- * The 11 tools `packages/mcp` publishes, in the exact order its `TOOLS` array
+ * The tools `packages/mcp` publishes (14 as of 0.5.0), in the exact order its `TOOLS` array
  * had them. The published order is part of the frozen surface — do not sort.
  */
 export const MCP_TOOL_NAMES: string[] = [
@@ -833,12 +833,15 @@ export async function dispatchBrainTool(
       }
 
       const cleared = resetBrain(agentId);
+      const otherLine = Object.entries(cleared.other).map(([t, n]) => `${n} ${t}`).join(", ");
       return ok(
         [
           `Brain reset for "${agentId}".`,
           `Backup: ${backupPath}`,
           `Cleared: ${cleared.nodes} nodes, ${cleared.edges} edges, ${cleared.episodes} episodes, ` +
-            `${cleared.vectors} vectors, ${cleared.associations} associations, ${cleared.workingMemory} working-memory rows.`,
+            `${cleared.vectors} vectors, ${cleared.associations} associations, ${cleared.workingMemory} working-memory rows` +
+            (otherLine ? `, ${otherLine}` : "") +
+            (cleared.meta ? `, ${cleared.meta} bookkeeping entries` : "") + ".",
           `Self-model reset to empty. Embedding config (Ollama/OpenRouter) unchanged — new memories embed as before.`,
         ].join("\n"),
       );

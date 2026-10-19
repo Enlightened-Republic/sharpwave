@@ -1,7 +1,7 @@
 // Public surface of xanima-server (for tests and embedding).
 export { BrainService } from "./service.js";
 export type { ServiceOptions } from "./service.js";
-export { resolveConfig, defaultConfig, loadConfigFile, DEFAULT_PORT, DEFAULT_TAILNET_IP, LOOPBACK } from "./config.js";
+export { resolveConfig, defaultConfig, loadConfigFile, DEFAULT_PORT, LOOPBACK } from "./config.js";
 export type { ServiceConfig, SleepConfig, BackupConfig } from "./config.js";
 export { assertBindableHost, BindPolicyError, listenWithRetry } from "./bind.js";
 export { TokenStore, mintToken, revokeToken, hashToken, parseScopes, readTokenFile, SCOPES } from "./tokens.js";

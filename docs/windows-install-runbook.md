@@ -179,8 +179,8 @@ What the settings do:
 
 - `root`: the service's own data folder. Brains go in `brains\shared` and `brains\<agentId>`, plus `backups\`,
   `audit\`, and `tokens.json` (hashes only).
-- `tailnetHosts: []`: **no tailnet bind**. The service always binds `127.0.0.1` and refuses `0.0.0.0`.
-  Without a config file the defaults *also* try `100.121.136.3`, so this file matters.
+- `tailnetHosts: []`: **no tailnet bind** (this is also the built-in default). The service always binds
+  `127.0.0.1` and refuses `0.0.0.0`. Put your own Tailscale IP here in step T.3 if you want tailnet access.
 - `tailnetBackgroundRetryMs: 0`: no background retries of a tailnet bind.
 - `backup`: nightly `VACUUM INTO` snapshot of every service brain at 02:30, keeping 7.
   This only runs while Hailey is logged on, because the task is an at-logon task.
