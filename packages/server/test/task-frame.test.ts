@@ -67,6 +67,17 @@ describe("current task on the service", () => {
       // older hosts that send no session_key share one default frame
       expect((await tool(h.url, tok, "brain_now", { action: "set", title: "Default-keyed task" })).isError).toBe(false);
       expect((await tool(h.url, tok, "brain_now", { action: "get" })).text).toMatch(/^Working on: Default-keyed task/);
+
+      // owner_turn: the owner's words hand the plan off and pin the new focus, in the same call that builds the context
+      await tool(h.url, tok, "brain_update_goal", { goal_id: old.lineage_id, action: "resume" }); // take the goal back first
+      const t4 = JSON.parse((await tool(h.url, tok, "brain_turn_context", { query: "Hand the Gano Telegram bot to bob. Let's work on the billing migration.", session_key: S, owner_turn: true })).text) as { now?: string; activeGoals?: string[] };
+      expect(t4.activeGoals).toBeUndefined();
+      expect(t4.now).toMatch(/^\[BRAIN: now\]\nWorking on: Billing migration \(your owner said so, just now\)[\s\S]*Handed off just now: goal "Ship the Gano Telegram bot" → bob \(owner said: "Hand the Gano Telegram bot to bob\."\)/);
+      expect((await tool(h.url, tok, "brain_list_goals", { status: "handed_off" })).text).toMatch(/handed_off → bob/);
+      // not attested → words are not acted on
+      const t5 = JSON.parse((await tool(h.url, tok, "brain_turn_context", { query: "Hand the billing migration to carol.", session_key: S })).text) as { now?: string };
+      expect(t5.now).toMatch(/Working on: Billing migration/);
+      expect((await tool(h.url, tok, "brain_plan", { action: "list", status: "handed_off" })).text).toBe("No plans match.");
     } finally { await h.stop(); }
   });
 });

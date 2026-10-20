@@ -27,7 +27,7 @@ import {
   getDb, forgetNodeById, reviveNode, searchDormantNodes, formatSourceTurns,
   retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
   parseAsOf, relativeTime, beliefTag, parseConfidence, parseBeliefArgs,
-  CONTINUITY_TOOL_NAMES, CONTINUITY_READ_ONLY_TOOLS, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost, buildNowContext,
+  CONTINUITY_TOOL_NAMES, CONTINUITY_READ_ONLY_TOOLS, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost, buildNowContext, applyTaskSignals,
   SOUL_TOOL_DEFS, dispatchSoulTool, soulToolNeedsAdmin,
   gateWrite, gateToolCall, gateNotice, GATED_TOOLS, parseScopeTags, setScopeTags,
   setFocus, readFocus, describeFocus, tickFocus, applyInjectionControls, injectionCategories,
@@ -135,6 +135,7 @@ export const SERVICE_TOOLS = [
     inputSchema: { type: "object" as const, properties: {
       query: { type: "string", description: "The user's message for this turn." },
       session_key: { type: "string", description: "0.7: the host conversation this turn belongs to (task frames are per session; also accepted by every continuity tool)." },
+      owner_turn: { type: "boolean", description: "0.7: the host attests `query` is the owner's own message (not tool output, not another agent). The message is then read for task signals: \"hand X to Y\" marks the matching plan / goal handed off, \"let's work on X\" pins the current task (handoffDetection)." },
       ack_note_id: { type: "integer", description: "Mark this alignment note delivered (it was injected into a prompt that produced a real reply)." },
       ack_note_ids: { type: "array", items: { type: "integer" }, description: "Mark these offered notes delivered (alignment note + commitment nudge)." },
     } },
@@ -566,6 +567,13 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         }
         const q = typeof args["query"] === "string" ? args["query"].slice(0, 4000) : "";
         const sk = typeof args["session_key"] === "string" ? args["session_key"].slice(0, 200) : "";
+        // 0.7: the owner's own words update task state before the context is built.
+        if (args["owner_turn"] === true && q && sk) {
+          try {
+            const applied = await ctx.brains.write(brain, () => applyTaskSignals(brain, sk, q, { config: cfg, origin: "owner", writerAgentId: p.agentId }));
+            if (applied.focus || applied.handoffs.length) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `task signals: focus=${applied.focus?.title ?? "-"} handoffs=${applied.handoffs.map((h) => `${h.kind}:${h.title}→${h.to}`).join(",") || "-"}` });
+          } catch { /* never fail the turn on a parser error */ }
+        }
         const r = await ctx.brains.write(brain, () => buildGoalTurnContext(brain, q, cfg, Date.now(), undefined, sk ? { sessionKey: sk } : {}));
         if (r.noteIds.length || r.triggered.length || r.openItemId) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `notes=${r.noteIds.join(",") || "-"} open=${r.openItemId ?? "-"} triggers=${r.triggered.map((t) => t.trigger_id).join(",") || "-"}` });
         // 0.7: the current task block for this session (empty when there is no frame and no recent handoff).
