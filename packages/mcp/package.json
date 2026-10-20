@@ -42,13 +42,13 @@
   ],
   "author": "Enlightened Republic",
   "license": "MIT",
-  "homepage": "https://github.com/Enlightened-Republic/sharpwave#readme",
+  "homepage": "https://github.com/Enlightened-Republic/xanima#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Enlightened-Republic/sharpwave.git"
+    "url": "git+https://github.com/Enlightened-Republic/xanima.git"
   },
   "bugs": {
-    "url": "https://github.com/Enlightened-Republic/sharpwave/issues"
+    "url": "https://github.com/Enlightened-Republic/xanima/issues"
   },
   "engines": {
     "node": ">=22"
