@@ -41,7 +41,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Enlightened-Republic/sharpwave.git",
+    "url": "git+https://github.com/Enlightened-Republic/xanima.git",
     "directory": "packages/server"
   }
 }
