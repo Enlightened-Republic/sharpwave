@@ -186,6 +186,7 @@ Memory lands in `~/.sharpwave/` as a SQLite database. Nothing leaves your machin
 | `brain_reset` | Wipe an agent's brain back to empty (a `.db` backup is taken first). `confirm` must equal the agent id. |
 
 | `brain_focus` | (0.5.0) Suppress or boost a topic / project / room / type in recall for N turns or a task. The header (identity, goals, rules) is unaffected. |
+| `brain_now` | (0.7.0) What this conversation is working on right now: `set` (title, optional `plan_id` / `goal_id` / note) pins it as the current task — injected every turn as `[BRAIN: now]`, kept across context compaction, and what a bare "continue" means; `get` shows it with recent handoffs; `clear` drops it. Set automatically by `brain_plan` create / step / resume. |
 | `brain_export_soul` | (0.4.0) Export your own Soul Package (`xanima-soul/1`): identity, values, goals, skills, lessons, key facts with provenance and a sha256 hash. Compact JSON or a summary. |
 
 In multi-agent mode every tool above also takes a required `agent` argument.
@@ -199,6 +200,10 @@ Carry an agent's identity, goals, skills, lessons and key facts to a fresh brain
 On `xanima-server`, **rooms** are named namespaces with members (read / write / admin). Agents publish selected memories into a room with provenance (`brain_publish`), search it (`brain_room_query`), subscribe so relevant room items show up in recall tagged `[type·room·writer]` (`brain_subscribe`), and admins create / invite / revoke (`brain_room`, or `xanima-server room …`). Conflicting claims are kept side by side and recorded; nothing is overwritten. Isolation stays the default; the `shared` brain is unchanged. Guide: [docs/rooms.md](docs/rooms.md).
 
 **Injection control:** `brain_focus`, `injectionCategories` switches, and sensitivity labels honoured in recall. **Poisoning quarantine:** writes that would change identity, values, goals or rules from untrusted sources (tool output, other agents, imports, injection-looking text) are logged (`quarantine: "log"`, the default) or held for review (`"enforce"`). Security model: [docs/security-model.md](docs/security-model.md).
+
+### Current task and handoffs (0.7.0)
+
+Stored state (active goals, drift nudges, parked plans) is re-injected every turn, and after the host compacts a long conversation it is all the agent has — so a bare "continue" used to pull an older, unfinished project forward. Each conversation now carries a **current task** (`brain_now`; set automatically when a plan is created, stepped or resumed, and from the owner's own words: "let's work on X", "switching to X"). It lives in the brain, survives compaction, is injected every turn as `[BRAIN: now]`, and makes content-free prompts ("continue", "go on", "ok", "next") mean *this* task: they skip topic recall and hold goal / commitment nudges. A goal or plan given to another agent is **handed off** (`brain_update_goal handoff`, `brain_plan handoff`, or the owner saying "hand X to Y" / "Y will take over X"): it leaves the goals header, drift checks, heartbeats and briefings until `resume` takes it back, and recall says whose it is. Settings: `currentTask` (true), `taskFrameTtlHours` (48), `handoffDetection` (true). On `xanima-server`, every continuity tool and `brain_turn_context` take `session_key`; the turn context returns the block as `now`.
 
 ## Memory types
 
