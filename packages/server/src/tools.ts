@@ -128,7 +128,10 @@ export const SERVICE_TOOLS = [
   withProps(IDENTITY_TOOL_NAME, {}),
   { name: "brain_import_soul", description: SOUL_TOOL_DEFS["brain_import_soul"]!.description + " Targets the admin token's own agent brain; a backup is taken first. Prefer `xanima-server soul import` (service stopped).", inputSchema: SOUL_TOOL_DEFS["brain_import_soul"]!.inputSchema },
   // Xanima 0.2.0 decision ledger + goals, 0.3.0 reflection / open items / plans / meta-tools — always on the caller's PRIVATE brain.
-  ...CONTINUITY_TOOL_NAMES.map((n) => withProps(n, { session_key: { type: "string", description: "0.7: the host conversation this call belongs to (task frames — brain_now, brain_plan — are per session). Plugin plumbing; optional." } })),
+  // 0.7: every continuity tool also ACCEPTS `session_key` (plugin plumbing: the host conversation the call
+  // belongs to; task frames are per session). It is not advertised: the model never sets it, the host does,
+  // and the published schemas stay identical to core's.
+  ...CONTINUITY_TOOL_NAMES.map((n) => withProps(n, {})),
   {
     name: TURN_CONTEXT_TOOL,
     description: "Plugin plumbing (called once per agent turn): returns the pending goal alignment note and commitment nudge (offered, not yet delivered; noteIds), any goal triggers matching this turn, at most one relevant open question / hypothesis, and (0.7) the session's current task as `now` ([BRAIN: now]: what this conversation is working on, recent handoffs), as JSON. After the turn produced a real assistant reply, call again with ack_note_ids (or ack_note_id) to mark them delivered. Needs the write scope.",
