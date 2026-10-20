@@ -1,17 +1,19 @@
 # Xanima
 
-> **Current release: 0.6.0** (2026-10-19), on npm as
+> **Current release: 0.7.0** (2026-10-20), on npm as
 > [`xanima`](https://www.npmjs.com/package/xanima) (MCP server) and
 > [`xanima-core`](https://www.npmjs.com/package/xanima-core) (engine); the
 > OpenClaw plugin [`xanima-openclaw`](https://github.com/Enlightened-Republic/xanima-openclaw)
-> 0.6.0 vendors the same engine. Highlights: forgetting makes memories dormant
-> instead of deleting them (`brain_query {include_dormant: true}` revives them);
-> identity changes only with the owner by default; completed plans compile into
-> step-by-step procedures that become rules once verified; `brain_expand
-> {source_turns: N}` shows the conversation a memory came from; plus a full
-> audit-fix pass (loopback-only default bind, complete `brain_reset`,
-> consistent backups). Additive schema v26–v27. Full history, including
-> 0.1.0–0.5.0: [CHANGELOG.md](CHANGELOG.md).
+> 0.7.0 vendors the same engine. Highlights: every conversation carries a
+> **current task** (`brain_now`, set automatically by `brain_plan` and from the
+> owner's own words) that is injected every turn as `[BRAIN: now]`, survives
+> context compaction, and makes a bare "continue" mean *this* task rather than an
+> older plan or goal; goals and plans can be **handed off** to another agent
+> (out of the header, drift checks and heartbeats until taken back); nudges are
+> reminders, never orders to switch tasks. Additive schema v28. 0.6.0 brought
+> dormant forgetting, owner-only identity changes, verified procedures and
+> `brain_expand {source_turns: N}`. Full history, including 0.1.0–0.5.0:
+> [CHANGELOG.md](CHANGELOG.md).
 
 *Formerly Sharpwave.* Upgrading from `sharpwave` / `openwave`: install
 `xanima` (the `sharpwave` bin is kept as an alias) or `xanima-openclaw`, rename
@@ -166,12 +168,13 @@ install that has not been migrated yet). Nothing leaves your machine unless you 
 | `brain_edges` | Get all active incoming and outgoing edges for a node. |
 | `brain_reset` | Wipe an agent's brain back to empty (a `.db` backup is taken first). `confirm` must equal the agent id. |
 | `brain_retract` | Retract a wrong memory (reason required); it is kept as history but never recalled again. |
-| `brain_status` | Short self-status: counts, low-confidence / disputed / dormant items, conflicts, last sleep summary, anything needing attention. |
+| `brain_status` | Short self-status: counts, low-confidence / disputed / dormant items, conflicts, the current task and recent handoffs, last sleep summary, anything needing attention. |
 | `brain_record_decision` / `brain_update_decision_outcome` / `brain_query_decisions` | Decision ledger: context, options, choice, predicted vs actual outcome, lesson. |
-| `brain_set_goal` / `brain_update_goal` / `brain_list_goals` | Versioned goals with drift checking and keyword / time triggers. |
+| `brain_set_goal` / `brain_update_goal` / `brain_list_goals` | Versioned goals with drift checking and keyword / time triggers; `handoff` (0.7.0) gives a goal to another agent until `resume` takes it back. |
 | `brain_reflect` / `brain_replay` | Stored reflections ("what worked / didn't / try next") and compressed decision → outcome → lesson trajectories. |
 | `brain_hypothesis` / `brain_question` / `brain_list_open` | Hypotheses, assumptions and open questions with evidence and status. |
-| `brain_commit` / `brain_commitments` / `brain_plan` | Commitments with due dates and blockers; plans with steps (park / resume with a briefing; done plans compile into procedures). |
+| `brain_commit` / `brain_commitments` / `brain_plan` | Commitments with due dates and blockers; plans with steps (park / resume with a briefing; `handoff` to another agent; done plans compile into procedures). |
+| `brain_now` | (0.7.0) What this conversation is working on right now: `set` (title, optional `plan_id` / `goal_id` / note) pins it as the current task — injected every turn as `[BRAIN: now]`, kept across context compaction, and what a bare "continue" means; `get` shows it with recent handoffs; `clear` drops it. Set automatically by `brain_plan` create / step / resume. |
 | `brain_changes` / `brain_conflicts` / `brain_briefing` / `brain_forget_impact` | Read-only meta-tools: what changed, contradictions, resume briefings, dry-run forgetting impact. |
 | `brain_export_soul` | Export your own Soul Package (`xanima-soul/1`): identity, values, goals, skills, lessons, key facts with provenance and a sha256 hash. Compact JSON or a summary. |
 
@@ -190,6 +193,10 @@ Carry an agent's identity, goals, skills, lessons and key facts to a fresh brain
 On `xanima-server`, **rooms** are named namespaces with members (read / write / admin). Agents publish selected memories into a room with provenance (`brain_publish`), search it (`brain_room_query`), subscribe so relevant room items show up in recall tagged `[type·room·writer]` (`brain_subscribe`), and admins create / invite / revoke (`brain_room`, or `xanima-server room …`). Conflicting claims are kept side by side and recorded; nothing is overwritten. Isolation stays the default; the `shared` brain is unchanged. Guide: [docs/rooms.md](docs/rooms.md).
 
 **Injection control:** `brain_focus`, `injectionCategories` switches, and sensitivity labels honoured in recall. **Poisoning quarantine:** writes that would change identity, values, goals or rules from untrusted sources (tool output, other agents, imports, injection-looking text) are logged (`quarantine: "log"`, the default) or held for review (`"enforce"`). Security model: [docs/security-model.md](docs/security-model.md).
+
+### Current task and handoffs (0.7.0)
+
+Stored state (active goals, drift nudges, parked plans) is re-injected every turn, and after the host compacts a long conversation it is all the agent has — so a bare "continue" used to pull an older, unfinished project forward. Each conversation now carries a **current task** (`brain_now`; set automatically when a plan is created, stepped or resumed, and from the owner's own words: "let's work on X", "switching to X"). It lives in the brain, survives compaction, is injected every turn as `[BRAIN: now]`, and makes content-free prompts ("continue", "go on", "ok", "next") mean *this* task: they skip topic recall and hold goal / commitment nudges. A goal or plan given to another agent is **handed off** (`brain_update_goal handoff`, `brain_plan handoff`, or the owner saying "hand X to Y" / "Y will take over X"): it leaves the goals header, drift checks, heartbeats and briefings until `resume` takes it back, and recall says whose it is. Settings: `currentTask` (true), `taskFrameTtlHours` (48), `handoffDetection` (true). On `xanima-server`, every continuity tool and `brain_turn_context` take `session_key`; the turn context returns the block as `now`.
 
 ## Memory types
 

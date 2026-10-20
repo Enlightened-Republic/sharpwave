@@ -1,6 +1,7 @@
 import { runBeliefReviewPass, saveSleepSummary, countNodesEdges } from "./beliefs.js";
 import { runDecisionPass, prepareLessonVectors } from "./decisions.js";
 import { runProcedurePass } from "./procedures.js";
+import { expireTaskFrames } from "./task-frame.js";
 import { runDriftPass } from "./goals.js";
 import { runReflectionPass } from "./reflection.js";
 import { expireOpenItemDrafts } from "./open-items.js";
@@ -261,6 +262,8 @@ export async function runConsolidation(
   let procs = { compiled: 0, reinforced: 0, failed: 0, verified: 0, demoted: 0, ids: [] as string[] };
   try { procs = runProcedurePass(agentId, config, log); } catch (err) { log.warn(`[xanima] procedure pass failed (agent=${agentId}): ${String(err)}`); }
   if (procs.compiled || procs.verified || procs.demoted) log.info(`[xanima] procedures: ${procs.compiled} compiled, ${procs.reinforced} reinforced, ${procs.verified} verified, ${procs.demoted} demoted (agent=${agentId})`);
+  // 0.7: current-task frames nobody touched for taskFrameTtlHours are stale conversations — drop them.
+  try { const n = expireTaskFrames(agentId, config); if (n) log.info(`[xanima] expired ${n} stale task frame(s) (agent=${agentId})`); } catch { /* pre-v28 */ }
 
   // Xanima 0.3.0: reflection phase (reflection: "sleep"), captured open-item
   // draft expiry, commitment overdue / blocked check (queues one nudge).

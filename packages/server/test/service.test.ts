@@ -186,7 +186,7 @@ describe("auth + health", () => {
       "brain_record_decision", "brain_update_decision_outcome", "brain_query_decisions",
       "brain_set_goal", "brain_update_goal", "brain_list_goals",
       "brain_reflect", "brain_replay", "brain_hypothesis", "brain_question", "brain_list_open", "brain_commit", "brain_commitments",
-      "brain_plan", "brain_changes", "brain_conflicts", "brain_briefing", "brain_forget_impact", "brain_turn_context",
+      "brain_plan", "brain_now", "brain_changes", "brain_conflicts", "brain_briefing", "brain_forget_impact", "brain_turn_context",
       "brain_room", "brain_publish", "brain_unpublish", "brain_room_query", "brain_subscribe", "brain_focus",
       "brain_episode_append",
     ]);

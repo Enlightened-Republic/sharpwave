@@ -287,7 +287,7 @@ describe("4. commitments and plans", () => {
     const r = await dispatchBrainTool("brain_plan", a, { action: "resume", plan_id: p.node_id.slice(0, 8) }, { ...cfg });
     expect(r.isError).toBeFalsy();
     const lines = r.text.split("\n").map((l) => l.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, "<id>").replace(/\d+ (days|min|h) ago|yesterday|just now/g, "<t>"));
-    expect(lines[0]).toBe("Plan resumed (parked <t>).");
+    expect(lines[0]).toBe("Plan resumed (parked <t>) — it is this session's current task again.");
     expect(lines[1]).toBe('Briefing — <id> Plan [active] Gano Telegram bot rollout  (goal: Ship the Gano Telegram bot)  (created <t>)');
     expect(lines).toContain("  [x] 1. get the bot token");
     expect(lines).toContain("  [ ] 2. wire the webhook");

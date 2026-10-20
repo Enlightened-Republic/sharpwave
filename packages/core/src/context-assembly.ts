@@ -23,6 +23,8 @@ import { computeBrainStatus, statusFooter } from "./beliefs.js";
 import { recordInjection } from "./valor.js";
 import type { BrainConfig } from "./types.js";
 import { applyInjectionControls, tickFocus, injectionCategories } from "./injection-control.js";
+import { isLowInformationPrompt, currentTaskEnabled } from "./task-frame.js";
+export { buildNowContext, buildSessionRecentContext, recentHandoffs } from "./now-context.js";
 
 const BRAIN_HEADER =
   "[Xanima active] Your memory is pre-loaded below — no manual lookup needed. brain_write to record new facts, brain_retract / brain_supersede (with a reason) to correct wrong ones, brain_status for a memory self-check, brain_record_decision / brain_update_decision_outcome to log choices and what happened, brain_set_goal / brain_list_goals for standing goals, brain_reflect for what worked / didn't, brain_hypothesis / brain_question for open items, brain_commit / brain_plan for commitments and plans (resume gives a briefing), brain_changes / brain_conflicts / brain_briefing to catch up, brain_query only for deep dives (as_of for 'what did I believe then'). Memory consolidates automatically in the background (awake replay every 30 min; deeper consolidation once enough new experience accumulates). Use brain_docs section='memo' for full system overview." +
@@ -319,6 +321,10 @@ export async function buildRecallContext(
   outInjectedIds?: Set<string>,
 ): Promise<string> {
   if (!query || query.length < 3) return "";
+  // 0.7: "continue" / "go on" / "ok" carry no topic. Recall on them is a search for memories
+  // that mention continuing — what an abandoned project leaves behind — so it is skipped; the
+  // host injects the current task ([BRAIN: now]) and this session's last turns instead.
+  if (currentTaskEnabled(config) && isLowInformationPrompt(query)) return "";
 
   const raw = await hybridRetrieve(agentId, query, sessionId, config);
   if (raw.length === 0) return "";

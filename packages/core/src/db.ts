@@ -395,7 +395,7 @@ function initSchema(db: Database.Database): void {
 }
 
 /** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
-export const SCHEMA_VERSION = 27;
+export const SCHEMA_VERSION = 28;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -843,6 +843,37 @@ export function migrateV27(db: Database.Database): void {
   `);
 }
 
+/**
+ * v28 — Xanima 0.7 current task + handoffs. Additive only.
+ *   • task_frames: one row per session — what that session is working on
+ *     right now (brain_now / set by brain_plan), injected every turn and
+ *     preserved across host compaction.
+ *   • plans / goals gain handoff_to / handoff_note / handoff_at: a plan or goal
+ *     handed to another agent is status 'handed_off' — out of the goals header,
+ *     drift checks, briefings and heartbeats until it is resumed (taken back).
+ */
+export function migrateV28(db: Database.Database): void {
+  const add = (t: string, c: string) => { try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* already exists */ } };
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_frames (
+      session_key TEXT PRIMARY KEY,
+      title       TEXT NOT NULL,
+      plan_id     TEXT,
+      goal_id     TEXT,
+      note        TEXT,
+      set_by      TEXT NOT NULL DEFAULT 'agent',
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS task_frames_updated ON task_frames(updated_at);
+  `);
+  for (const t of ["plans", "goals"]) {
+    add(t, "handoff_to TEXT");
+    add(t, "handoff_note TEXT");
+    add(t, "handoff_at INTEGER");
+  }
+}
+
 function runMigrations(db: Database.Database): void {
   const TARGET = SCHEMA_VERSION;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
@@ -1146,6 +1177,9 @@ function runMigrations(db: Database.Database): void {
   }
   if (current < 27) {
     migrateV27(db);
+  }
+  if (current < 28) {
+    migrateV28(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

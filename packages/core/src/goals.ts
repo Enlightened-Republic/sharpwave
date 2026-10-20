@@ -18,13 +18,15 @@ import { writeNode, getNode } from "./nodes.js";
 import { supersedeNode } from "./beliefs.js";
 import { relativeTime } from "./belief-meta.js";
 import { tokenSet, resolveGoalCurrent } from "./decisions.js";
+import { getTaskFrame, isLowInformationPrompt, clearFramesForGoal, currentTaskEnabled, type TaskFrame } from "./task-frame.js";
 import type { BrainConfig, SourceType } from "./types.js";
 
 type Log = { info: (m: string) => void; warn: (m: string) => void };
 const DAY = 86_400_000;
 
-export type GoalStatus = "active" | "paused" | "superseded" | "done" | "archived";
-export const GOAL_STATUSES: GoalStatus[] = ["active", "paused", "superseded", "done", "archived"];
+/** 0.7: `handed_off` — another agent owns the goal now (brain_update_goal handoff); resume takes it back. */
+export type GoalStatus = "active" | "paused" | "superseded" | "done" | "archived" | "handed_off";
+export const GOAL_STATUSES: GoalStatus[] = ["active", "paused", "superseded", "done", "archived", "handed_off"];
 
 export interface GoalRow {
   node_id: string;
@@ -44,6 +46,10 @@ export interface GoalRow {
   drift_at: number | null;
   created_at: number;
   updated_at: number;
+  /** 0.7 (schema v28): who took the goal over, why, and when. */
+  handoff_to?: string | null;
+  handoff_note?: string | null;
+  handoff_at?: number | null;
 }
 
 export interface TriggerSpec { kind: "time" | "keyword"; at?: string | number; every_days?: number; keywords?: string[]; cooldown_hours?: number }
@@ -158,13 +164,19 @@ function addTriggers(agentId: string, lineage: string, specs: TriggerSpec[], now
   return ids;
 }
 
-export type GoalAction = "update" | "supersede" | "pause" | "resume" | "done" | "archive" | "progress" | "track" | "untrack";
-export const GOAL_ACTIONS: GoalAction[] = ["update", "supersede", "pause", "resume", "done", "archive", "progress", "track", "untrack"];
+export type GoalAction = "update" | "supersede" | "pause" | "resume" | "done" | "archive" | "progress" | "track" | "untrack" | "handoff";
+export const GOAL_ACTIONS: GoalAction[] = ["update", "supersede", "pause", "resume", "done", "archive", "progress", "track", "untrack", "handoff"];
 
 export interface UpdateGoalInput {
   action: GoalAction; title?: string; description?: string; priority?: unknown; successCriteria?: string; keywords?: string[];
   reason?: string; note?: string; triggers?: TriggerSpec[]; writerAgentId?: string; now?: number;
+  /** handoff: who takes the goal over (an agent name). */
+  to?: string;
 }
+
+/** Appended to a handed-off goal's node content so recall says so; stripped again on resume. */
+const HANDOFF_SUFFIX_RE = /\s*\[Handed off to [^\]]*\]$/;
+const handoffSuffix = (to: string, note: string | null) => ` [Handed off to ${to}${note ? ` — ${note}` : ""}: theirs now, not yours; brain_update_goal resume takes it back]`;
 
 export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoalInput): { ok: boolean; error?: string; goal?: GoalRow; previous?: GoalRow; related?: Array<{ id: string; label: string }> } {
   const cur = currentGoalRow(agentId, idOrPrefix);
@@ -179,6 +191,8 @@ export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoa
     // A done / archived goal must not be quietly reopened by an edit: the new version would be
     // written as active (back in the header, drift-checked) while its triggers stay disabled.
     if (cur.status === "done" || cur.status === "archived") return { ok: false, error: `goal is ${cur.status}; set a new goal instead of editing a finished one` };
+    // Same for a handed-off goal: editing it is not taking it back.
+    if (cur.status === "handed_off") return { ok: false, error: `goal is handed off to ${cur.handoff_to ?? "another agent"}; brain_update_goal resume takes it back first` };
     if (input.action === "supersede" && !reason) return { ok: false, error: "supersede needs a reason (why the goal changed)" };
     const pr = input.priority === undefined ? cur.priority : parsePriority(input.priority);
     if (pr === null) return { ok: false, error: "priority must be 1..5 or critical|high|medium|low|someday" };
@@ -222,7 +236,16 @@ export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoa
   const set = (sql: string, ...a: unknown[]) => db.prepare(`UPDATE goals SET ${sql}, updated_at = ? WHERE node_id = ?`).run(...a, now, cur.node_id);
   switch (input.action) {
     case "pause": if (cur.status !== "active") return { ok: false, error: `goal is ${cur.status}` }; set("status = 'paused'"); break;
-    case "resume": if (cur.status !== "paused") return { ok: false, error: `goal is ${cur.status}` }; set("status = 'active', last_progress_at = ?, drift_kind = NULL, drift_reason = NULL", now); break;
+    case "resume": {
+      // paused → active (the old behaviour) or handed_off → active (take it back)
+      if (cur.status !== "paused" && cur.status !== "handed_off") return { ok: false, error: `goal is ${cur.status}` };
+      set("status = 'active', last_progress_at = ?, drift_kind = NULL, drift_reason = NULL, handoff_to = NULL, handoff_note = NULL, handoff_at = NULL", now);
+      if (cur.status === "handed_off") {
+        const n = getNode(agentId, cur.node_id);
+        if (n && HANDOFF_SUFFIX_RE.test(n.content)) db.prepare("UPDATE nodes SET content = ?, updated_at = ? WHERE id = ?").run(n.content.replace(HANDOFF_SUFFIX_RE, ""), now, cur.node_id);
+      }
+      break;
+    }
     case "done":
     case "archive": {
       if (cur.status === "done" || cur.status === "archived") return { ok: false, error: `goal is already ${cur.status}` };
@@ -230,6 +253,21 @@ export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoa
       db.prepare("UPDATE nodes SET status = 'archived', status_reason = ?, status_changed_at = ?, valid_until = COALESCE(valid_until, ?), updated_at = ? WHERE id = ?")
         .run(`goal ${input.action === "done" ? "done" : "archived"}${reason ? `: ${reason}` : ""}`, now, now, now, cur.node_id);
       db.prepare("UPDATE goal_triggers SET enabled = 0 WHERE lineage_id = ?").run(cur.lineage_id);
+      try { clearFramesForGoal(agentId, cur.lineage_id); } catch { /* pre-v28 */ }
+      break;
+    }
+    case "handoff": {
+      // 0.7: another agent owns this goal now. Out of the header, drift checks, briefings and
+      // heartbeats; still recalled, with the handoff written into the node so recall says so.
+      const to = clean(input.to, 80);
+      if (!to) return { ok: false, error: "handoff needs to: who takes the goal over (an agent name)" };
+      if (cur.status !== "active" && cur.status !== "paused") return { ok: false, error: `goal is ${cur.status}` };
+      const note = clean(input.note, 300) || reason;
+      set("status = 'handed_off', handoff_to = ?, handoff_note = ?, handoff_at = ?, drift_kind = NULL, drift_reason = NULL", to, note, now);
+      const n = getNode(agentId, cur.node_id);
+      if (n) db.prepare("UPDATE nodes SET content = ?, updated_at = ? WHERE id = ?").run(`${n.content.replace(HANDOFF_SUFFIX_RE, "")}${handoffSuffix(to, note)}`.slice(0, 2400), now, cur.node_id);
+      db.prepare("UPDATE alignment_notes SET superseded_at = ? WHERE COALESCE(kind, 'alignment') = 'alignment' AND delivered_at IS NULL AND superseded_at IS NULL AND lineage_ids_json LIKE ?").run(now, `%${cur.lineage_id}%`);
+      try { clearFramesForGoal(agentId, cur.lineage_id); } catch { /* pre-v28 */ }
       break;
     }
     case "progress": set("last_progress_at = ?, drift_kind = NULL, drift_reason = NULL, alignment_summary = ?", now, clean(input.note, 300) || "progress recorded"); break;
@@ -238,7 +276,7 @@ export function updateGoal(agentId: string, idOrPrefix: string, input: UpdateGoa
   }
   addTriggers(agentId, cur.lineage_id, trig.specs, now);
   const row = currentGoalRow(agentId, cur.lineage_id)!;
-  event(agentId, row, input.action, input.note ? { note: clean(input.note, 300) } : null, reason, now);
+  event(agentId, row, input.action, input.action === "handoff" ? { to: row.handoff_to, ...(input.note ? { note: clean(input.note, 300) } : {}) } : input.note ? { note: clean(input.note, 300) } : null, reason, now);
   bumpWriteCounter(db);
   return { ok: true, goal: row, previous: cur };
 }
@@ -248,7 +286,7 @@ export function listGoals(agentId: string, opts: { status?: GoalStatus | "all"; 
   const st = opts.status ?? "active";
   const rows = db.prepare(`SELECT g.* FROM goals g WHERE g.version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id)
                            ${st === "all" ? "" : "AND g.status = ?"} ${opts.includeUntracked === false ? "AND g.tracked = 1" : ""}
-                           ORDER BY CASE g.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, g.priority ASC, g.updated_at DESC LIMIT 50`)
+                           ORDER BY CASE g.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 WHEN 'handed_off' THEN 2 ELSE 3 END, g.priority ASC, g.updated_at DESC LIMIT 50`)
     .all(...(st === "all" ? [] : [st])) as GoalRow[];
   return rows;
 }
@@ -269,7 +307,9 @@ export function goalHistory(agentId: string, idOrPrefix: string): GoalHistory | 
 
 export function formatGoal(g: GoalRow, now = Date.now()): string {
   const kw = (JSON.parse(g.keywords_json) as string[]).join(", ");
-  const L = [`${g.lineage_id} ${priorityLabel(g.priority)} [${g.status}${g.tracked ? "" : ", untracked"}] ${g.title}  (v${g.version}, node ${g.node_id.slice(0, 8)})`];
+  const st = g.status === "handed_off" ? `handed_off → ${g.handoff_to ?? "?"}` : g.status;
+  const L = [`${g.lineage_id} ${priorityLabel(g.priority)} [${st}${g.tracked ? "" : ", untracked"}] ${g.title}  (v${g.version}, node ${g.node_id.slice(0, 8)})`];
+  if (g.status === "handed_off") L.push(`  handed to ${g.handoff_to ?? "?"}${g.handoff_at ? ` ${relativeTime(g.handoff_at, now)}` : ""}${g.handoff_note ? `: ${g.handoff_note}` : ""} — theirs now; brain_update_goal resume takes it back`);
   if (g.success_criteria) L.push(`  success: ${g.success_criteria}`);
   if (kw) L.push(`  keywords: ${kw}`);
   L.push(`  last progress: ${g.last_progress_at ? relativeTime(g.last_progress_at, now) : "never"} · last checked: ${g.last_checked_at ? relativeTime(g.last_checked_at, now) : "never"}`);
@@ -404,7 +444,8 @@ export function runDriftPass(agentId: string, config: Partial<BrainConfig>, log?
     const top = res.drifting[0]!;
     let note = `Alignment: ${top.reason}.`;
     if (res.drifting.length > 1) note += ` (+${res.drifting.length - 1} more drifting goal${res.drifting.length > 2 ? "s" : ""})`;
-    note += " Take a step toward it, or pause / re-prioritise it with brain_update_goal.";
+    // 0.7: a reminder, never an order to switch tasks — the current task (brain_now) stays the current task.
+    note += " A reminder, not a change of task: when the current work allows, make progress on it, or pause / hand off / re-prioritise it with brain_update_goal.";
     if (note.length > max) note = note.slice(0, max - 1) + "…";
     const lineages = res.drifting.map((d) => d.lineage_id).sort();
     const prev = db.prepare("SELECT text, lineage_ids_json, delivered_at, created_at FROM alignment_notes WHERE COALESCE(kind, 'alignment') = 'alignment' ORDER BY id DESC LIMIT 1").get() as { text: string; lineage_ids_json: string; delivered_at: number | null; created_at: number } | undefined;
@@ -429,7 +470,31 @@ export function maybeRunDailyDrift(agentId: string, config: Partial<BrainConfig>
 
 // ─── turn context: alignment note (once) + goal triggers ───────────────────
 
-export interface GoalTurnContext { text: string; noteId: number | null; /** All offered note ids this turn (alignment note + commitment nudge); ack each after a real reply. */ noteIds: number[]; openItemId?: string | null; triggered: Array<{ trigger_id: string; lineage_id: string; title: string; why: string }> }
+export interface GoalTurnContext {
+  text: string; noteId: number | null;
+  /** All offered note ids this turn (alignment note + commitment nudge); ack each after a real reply. */
+  noteIds: number[];
+  openItemId?: string | null;
+  triggered: Array<{ trigger_id: string; lineage_id: string; title: string; why: string }>;
+  /** 0.7: nudges kept pending this turn because the session is on another task, or the prompt carried no topic. */
+  held?: number;
+}
+
+/**
+ * 0.7 nudge discipline: a pending alignment note / commitment nudge is offered only when it is
+ * about what this session is working on (the task frame), or when there is no frame at all.
+ * On a content-free prompt ("continue") nothing is offered: that turn belongs to the current task.
+ */
+function noteAboutFrame(db: Database.Database, kind: string, n: { lineage_ids_json?: string | null; ref_id?: string | null }, f: TaskFrame): boolean {
+  if (kind === "alignment") {
+    let lineages: string[] = [];
+    try { lineages = JSON.parse(n.lineage_ids_json ?? "[]") as string[]; } catch { lineages = []; }
+    return !!f.goal_id && lineages.includes(f.goal_id);
+  }
+  if (!n.ref_id) return false;
+  const targets = [f.plan_id ?? "\u0000", ...(f.goal_id ? (db.prepare("SELECT node_id FROM goals WHERE lineage_id = ?").all(f.goal_id) as Array<{ node_id: string }>).map((r) => r.node_id) : [])];
+  return !!db.prepare(`SELECT 1 FROM edges WHERE from_id = ? AND type IN ('about', 'advances') AND to_id IN (${targets.map(() => "?").join(",")}) LIMIT 1`).get(n.ref_id, ...targets);
+}
 
 /** Safety valve: a note offered this many times without an ack is retired (e.g. a host that never acks). */
 export const ALIGNMENT_NOTE_MAX_OFFERS = 6;
@@ -449,8 +514,8 @@ export function ackAlignmentNote(agentId: string, noteId: number, now = Date.now
  * keyword triggers (with cooldown), and returns one budget-capped block.
  * Mutates delivery / firing state; read-only otherwise.
  */
-export function buildGoalTurnContext(agentId: string, prompt: string, config: Partial<BrainConfig>, now = Date.now(), log?: Log): GoalTurnContext {
-  const out: GoalTurnContext = { text: "", noteId: null, noteIds: [], openItemId: null, triggered: [] };
+export function buildGoalTurnContext(agentId: string, prompt: string, config: Partial<BrainConfig>, now = Date.now(), log?: Log, opts: { sessionKey?: string } = {}): GoalTurnContext {
+  const out: GoalTurnContext = { text: "", noteId: null, noteIds: [], openItemId: null, triggered: [], held: 0 };
   const nudges = config.commitmentNudges !== false;
   const surfacing = config.openItemSurfacing !== false;
   if (config.intentDriftCheck === "off" && config.goalTriggers === false && !nudges && !surfacing) return out;
@@ -459,11 +524,17 @@ export function buildGoalTurnContext(agentId: string, prompt: string, config: Pa
     try { maybeRunDailyDrift(agentId, config, now, log); } catch (e) { log?.warn(`[xanima] daily drift failed: ${String(e)}`); }
   }
   if (nudges) { try { maybeRunCommitmentCheck(agentId, config, now); } catch (e) { log?.warn(`[xanima] commitment check failed: ${String(e)}`); } }
+  // 0.7 nudge discipline (see noteAboutFrame)
+  const anchored = currentTaskEnabled(config);
+  const lowInfo = anchored && isLowInformationPrompt(prompt);
+  let frame: TaskFrame | null = null;
+  if (anchored && opts.sessionKey) { try { frame = getTaskFrame(agentId, opts.sessionKey, config, now); } catch { frame = null; } }
   const lines: string[] = [];
   const kinds = [...(config.intentDriftCheck !== "off" ? ["alignment"] : []), ...(nudges ? ["commitment"] : [])];
   for (const kind of kinds) {
-    const n = db.prepare("SELECT id, text FROM alignment_notes WHERE COALESCE(kind, 'alignment') = ? AND delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get(kind) as { id: number; text: string } | undefined;
+    const n = db.prepare("SELECT id, text, lineage_ids_json, ref_id FROM alignment_notes WHERE COALESCE(kind, 'alignment') = ? AND delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get(kind) as { id: number; text: string; lineage_ids_json: string | null; ref_id: string | null } | undefined;
     if (n) {
+      if (lowInfo || (frame && !noteAboutFrame(db, kind, n, frame))) { out.held = (out.held ?? 0) + 1; continue; } // stays pending; not an offer
       // Offered, not delivered: the host acks (ackAlignmentNote) once a real reply came out of this prompt.
       lines.push(n.text); out.noteIds.push(n.id); if (out.noteId === null) out.noteId = n.id;
       const c = db.prepare("UPDATE alignment_notes SET offered_at = ?, offered_count = offered_count + 1 WHERE id = ? RETURNING offered_count").get(now, n.id) as { offered_count: number };
@@ -510,14 +581,14 @@ export function buildGoalTurnContext(agentId: string, prompt: string, config: Pa
   return out;
 }
 
-export function goalCounts(db: ReturnType<typeof getDb>): { active: number; tracked: number; untracked: number; paused: number; done: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null; pendingNoteOffers: number } {
+export function goalCounts(db: ReturnType<typeof getDb>): { active: number; tracked: number; untracked: number; paused: number; done: number; handedOff?: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null; pendingNoteOffers: number } {
   try {
     const cur = `g.version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id)`;
-    const r = db.prepare(`SELECT SUM(status='active' AND tracked=1) AS active, SUM(status='active' AND tracked=1) AS tracked, SUM(status='active' AND tracked=0) AS untracked, SUM(status='paused') AS paused, SUM(status='done') AS done FROM goals g WHERE ${cur}`).get() as Record<string, number | null>;
+    const r = db.prepare(`SELECT SUM(status='active' AND tracked=1) AS active, SUM(status='active' AND tracked=1) AS tracked, SUM(status='active' AND tracked=0) AS untracked, SUM(status='paused') AS paused, SUM(status='done') AS done, SUM(status='handed_off') AS handed FROM goals g WHERE ${cur}`).get() as Record<string, number | null>;
     const drifting = (db.prepare(`SELECT lineage_id, title, drift_reason FROM goals g WHERE ${cur} AND status = 'active' AND tracked = 1 AND drift_reason IS NOT NULL ORDER BY priority`).all() as Array<{ lineage_id: string; title: string; drift_reason: string }>)
       .map((d) => ({ id: d.lineage_id, title: d.title, reason: d.drift_reason }));
     const n = db.prepare("SELECT text, offered_count FROM alignment_notes WHERE COALESCE(kind, 'alignment') = 'alignment' AND delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get() as { text: string; offered_count: number } | undefined;
-    return { active: r["active"] ?? 0, tracked: r["tracked"] ?? 0, untracked: r["untracked"] ?? 0, paused: r["paused"] ?? 0, done: r["done"] ?? 0, drifting, pendingNote: n?.text ?? null, pendingNoteOffers: n?.offered_count ?? 0 };
+    return { active: r["active"] ?? 0, tracked: r["tracked"] ?? 0, untracked: r["untracked"] ?? 0, paused: r["paused"] ?? 0, done: r["done"] ?? 0, handedOff: r["handed"] ?? 0, drifting, pendingNote: n?.text ?? null, pendingNoteOffers: n?.offered_count ?? 0 };
   } catch { return { active: 0, tracked: 0, untracked: 0, paused: 0, done: 0, drifting: [], pendingNote: null, pendingNoteOffers: 0 }; }
 }
 

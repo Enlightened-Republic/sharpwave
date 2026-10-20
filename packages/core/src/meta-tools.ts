@@ -226,8 +226,9 @@ export function briefing(agentId: string, args: { planId?: string; goalId?: stri
   } else if (sc.kind === "goal") {
     const g = currentGoalRow(agentId, sc.goalLineage!)!;
     L.push(`Briefing — ${formatGoal(g, now)}`);
-    const plans = db.prepare("SELECT node_id FROM plans WHERE goal_id = ? AND status IN ('active', 'parked')").all(g.lineage_id) as Array<{ node_id: string }>;
-    for (const pl of plans.slice(0, 2)) { const p = getPlan(agentId, pl.node_id)!; const open = p.steps.filter((s) => s.status !== "done" && s.status !== "skipped"); L.push(`Plan [${p.status}] ${p.title}: ${open.length}/${p.steps.length} steps open${open[0] ? `; next: ${short(open[0].text, 70)}` : ""}`); }
+    if (g.status === "handed_off") L.push(`This goal is handed off to ${g.handoff_to ?? "another agent"}${g.handoff_note ? ` (${short(g.handoff_note, 80)})` : ""} — theirs now; brain_update_goal resume takes it back.`);
+    const plans = db.prepare("SELECT node_id FROM plans WHERE goal_id = ? AND status IN ('active', 'parked', 'handed_off')").all(g.lineage_id) as Array<{ node_id: string }>;
+    for (const pl of plans.slice(0, 2)) { const p = getPlan(agentId, pl.node_id)!; const open = p.steps.filter((s) => s.status !== "done" && s.status !== "skipped"); L.push(p.status === "handed_off" ? `Plan [handed off → ${p.handoff_to ?? "?"}] ${p.title}: theirs now` : `Plan [${p.status}] ${p.title}: ${open.length}/${p.steps.length} steps open${open[0] ? `; next: ${short(open[0].text, 70)}` : ""}`); }
   } else {
     L.push(`Briefing — ${sc.label}`);
     const top = [...sc.ids].slice(0, 5).map((id) => db.prepare("SELECT type, label FROM nodes WHERE id = ?").get(id) as { type: string; label: string }).filter(Boolean);

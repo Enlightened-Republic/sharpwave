@@ -150,7 +150,7 @@ describe("v18 → v19 migration (synthetic legacy brain)", () => {
       let mdb: Database.Database;
       try { mdb = getDb(b); } finally { delete process.env["XANIMA_DB_PATH"]; }
       expect(census(mdb)).toEqual(before);
-      expect((mdb.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(27);
+      expect((mdb.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(28);
       const rows = mdb.prepare("SELECT id, source_type, confidence, confidence_score, status, sensitivity FROM nodes").all() as Array<Record<string, unknown>>;
       for (const r of rows) expect(r).toMatchObject({ source_type: "legacy", confidence: "medium", confidence_score: 0.6, sensitivity: "normal" });
       const st = Object.fromEntries(rows.map((r) => [r["id"], r["status"]]));

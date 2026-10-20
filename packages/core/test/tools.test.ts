@@ -33,6 +33,7 @@ const ALL_TOOLS = [
   "brain_link",
   "brain_list_goals",
   "brain_list_open",
+  "brain_now",
   "brain_plan",
   "brain_query",
   "brain_query_decisions",
@@ -54,8 +55,8 @@ const ALL_TOOLS = [
   "brain_write",
 ];
 
-test("union holds 38 tool defs", () => {
-  expect(ALL_TOOLS).toHaveLength(38);
+test("union holds 39 tool defs", () => {
+  expect(ALL_TOOLS).toHaveLength(39);
   expect(Object.keys(BRAIN_TOOL_DEFS).sort()).toEqual(ALL_TOOLS);
 });
 
@@ -66,14 +67,14 @@ test("every def has a description and an object input schema", () => {
   }
 });
 
-test("mcp subset is 32 and every name exists in the union", () => {
-  expect(MCP_TOOL_NAMES).toHaveLength(32);
+test("mcp subset is 33 and every name exists in the union", () => {
+  expect(MCP_TOOL_NAMES).toHaveLength(33);
   for (const n of MCP_TOOL_NAMES) expect(BRAIN_TOOL_DEFS).toHaveProperty(n);
 });
 
-test("openwave subset is all 38", () => {
+test("openwave subset is all 39", () => {
   expect([...OPENWAVE_TOOL_NAMES].sort()).toEqual(Object.keys(BRAIN_TOOL_DEFS).sort());
-  expect(OPENWAVE_TOOL_NAMES).toHaveLength(38);
+  expect(OPENWAVE_TOOL_NAMES).toHaveLength(39);
 });
 
 // No embedding provider is reachable in tests (setup.ts points Ollama at a dead

@@ -1,7 +1,11 @@
 import { writeNode, ftsSearchNodes } from "./nodes.js";
 import { writeEdge, edgeExists } from "./edges.js";
 import { queueEmbedding } from "./embeddings.js";
+import { appendEpisode } from "./episodes.js";
 import { classifySentence, importanceForType, jaccardSim } from "./utils.js";
+import { applyTaskSignals } from "./task-signals.js";
+import { getTaskFrame, currentTaskEnabled } from "./task-frame.js";
+import { recentHandoffs } from "./now-context.js";
 import type { BrainConfig, NodeType } from "./types.js";
 
 interface CompactionPayload {
@@ -10,11 +14,23 @@ interface CompactionPayload {
   sourceEpisodeIds?: string[];
 }
 
+export interface CompactionOptions {
+  /**
+   * 0.7: the session that was compacted. With it, the summary is read for task signals
+   * ("we are working on X", "X was handed to Y"), and the session's current task plus
+   * recent handoffs are written back as one episode so the next turn's context still
+   * says what the conversation was doing — the compaction removed the turns that did.
+   */
+  sessionKey?: string;
+  now?: number;
+}
+
 export function handleCompaction(
   agentId: string,
   payload: CompactionPayload,
-  _config: BrainConfig,
+  config: BrainConfig,
   log: { info: (msg: string) => void; warn: (msg: string) => void },
+  opts: CompactionOptions = {},
 ): void {
   const summary = payload.summary;
   if (!summary || summary.length < 50) return;
@@ -24,6 +40,25 @@ export function handleCompaction(
     log.info(`[xanima] compaction: extracted ${nodeIds.length} node(s) from summary (agent=${agentId})`);
   } catch (err) {
     log.warn(`[xanima] compaction extraction failed: ${String(err)}`);
+  }
+
+  if (opts.sessionKey && currentTaskEnabled(config)) {
+    try {
+      const now = opts.now ?? Date.now();
+      const applied = applyTaskSignals(agentId, opts.sessionKey, summary, { config, origin: "compaction", now });
+      const frame = getTaskFrame(agentId, opts.sessionKey, config, now);
+      const handoffs = recentHandoffs(agentId, now - 7 * 86_400_000, 3);
+      if (frame || handoffs.length) {
+        const parts = [
+          frame ? `working on: ${frame.title}${frame.note ? ` (${frame.note})` : ""}` : "",
+          ...handoffs.map((h) => `${h.kind} "${h.title}" handed off to ${h.to}`),
+        ].filter(Boolean);
+        appendEpisode(agentId, opts.sessionKey, "tool", `[session state after compaction] ${parts.join("; ")}`, 0.2);
+      }
+      if (applied.focus || applied.handoffs.length) log.info(`[xanima] compaction: task state from summary — focus=${applied.focus?.title ?? "-"} handoffs=${applied.handoffs.map((h) => `${h.kind}:${h.title}→${h.to}`).join(",") || "-"} (agent=${agentId})`);
+    } catch (err) {
+      log.warn(`[xanima] compaction task-state restore failed: ${String(err)}`);
+    }
   }
 }
 
@@ -71,3 +106,4 @@ function extractNodesFromSummary(
   return nodeIds;
 }
 
+export type { NodeType };

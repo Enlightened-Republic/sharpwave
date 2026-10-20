@@ -6,15 +6,17 @@
 import type { BrainConfig } from "./types.js";
 import { reflect, formatReflection } from "./reflection.js";
 import { createOpenItem, updateOpenItem, getOpenItem, listOpenItems, formatOpenItem, type OpenKind, type OpenStatus, type OpenAction } from "./open-items.js";
-import { createCommitment, updateCommitment, listCommitments, formatCommitment, createPlan, updatePlan, getPlan, listPlans, formatPlan, type CommitAction, type PlanAction, type PlanStatus } from "./plans.js";
+import { createCommitment, updateCommitment, listCommitments, formatCommitment, createPlan, updatePlan, getPlan, listPlans, formatPlan, PLAN_STATUSES, type CommitAction, type PlanAction, type PlanStatus } from "./plans.js";
 import { replay, changesSince, formatChanges, conflicts, briefing, forgetImpact } from "./meta-tools.js";
 import { parseWhen, capLines, ago, DAY } from "./continuity-util.js";
+import { setTaskFrame, getTaskFrame, clearTaskFrame, listTaskFrames, DEFAULT_SESSION_KEY } from "./task-frame.js";
+import { buildNowContext, recentHandoffs } from "./now-context.js";
 
 import {
   confirmDecision,   recordDecision, updateDecisionOutcome, queryDecisions, formatDecision, OUTCOME_STATUSES, type OutcomeStatus,
 } from "./decisions.js";
 import {
-  setGoal, updateGoal, listGoals, goalHistory, formatGoal, formatGoalHistory, GOAL_ACTIONS, GOAL_STATUSES,
+  setGoal, updateGoal, listGoals, goalHistory, formatGoal, formatGoalHistory, currentGoalRow, GOAL_ACTIONS, GOAL_STATUSES,
   type GoalAction, type TriggerSpec, type GoalStatus,
 } from "./goals.js";
 
@@ -96,7 +98,7 @@ export const CONTINUITY_TOOL_DEFS: Record<string, ContinuityToolDef> = {
     },
   },
   brain_update_goal: {
-    description: "Change a goal with history preserved. update / supersede (new version; supersede needs a reason), pause, resume, done, archive, progress (log real progress with a note; clears drift — talking about a goal is not progress), track / untrack (drift checking). Shortcut: {goal_id, progress: \"what got done\"}. Add triggers with any action.",
+    description: "Change a goal with history preserved. update / supersede (new version; supersede needs a reason), pause, resume, done, archive, progress (log real progress with a note; clears drift — talking about a goal is not progress), track / untrack (drift checking), handoff (to: another agent now owns it — out of your header, drift checks, briefings and heartbeats until you resume it, i.e. take it back). Shortcut: {goal_id, progress: \"what got done\"}. Add triggers with any action.",
     inputSchema: {
       type: "object",
       properties: {
@@ -105,7 +107,8 @@ export const CONTINUITY_TOOL_DEFS: Record<string, ContinuityToolDef> = {
         title: { type: "string" }, description: { type: "string" }, priority: PRIORITY,
         success_criteria: { type: "string" }, keywords: { type: "array", items: { type: "string" } },
         reason: { type: "string", description: "Why (required for supersede; recorded in history)." },
-        note: { type: "string", description: "Progress note (action progress)." },
+        note: { type: "string", description: "Progress note (action progress) or handoff note (action handoff)." },
+        to: { type: "string", description: "handoff: the agent that takes the goal over." },
         progress: { type: "string", description: "Shortcut for action=progress with this note: what concretely advanced the goal." },
         triggers: TRIGGERS,
         source_type: { type: "string", description: "Where this change came from (user|self_observation|inference|tool|agent). Goal changes from tool output or another agent are quarantined for review." },
@@ -182,11 +185,22 @@ Object.assign(CONTINUITY_TOOL_DEFS, {
     inputSchema: { type: "object", properties: { status: { type: "string", enum: ["open", "overdue", "blocked", "done", "all"] }, format: { type: "string", enum: ["text", "json"] } } },
   },
   brain_plan: {
-    description: "Plans with steps. create (title, steps[], goal_id), list (status), show (plan_id), add_steps, step (step number, status todo|doing|done|blocked|skipped, note, blocked_by), park (note — why), resume (returns a briefing: the plan, what's still open, and what changed while it was parked), done, abandon.",
+    description: "Plans with steps. create (title, steps[], goal_id), list (status), show (plan_id), add_steps, step (step number, status todo|doing|done|blocked|skipped, note, blocked_by), park (note — why), resume (a parked or handed-off plan; returns a briefing: the plan, what's still open, and what changed meanwhile), done, abandon, handoff (to: another agent carries it out now; it leaves your current task and briefings until you resume it). Creating, stepping or resuming a plan makes it this session's current task (see brain_now).",
     inputSchema: { type: "object", properties: {
-      action: { type: "string", enum: ["create", "list", "show", "update", "add_steps", "step", "park", "resume", "done", "abandon"] },
+      action: { type: "string", enum: ["create", "list", "show", "update", "add_steps", "step", "park", "resume", "done", "abandon", "handoff"] },
       plan_id: { type: "string" }, title: { type: "string" }, goal_id: { type: "string" }, steps: { type: "array", items: { type: "string" } },
-      step: { type: "number" }, status: { type: "string" }, note: { type: "string" }, blocked_by: { type: "array", items: { type: "string" } }, links: LINKS,
+      step: { type: "number" }, status: { type: "string", description: "step: the step's status; list: which plans (active | parked | done | abandoned | handed_off | all)." }, note: { type: "string" }, blocked_by: { type: "array", items: { type: "string" } }, links: LINKS,
+      to: { type: "string", description: "handoff: the agent that takes the plan over." },
+    }, required: ["action"] },
+  },
+  brain_now: {
+    description: "What you are working on right now, in this conversation. set (title; optional plan_id / goal_id / note) pins it as the current task: it is shown every turn as [BRAIN: now], survives context compaction, and makes a bare \"continue\" mean this task rather than an older plan or goal. get shows it (with recent handoffs); clear drops it (the task is over or on hold). Set automatically when you create, step or resume a plan, and from your owner's words (\"let's work on X\").",
+    inputSchema: { type: "object", properties: {
+      action: { type: "string", enum: ["set", "get", "clear"] },
+      title: { type: "string", description: "set: the task in a few words." },
+      plan_id: { type: "string", description: "set: the plan this task is (its id or 8+ char prefix)." },
+      goal_id: { type: "string", description: "set: the goal this task advances." },
+      note: { type: "string", description: "set: where you are / what is next." },
     }, required: ["action"] },
   },
   brain_changes: {
@@ -214,15 +228,20 @@ export const CONTINUITY_TOOL_NAMES = Object.keys(CONTINUITY_TOOL_DEFS);
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const strArr = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined);
+const resolveGoalCurrentLineage = (agentId: string, ref: string): { lineage_id: string; title: string } | null => {
+  const g = currentGoalRow(agentId, ref);
+  return g ? { lineage_id: g.lineage_id, title: g.title } : null;
+};
 
 export function dispatchContinuityTool(
   name: string, agentId: string, args: Record<string, unknown>, config: Partial<BrainConfig>,
-  opts: { writerAgentId?: string; now?: number } = {},
+  opts: { writerAgentId?: string; now?: number; /** 0.7: the conversation this call belongs to (task frames are per session). */ sessionKey?: string } = {},
 ): ContinuityResult | null {
   if (!(name in CONTINUITY_TOOL_DEFS)) return null;
   if (config.decisionLedger === false && name.includes("decision")) return err("the decision ledger is disabled (decisionLedger: false)");
   const json = String(args["format"] ?? "text").toLowerCase() === "json";
   const now = opts.now;
+  const sessionKey = (opts.sessionKey ?? "").trim() || DEFAULT_SESSION_KEY;
   switch (name) {
     case "brain_record_decision": {
       if (args["options"] !== undefined && !Array.isArray(args["options"])) return err("options must be an array");
@@ -279,7 +298,7 @@ export function dispatchContinuityTool(
       const r = updateGoal(agentId, str(args["goal_id"]) ?? "", {
         action, title: str(args["title"]), description: str(args["description"]), priority: args["priority"], successCriteria: str(args["success_criteria"]),
         keywords: strArr(args["keywords"]), reason: str(args["reason"]), note: str(args["note"]) ?? progressNote, triggers: args["triggers"] as TriggerSpec[] | undefined,
-        writerAgentId: opts.writerAgentId, ...(now ? { now } : {}),
+        to: str(args["to"]), writerAgentId: opts.writerAgentId, ...(now ? { now } : {}),
       });
       if (!r.ok) return err(r.error!);
       const ver = r.previous && r.goal!.version !== r.previous.version ? ` (v${r.previous.version} → v${r.goal!.version}; v${r.previous.version} kept as history)` : "";
@@ -354,23 +373,61 @@ export function dispatchContinuityTool(
     case "brain_plan": {
       const action = (str(args["action"]) ?? "").toLowerCase();
       if (action === "create") {
-        const r = createPlan(agentId, { title: str(args["title"]) ?? "", goalId: str(args["goal_id"]), steps: strArr(args["steps"]), links: strArr(args["links"]), writerAgentId: opts.writerAgentId, ...(now ? { now } : {}) });
-        return r.ok ? ok(`Plan created.\n${formatPlan(r.plan!, now)}`) : err(r.error!);
+        const r = createPlan(agentId, { title: str(args["title"]) ?? "", goalId: str(args["goal_id"]), steps: strArr(args["steps"]), links: strArr(args["links"]), writerAgentId: opts.writerAgentId, sessionKey, config, ...(now ? { now } : {}) });
+        return r.ok ? ok(`Plan created${config.currentTask !== false ? " and pinned as this session's current task (brain_now)" : ""}.\n${formatPlan(r.plan!, now)}`) : err(r.error!);
       }
       if (action === "list") {
-        const rows = listPlans(agentId, (str(args["status"]) ?? "active") as PlanStatus);
+        const st = str(args["status"]) ?? "active";
+        if (st !== "all" && !PLAN_STATUSES.includes(st as PlanStatus)) return err(`status must be one of ${PLAN_STATUSES.join(", ")}, all`);
+        const rows = listPlans(agentId, st as PlanStatus | "all");
         return ok(rows.length ? capLines(rows.map((p) => formatPlan(p, now)), Math.max(400, config.metaToolMaxChars ?? 2400)) : "No plans match.");
       }
       const id = str(args["plan_id"]);
       if (!id) return err("plan_id is required");
       if (action === "show") { const p = getPlan(agentId, id); return p ? ok(formatPlan(p, now)) : err(`plan ${id} not found`); }
-      const r = updatePlan(agentId, id, { action: action as PlanAction, title: str(args["title"]), steps: strArr(args["steps"]), ...(typeof args["step"] === "number" ? { step: args["step"] } : {}), status: str(args["status"]), note: str(args["note"]), blockedBy: strArr(args["blocked_by"]), ...(now ? { now } : {}) });
+      const r = updatePlan(agentId, id, { action: action as PlanAction, title: str(args["title"]), steps: strArr(args["steps"]), ...(typeof args["step"] === "number" ? { step: args["step"] } : {}), status: str(args["status"]), note: str(args["note"]), blockedBy: strArr(args["blocked_by"]), to: str(args["to"]), sessionKey, config, ...(now ? { now } : {}) });
       if (!r.ok) return err(r.error!);
       if (action === "resume") {
-        const b = briefing(agentId, { planId: r.plan!.node_id, ...(r.previousParkedAt ? { since: r.previousParkedAt } : {}) }, config, now ?? Date.now());
-        return ok(`Plan resumed (parked ${r.previousParkedAt ? ago(r.previousParkedAt, now ?? Date.now()) : "?"}).\n${b.text}`);
+        const since = r.previousStatus === "handed_off" ? r.previousHandoffAt ?? r.previousParkedAt : r.previousParkedAt;
+        const b = briefing(agentId, { planId: r.plan!.node_id, ...(since ? { since } : {}) }, config, now ?? Date.now());
+        const how = r.previousStatus === "handed_off" ? `taken back (handed off ${since ? ago(since, now ?? Date.now()) : "?"})` : `parked ${r.previousParkedAt ? ago(r.previousParkedAt, now ?? Date.now()) : "?"}`;
+        return ok(`Plan resumed (${how})${config.currentTask !== false ? " — it is this session's current task again" : ""}.\n${b.text}`);
       }
+      if (action === "handoff") return ok(`Plan handed off to ${r.plan!.handoff_to}. It is theirs now: out of your current task and briefings until brain_plan resume takes it back.\n${formatPlan(r.plan!, now)}`);
       return ok(`Plan ${action}.\n${formatPlan(r.plan!, now)}`);
+    }
+    case "brain_now": {
+      const action = (str(args["action"]) ?? "get").toLowerCase();
+      const t = now ?? Date.now();
+      if (action === "clear") {
+        const was = getTaskFrame(agentId, sessionKey, config, t);
+        clearTaskFrame(agentId, sessionKey);
+        return ok(was ? `Current task cleared (was: ${was.title}).` : "No current task was set for this conversation.");
+      }
+      if (action === "set") {
+        const title = str(args["title"]);
+        const planId = str(args["plan_id"]);
+        const goalId = str(args["goal_id"]);
+        const plan = planId ? getPlan(agentId, planId) : null;
+        if (planId && !plan) return err(`plan ${planId} not found`);
+        if (plan && plan.status === "handed_off") return err(`plan "${plan.title}" is handed off to ${plan.handoff_to ?? "another agent"}; brain_plan resume takes it back first`);
+        const goal = goalId ? resolveGoalCurrentLineage(agentId, goalId) : null;
+        if (goalId && !goal) return err(`goal ${goalId} not found`);
+        const finalTitle = title ?? plan?.title ?? goal?.title;
+        if (!finalTitle || finalTitle.trim().length < 2) return err("title is required (or a plan_id / goal_id to take the title from)");
+        const f = setTaskFrame(agentId, sessionKey, { title: finalTitle, planId: plan?.node_id ?? null, goalId: plan?.goal_id ?? goal?.lineage_id ?? null, note: str(args["note"]) ?? null, setBy: "agent" }, t);
+        if (!f) return err("could not set the current task (brain schema predates task frames; run migrations)");
+        return ok(`Current task set: ${f.title}${f.plan_id ? ` (plan ${f.plan_id.slice(0, 8)})` : ""}${f.goal_id ? ` (goal ${f.goal_id.slice(0, 8)})` : ""}. A bare "continue" now means this.`);
+      }
+      if (action !== "get") return err("action must be set, get or clear");
+      const block = buildNowContext(agentId, sessionKey, config, { now: t, handoffDays: 30 });
+      const others = listTaskFrames(agentId, config, t).filter((f) => f.session_key !== sessionKey);
+      const L: string[] = [];
+      if (!getTaskFrame(agentId, sessionKey, config, t)) L.push("No current task set for this conversation (brain_now set, or create / step a plan).");
+      if (block) L.push(block.replace(/^\[BRAIN: now\]\n/, ""));
+      if (others.length) L.push(`Other conversations: ${others.slice(0, 3).map((f) => `${f.session_key.slice(0, 40)} → ${f.title.slice(0, 60)} (${ago(f.updated_at, t)})`).join("; ")}`);
+      if (json) return ok(JSON.stringify({ frame: getTaskFrame(agentId, sessionKey, config, t), handoffs: recentHandoffs(agentId, t - 30 * DAY, 10), others }, null, 2));
+      return ok(L.join("\n"));
     }
     case "brain_changes": {
       const days = typeof args["days"] === "number" && args["days"] > 0 ? Math.min(365, args["days"]) : 7;

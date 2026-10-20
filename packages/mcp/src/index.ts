@@ -130,7 +130,9 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<To
   const ag = resolveAgent(args);
   if (!ag.ok) return { content: [{ type: "text", text: `Error: ${ag.error}` }], isError: true };
 
-  const r = await dispatchBrainTool(name, ag.agentId, args ?? {}, config);
+  // One process == one conversation: the session id scopes working memory AND the
+  // current task (brain_now / brain_plan pin a task frame per session).
+  const r = await dispatchBrainTool(name, ag.agentId, args ?? {}, config, "mcp", { sessionKey: SESSION_ID });
   return {
     content: [{ type: "text", text: r.text }],
     ...(r.isError ? { isError: true } : {}),
