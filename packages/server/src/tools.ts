@@ -27,7 +27,7 @@ import {
   getDb, forgetNodeById, reviveNode, searchDormantNodes, formatSourceTurns,
   retractNode, supersedeNode, queryAsOf, statusAt, computeBrainStatus, formatBrainStatus, formatRelated,
   parseAsOf, relativeTime, beliefTag, parseConfidence, parseBeliefArgs,
-  CONTINUITY_TOOL_NAMES, CONTINUITY_READ_ONLY_TOOLS, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost,
+  CONTINUITY_TOOL_NAMES, CONTINUITY_READ_ONLY_TOOLS, dispatchContinuityTool, buildGoalTurnContext, ackAlignmentNote, applyDecisionBoost, buildNowContext,
   SOUL_TOOL_DEFS, dispatchSoulTool, soulToolNeedsAdmin,
   gateWrite, gateToolCall, gateNotice, GATED_TOOLS, parseScopeTags, setScopeTags,
   setFocus, readFocus, describeFocus, tickFocus, applyInjectionControls, injectionCategories,
@@ -128,12 +128,13 @@ export const SERVICE_TOOLS = [
   withProps(IDENTITY_TOOL_NAME, {}),
   { name: "brain_import_soul", description: SOUL_TOOL_DEFS["brain_import_soul"]!.description + " Targets the admin token's own agent brain; a backup is taken first. Prefer `xanima-server soul import` (service stopped).", inputSchema: SOUL_TOOL_DEFS["brain_import_soul"]!.inputSchema },
   // Xanima 0.2.0 decision ledger + goals, 0.3.0 reflection / open items / plans / meta-tools — always on the caller's PRIVATE brain.
-  ...CONTINUITY_TOOL_NAMES.map((n) => withProps(n, {})),
+  ...CONTINUITY_TOOL_NAMES.map((n) => withProps(n, { session_key: { type: "string", description: "0.7: the host conversation this call belongs to (task frames — brain_now, brain_plan — are per session). Plugin plumbing; optional." } })),
   {
     name: TURN_CONTEXT_TOOL,
-    description: "Plugin plumbing (called once per agent turn): returns the pending goal alignment note and commitment nudge (offered, not yet delivered; noteIds), any goal triggers matching this turn and at most one relevant open question / hypothesis, as JSON. After the turn produced a real assistant reply, call again with ack_note_ids (or ack_note_id) to mark them delivered. Needs the write scope.",
+    description: "Plugin plumbing (called once per agent turn): returns the pending goal alignment note and commitment nudge (offered, not yet delivered; noteIds), any goal triggers matching this turn, at most one relevant open question / hypothesis, and (0.7) the session's current task as `now` ([BRAIN: now]: what this conversation is working on, recent handoffs), as JSON. After the turn produced a real assistant reply, call again with ack_note_ids (or ack_note_id) to mark them delivered. Needs the write scope.",
     inputSchema: { type: "object" as const, properties: {
       query: { type: "string", description: "The user's message for this turn." },
+      session_key: { type: "string", description: "0.7: the host conversation this turn belongs to (task frames are per session; also accepted by every continuity tool)." },
       ack_note_id: { type: "integer", description: "Mark this alignment note delivered (it was injected into a prompt that produced a real reply)." },
       ack_note_ids: { type: "array", items: { type: "integer" }, description: "Mark these offered notes delivered (alignment note + commitment nudge)." },
     } },
@@ -564,8 +565,11 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
           return ok(JSON.stringify(Array.isArray(ack) ? { acked: acked.length > 0, noteIds: acked } : { acked: acked.length > 0, noteId: ack }));
         }
         const q = typeof args["query"] === "string" ? args["query"].slice(0, 4000) : "";
-        const r = await ctx.brains.write(brain, () => buildGoalTurnContext(brain, q, cfg));
+        const sk = typeof args["session_key"] === "string" ? args["session_key"].slice(0, 200) : "";
+        const r = await ctx.brains.write(brain, () => buildGoalTurnContext(brain, q, cfg, Date.now(), undefined, sk ? { sessionKey: sk } : {}));
         if (r.noteIds.length || r.triggered.length || r.openItemId) ctx.audit.append({ agentId: p.agentId, tool: name, brain, nodeId: null, outcome: "ok", detail: `notes=${r.noteIds.join(",") || "-"} open=${r.openItemId ?? "-"} triggers=${r.triggered.map((t) => t.trigger_id).join(",") || "-"}` });
+        // 0.7: the current task block for this session (empty when there is no frame and no recent handoff).
+        const nowBlock = await ctx.brains.write(brain, () => { try { return buildNowContext(brain, sk, cfg, { prompt: q }); } catch { return ""; } });
         // Xanima 0.4.0: the remote host may show the brain's own identity (and top goals) the way local mode's
         // never-compacted header does — this is how a soul loaded into a fresh brain reaches the agent's turns.
         const sm = await ctx.brains.write(brain, () => {
@@ -575,9 +579,10 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
           const goals = !cats.goals ? [] : (db.prepare("SELECT title FROM goals g WHERE status = 'active' AND tracked = 1 AND version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id) ORDER BY priority ASC, created_at DESC LIMIT 3").all() as Array<{ title: string }>).map((g) => g.title);
           return { identity: (identityConfig(cfg).maxChars ? identity.slice(0, Math.max(400, identityConfig(cfg).maxChars)) : identity), goals };
         });
-        return ok(JSON.stringify({ ...r, ...(sm.identity ? { identity: sm.identity } : {}), ...(sm.goals.length ? { activeGoals: sm.goals } : {}) }));
+        return ok(JSON.stringify({ ...r, ...(nowBlock ? { now: nowBlock } : {}), ...(sm.identity ? { identity: sm.identity } : {}), ...(sm.goals.length ? { activeGoals: sm.goals } : {}) }));
       }
-      const { visibility: _v, writer_agent_id: _w, agent: _a, ...rest0 } = args;
+      const { visibility: _v, writer_agent_id: _w, agent: _a, session_key: sessionKeyArg, ...rest0 } = args;
+      const sessionKey = typeof sessionKeyArg === "string" ? sessionKeyArg.slice(0, 200) : undefined;
       // Xanima 0.5.0 quarantine: goal changes from tool output / another agent / injection-looking text.
       let gateText = "";
       if (GATED_TOOLS.has(name)) {
@@ -593,7 +598,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         const rc = roomConflictText(ctx).trim();
         return ok(rc || "No open room conflicts. Pass a topic to check your own memories for contradictions.");
       }
-      const r0 = await ctx.brains.write(brain, () => dispatchContinuityTool(name, brain, rest, cfg, { writerAgentId: p.agentId }));
+      const r0 = await ctx.brains.write(brain, () => dispatchContinuityTool(name, brain, rest, cfg, { writerAgentId: p.agentId, ...(sessionKey ? { sessionKey } : {}) }));
       const r = r0 && !r0.isError ? { ...r0, text: `${r0.text}${gateText}${name === "brain_conflicts" ? roomConflictText(ctx) : ""}` } : r0;
       if (!CONTINUITY_READ_ONLY.has(name)) {
         const id = r && !r.isError ? (/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/.exec(r.text)?.[1] ?? null) : null;
