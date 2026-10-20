@@ -48,6 +48,8 @@ const LEARNED_STATE_TABLES: readonly string[] = [
   "room_items", "room_conflicts",
   // procedures compiled from plans + their run ledger
   "procedures", "procedure_runs",
+  // current-task anchors (one per session)
+  "task_frames",
 ];
 
 /**

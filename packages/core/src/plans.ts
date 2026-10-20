@@ -12,6 +12,7 @@ import { writeNode } from "./nodes.js";
 import { writeEdge } from "./edges.js";
 import { deriveKeywords } from "./goals.js";
 import { clean, parseWhen, resolveRef, safeJsonArr, ago, DAY, HOUR } from "./continuity-util.js";
+import { setTaskFrame, clearFramesForPlan, currentTaskEnabled } from "./task-frame.js";
 import type { BrainConfig } from "./types.js";
 
 export type CommitmentStatus = "open" | "done" | "dropped";
@@ -216,28 +217,34 @@ export function maybeRunCommitmentCheck(agentId: string, config: Partial<BrainCo
   runCommitmentCheck(agentId, config, now);
 }
 
-export function commitmentCounts(db: Db, now = Date.now()): { open: number; overdue: Array<{ id: string; title: string; due_at: number }>; blocked: Array<{ id: string; title: string; waiting: string }>; pendingNudge: string | null; plansActive: number; plansParked: number } {
-  const zero = { open: 0, overdue: [], blocked: [], pendingNudge: null, plansActive: 0, plansParked: 0 };
+export function commitmentCounts(db: Db, now = Date.now()): { open: number; overdue: Array<{ id: string; title: string; due_at: number }>; blocked: Array<{ id: string; title: string; waiting: string }>; pendingNudge: string | null; plansActive: number; plansParked: number; plansHandedOff: number } {
+  const zero = { open: 0, overdue: [], blocked: [], pendingNudge: null, plansActive: 0, plansParked: 0, plansHandedOff: 0 };
   try {
     const open = (db.prepare("SELECT * FROM commitments WHERE status = 'open'").all() as CommitmentRow[]).map((r) => {
       const blockers = blockersOfDb(db, r.node_id);
       return { ...r, blockers, overdue: r.due_at !== null && r.due_at < now, blocked: blockers.some((b) => !b.done) };
     });
     const n = db.prepare("SELECT text FROM alignment_notes WHERE kind = 'commitment' AND delivered_at IS NULL AND superseded_at IS NULL ORDER BY id DESC LIMIT 1").get() as { text: string } | undefined;
-    const p = db.prepare("SELECT SUM(status='active') a, SUM(status='parked') p FROM plans").get() as Record<string, number | null>;
+    const p = db.prepare("SELECT SUM(status='active') a, SUM(status='parked') p, SUM(status='handed_off') h FROM plans").get() as Record<string, number | null>;
     return {
       open: open.length,
       overdue: open.filter((c) => c.overdue).map((c) => ({ id: c.node_id, title: c.title, due_at: c.due_at! })),
       blocked: open.filter((c) => c.blocked).map((c) => ({ id: c.node_id, title: c.title, waiting: c.blockers.find((b) => !b.done)!.label })),
-      pendingNudge: n?.text ?? null, plansActive: p["a"] ?? 0, plansParked: p["p"] ?? 0,
+      pendingNudge: n?.text ?? null, plansActive: p["a"] ?? 0, plansParked: p["p"] ?? 0, plansHandedOff: p["h"] ?? 0,
     };
   } catch { return zero; }
 }
 
 // ─── plans ─────────────────────────────────────────────────────────────────
 
-export type PlanStatus = "active" | "parked" | "done" | "abandoned";
-export interface PlanRow { node_id: string; title: string; goal_id: string | null; status: PlanStatus; keywords_json: string; parked_at: number | null; park_note: string | null; resumed_at: number | null; created_at: number; updated_at: number }
+/** 0.7: `handed_off` — another agent owns it now; resume takes it back. */
+export type PlanStatus = "active" | "parked" | "done" | "abandoned" | "handed_off";
+export const PLAN_STATUSES: PlanStatus[] = ["active", "parked", "done", "abandoned", "handed_off"];
+export interface PlanRow {
+  node_id: string; title: string; goal_id: string | null; status: PlanStatus; keywords_json: string; parked_at: number | null; park_note: string | null; resumed_at: number | null; created_at: number; updated_at: number;
+  /** 0.7 (schema v28): who took the plan over, why, and when. */
+  handoff_to?: string | null; handoff_note?: string | null; handoff_at?: number | null;
+}
 export interface StepRow { id: number; plan_id: string; idx: number; text: string; status: string; note: string | null; updated_at: number }
 export interface PlanView extends PlanRow { steps: Array<StepRow & { blockers: Blocker[] }>; goal_title: string | null }
 export const STEP_STATUSES = ["todo", "doing", "done", "blocked", "skipped"];
@@ -252,10 +259,18 @@ export function getPlan(agentId: string, idOrPrefix: string): PlanView | null {
 }
 
 function planContent(p: PlanView): string {
-  return `Plan [${p.status}]: ${p.title}${p.goal_title ? ` (goal: ${p.goal_title})` : ""}. Steps: ${p.steps.map((s) => `${s.idx}. ${s.text} [${s.status}]`).join("; ")}`.slice(0, 2000);
+  const handed = p.status === "handed_off" && p.handoff_to ? ` HANDED OFF to ${p.handoff_to}${p.handoff_note ? ` (${p.handoff_note})` : ""} — not yours to carry out unless you take it back (brain_plan resume).` : "";
+  return `Plan [${p.status}]: ${p.title}${p.goal_title ? ` (goal: ${p.goal_title})` : ""}.${handed} Steps: ${p.steps.map((s) => `${s.idx}. ${s.text} [${s.status}]`).join("; ")}`.slice(0, 2000);
 }
 
-export function createPlan(agentId: string, input: { title: string; goalId?: string; steps?: string[]; links?: string[]; writerAgentId?: string; now?: number }): { ok: boolean; error?: string; plan?: PlanView } {
+/** 0.7: creating / stepping / resuming a plan makes it the session's current task (task-frame.ts). */
+function pinPlan(agentId: string, sessionKey: string | undefined, p: PlanView, config: Partial<BrainConfig> | undefined, now: number): void {
+  if (!currentTaskEnabled(config)) return;
+  const next = p.steps.find((s) => s.status === "doing") ?? p.steps.find((s) => s.status === "todo" || s.status === "blocked");
+  try { setTaskFrame(agentId, sessionKey ?? "", { title: p.title, planId: p.node_id, goalId: p.goal_id, note: next ? `next: ${next.idx}. ${next.text}` : null, setBy: "plan" }, now); } catch { /* pre-v28 */ }
+}
+
+export function createPlan(agentId: string, input: { title: string; goalId?: string; steps?: string[]; links?: string[]; writerAgentId?: string; now?: number; sessionKey?: string; config?: Partial<BrainConfig> }): { ok: boolean; error?: string; plan?: PlanView } {
   const title = clean(input.title, 300);
   if (title.length < 3) return { ok: false, error: "title is required" };
   const now = input.now ?? Date.now();
@@ -278,19 +293,21 @@ export function createPlan(agentId: string, input: { title: string; goalId?: str
   const p = getPlan(agentId, id)!;
   db.prepare("UPDATE nodes SET content = ? WHERE id = ?").run(planContent(p), id);
   bumpWriteCounter(db);
+  pinPlan(agentId, input.sessionKey, p, input.config, now);
   return { ok: true, plan: p };
 }
 
-export type PlanAction = "update" | "step" | "add_steps" | "park" | "resume" | "done" | "abandon";
-export const PLAN_ACTIONS: PlanAction[] = ["update", "step", "add_steps", "park", "resume", "done", "abandon"];
+export type PlanAction = "update" | "step" | "add_steps" | "park" | "resume" | "done" | "abandon" | "handoff";
+export const PLAN_ACTIONS: PlanAction[] = ["update", "step", "add_steps", "park", "resume", "done", "abandon", "handoff"];
 
-export function updatePlan(agentId: string, idOrPrefix: string, input: { action: PlanAction; title?: string; steps?: string[]; step?: number; status?: string; note?: string; blockedBy?: string[]; now?: number }): { ok: boolean; error?: string; plan?: PlanView; previousParkedAt?: number | null } {
+export function updatePlan(agentId: string, idOrPrefix: string, input: { action: PlanAction; title?: string; steps?: string[]; step?: number; status?: string; note?: string; blockedBy?: string[]; to?: string; now?: number; sessionKey?: string; config?: Partial<BrainConfig> }): { ok: boolean; error?: string; plan?: PlanView; previousParkedAt?: number | null; previousStatus?: PlanStatus; previousHandoffAt?: number | null } {
   const cur = getPlan(agentId, idOrPrefix);
   if (!cur) return { ok: false, error: `plan ${idOrPrefix} not found (brain_plan {"action":"list"} shows ids)` };
   const db = getDb(agentId);
   const now = input.now ?? Date.now();
   const set = (sql: string, ...a: unknown[]) => db.prepare(`UPDATE plans SET ${sql}, updated_at = ? WHERE node_id = ?`).run(...a, now, cur.node_id);
   const prevParked = cur.parked_at;
+  const prevStatus = cur.status;
   switch (input.action) {
     case "update": if (input.title) set("title = ?", clean(input.title, 300)); break;
     case "add_steps": {
@@ -310,15 +327,32 @@ export function updatePlan(agentId: string, idOrPrefix: string, input: { action:
       break;
     }
     case "park": if (cur.status !== "active") return { ok: false, error: `plan is ${cur.status}` }; set("status = 'parked', parked_at = ?, park_note = ?", now, clean(input.note, 400) || null); break;
-    case "resume": if (cur.status !== "parked") return { ok: false, error: `plan is ${cur.status}, not parked` }; set("status = 'active', resumed_at = ?", now); break;
+    case "resume": {
+      // parked → active (the old behaviour) or handed_off → active (take it back)
+      if (cur.status !== "parked" && cur.status !== "handed_off") return { ok: false, error: `plan is ${cur.status}, not parked or handed off` };
+      set("status = 'active', resumed_at = ?, handoff_to = NULL, handoff_note = NULL, handoff_at = NULL", now);
+      break;
+    }
     case "done": set("status = 'done'"); break;
     case "abandon": set("status = 'abandoned', park_note = COALESCE(?, park_note)", clean(input.note, 400) || null); break;
+    case "handoff": {
+      // 0.7: another agent owns this plan now. It leaves briefings / the current task and is
+      // never resumed by "continue"; `resume` takes it back explicitly.
+      const to = clean(input.to, 80);
+      if (!to) return { ok: false, error: "handoff needs to: who takes the plan over (an agent name)" };
+      if (cur.status !== "active" && cur.status !== "parked") return { ok: false, error: `plan is ${cur.status}` };
+      set("status = 'handed_off', handoff_to = ?, handoff_note = ?, handoff_at = ?", to, clean(input.note, 400) || null, now);
+      break;
+    }
     default: return { ok: false, error: `action must be one of ${PLAN_ACTIONS.join(", ")}` };
   }
   const p = getPlan(agentId, cur.node_id)!;
   db.prepare("UPDATE nodes SET content = ?, label = ?, updated_at = ? WHERE id = ?").run(planContent(p), `Plan: ${p.title.slice(0, 90)}`, now, cur.node_id);
   bumpWriteCounter(db);
-  return { ok: true, plan: p, previousParkedAt: prevParked };
+  // 0.7 current task: stepping / resuming pins the plan; finishing, parking, abandoning or handing it off un-pins it everywhere.
+  if (input.action === "step" || input.action === "resume" || input.action === "add_steps") pinPlan(agentId, input.sessionKey, p, input.config, now);
+  else if (input.action === "done" || input.action === "abandon" || input.action === "park" || input.action === "handoff") { try { clearFramesForPlan(agentId, cur.node_id); } catch { /* pre-v28 */ } }
+  return { ok: true, plan: p, previousParkedAt: prevParked, previousStatus: prevStatus, previousHandoffAt: cur.handoff_at ?? null };
 }
 
 export function listPlans(agentId: string, status: PlanStatus | "all" = "active"): PlanView[] {
@@ -328,8 +362,10 @@ export function listPlans(agentId: string, status: PlanStatus | "all" = "active"
 
 const MARK: Record<string, string> = { todo: "[ ]", doing: "[~]", done: "[x]", blocked: "[!]", skipped: "[-]" };
 export function formatPlan(p: PlanView, now = Date.now()): string {
-  const L = [`${p.node_id} Plan [${p.status}] ${p.title}${p.goal_title ? `  (goal: ${p.goal_title})` : ""}  (created ${ago(p.created_at, now)}${p.parked_at && p.status === "parked" ? ` · parked ${ago(p.parked_at, now)}` : ""})`];
+  const st = p.status === "handed_off" ? `handed_off → ${p.handoff_to ?? "?"}` : p.status;
+  const L = [`${p.node_id} Plan [${st}] ${p.title}${p.goal_title ? `  (goal: ${p.goal_title})` : ""}  (created ${ago(p.created_at, now)}${p.parked_at && p.status === "parked" ? ` · parked ${ago(p.parked_at, now)}` : ""}${p.status === "handed_off" && p.handoff_at ? ` · handed off ${ago(p.handoff_at, now)}` : ""})`];
   if (p.status === "parked" && p.park_note) L.push(`  parked because: ${p.park_note}`);
+  if (p.status === "handed_off") L.push(`  handed to ${p.handoff_to ?? "?"}${p.handoff_note ? `: ${p.handoff_note}` : ""} — theirs now; brain_plan resume takes it back`);
   for (const s of p.steps) {
     const bl = s.blockers.filter((b) => !b.done);
     L.push(`  ${MARK[s.status] ?? "[ ]"} ${s.idx}. ${s.text}${s.note ? ` — ${s.note}` : ""}${bl.length ? ` (blocked by ${bl.map((b) => b.label).join(", ")})` : ""}`);

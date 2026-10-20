@@ -204,6 +204,26 @@ export interface BrainConfig {
    * failures catch up, the procedure is demoted again.
    */
   procedureVerifyAfter: number;
+  /**
+   * 0.7: the current-task anchor. Each session can pin what it is working on
+   * right now (a task frame: brain_now, or set automatically when a plan is
+   * created / stepped / resumed). The frame is injected every turn as
+   * "[BRAIN: now]", survives host compaction (it lives in the brain), and
+   * makes a content-free prompt ("continue", "go on") mean THIS task: such
+   * prompts skip topic recall and hold goal / commitment nudges instead of
+   * pulling an older plan or goal forward. Default true.
+   */
+  currentTask: boolean;
+  /** Hours a task frame stays current without being touched (default 48). */
+  taskFrameTtlHours: number;
+  /**
+   * 0.7: owner phrasing updates task state without a tool call — "let's work
+   * on X" / "switching to X" pins the frame; "hand X off to Y" / "Y will take
+   * X" marks the matching plan or goal handed off (reversible with resume).
+   * Applied by the host on the owner's turns and on compaction summaries.
+   * Default true.
+   */
+  handoffDetection: boolean;
   ingestionModel: string;
   remModel?: string;
   openRouterApiKey: string;
@@ -328,6 +348,9 @@ export const DEFAULT_CONFIG: BrainConfig = {
   forgetting: "dormant",
   procedures: true,
   procedureVerifyAfter: 2,
+  currentTask: true,
+  taskFrameTtlHours: 48,
+  handoffDetection: true,
   ingestionModel: "openrouter/deepseek/deepseek-v4-flash",
   openRouterApiKey: process.env["OPENROUTER_API_KEY"] ?? envGet("OPENROUTER_API_KEY") ?? "",
   embeddingModel: envGet("EMBEDDING_MODEL") ?? "ollama/qwen3-embedding:0.6b",

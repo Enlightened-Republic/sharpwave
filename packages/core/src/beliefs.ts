@@ -257,7 +257,7 @@ export interface BrainStatus {
   };
   hotConflicts: Array<{ a: { id: string; label: string }; b: { id: string; label: string }; since: number }>;
   decisions: { total: number; pending: number; resolved: number; auto: number; lessonsPromoted: number; draftsPending: number; draftsExpired: number; lessonsMerged: number };
-  goals: { active: number; tracked: number; untracked?: number; paused: number; done: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null; pendingNoteOffers: number };
+  goals: { active: number; tracked: number; untracked?: number; paused: number; done: number; handedOff?: number; drifting: Array<{ id: string; title: string; reason: string }>; pendingNote: string | null; pendingNoteOffers: number };
   /** Xanima 0.3.0 */
   open: ReturnType<typeof openItemCounts>;
   commitments: ReturnType<typeof commitmentCounts>;
@@ -268,6 +268,9 @@ export interface BrainStatus {
   quarantine?: { mode: "off" | "log" | "enforce"; held: number; logged: number; accepted: number; rejected: number };
   /** Procedures compiled from carried-out plans; verified ones are injected as operational rules. */
   procedures?: { total: number; verified: number };
+  /** 0.7: the most recently touched current task (any session) and recent handoffs. */
+  now?: { title: string; session: string; ago: string; setBy: string } | null;
+  handoffs?: Array<{ kind: "plan" | "goal"; title: string; to: string; ago: string }>;
   /** Xanima 0.5.0 follow-up: agent-evolved identity (versions, held changes, locked fields) */
   identity?: IdentityStatus | null;
   /** Xanima 0.5.0: active brain_focus, described */
@@ -395,6 +398,22 @@ export function computeBrainStatus(db: Database.Database, config: Pick<BrainConf
     identity,
     focus,
     procedures: procedureCounts(db),
+    now: (() => {
+      try {
+        const f = db.prepare("SELECT session_key, title, set_by, updated_at FROM task_frames ORDER BY updated_at DESC LIMIT 1").get() as { session_key: string; title: string; set_by: string; updated_at: number } | undefined;
+        const ttl = Math.max(1, typeof config.taskFrameTtlHours === "number" ? config.taskFrameTtlHours : 48) * 3_600_000;
+        return f && now - f.updated_at <= ttl ? { title: f.title, session: f.session_key, ago: relativeTime(f.updated_at, now), setBy: f.set_by } : null;
+      } catch { return null; }
+    })(),
+    handoffs: (() => {
+      try {
+        const since = now - 30 * 86_400_000;
+        const plans = db.prepare("SELECT title, handoff_to, handoff_at FROM plans WHERE status = 'handed_off' AND handoff_at >= ? ORDER BY handoff_at DESC LIMIT 5").all(since) as Array<{ title: string; handoff_to: string | null; handoff_at: number }>;
+        const goals = db.prepare("SELECT title, handoff_to, handoff_at FROM goals g WHERE status = 'handed_off' AND handoff_at >= ? AND version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id) ORDER BY handoff_at DESC LIMIT 5").all(since) as Array<{ title: string; handoff_to: string | null; handoff_at: number }>;
+        return [...plans.map((p) => ({ kind: "plan" as const, title: p.title, to: p.handoff_to ?? "?", at: p.handoff_at })), ...goals.map((g) => ({ kind: "goal" as const, title: g.title, to: g.handoff_to ?? "?", at: g.handoff_at }))]
+          .sort((a, b) => b.at - a.at).slice(0, 5).map((h) => ({ kind: h.kind, title: h.title, to: h.to, ago: relativeTime(h.at, now) }));
+      } catch { return []; }
+    })(),
     lastSleep: { at: lastAt, ago: lastAt ? relativeTime(lastAt, now) : "never", summary },
     injection: { budgetChars, headerChars, recallCapChars, estimatedTokens: Math.ceil((headerChars + recallCapChars) / 4) },
     attention,
@@ -412,17 +431,19 @@ export function formatBrainStatus(s: BrainStatus, label = ""): string {
   const ss = s.lastSleep.summary;
   L.push(`  last sleep: ${s.lastSleep.ago}${ss ? ` — nodes ${ss.nodesBefore}→${ss.nodesAfter}, edges ${ss.edgesBefore}→${ss.edgesAfter}, pruned ${ss.pruned}, new contradictions ${ss.newContradictions}, flagged ${ss.flaggedForReview}${ss.decisionsMerged || ss.decisionsCalibrated || ss.lessonsPromoted ? `, decisions merged ${ss.decisionsMerged ?? 0} / calibrated ${ss.decisionsCalibrated ?? 0} / lessons promoted ${ss.lessonsPromoted ?? 0}` : ""}${ss.lessonsMerged ? `, lessons merged into existing skills ${ss.lessonsMerged}` : ""}${ss.draftsExpired ? `, decision drafts expired ${ss.draftsExpired}` : ""}${ss.reflectionsWritten || ss.reflectionsMerged ? `, reflections written ${ss.reflectionsWritten ?? 0} / merged ${ss.reflectionsMerged ?? 0}` : ""}${ss.openDraftsExpired ? `, open-item drafts expired ${ss.openDraftsExpired}` : ""}${ss.commitmentsOverdue ? `, commitments overdue ${ss.commitmentsOverdue}` : ""}${ss.goalsChecked ? `, goals checked ${ss.goalsChecked} (${ss.goalsDrifting ?? 0} drifting)` : ""}${ss.legacyNoiseFlagged ? ` (${ss.legacyNoiseFlagged} look like legacy heartbeat/NO_REPLY noise — review, then retire with xanima-server noise)` : ""}` : ""}`);
   if (s.procedures?.total) L.push(`  procedures: ${s.procedures.total} compiled from carried-out plans (${s.procedures.verified} verified → injected as operational rules)`);
+  if (s.now) L.push(`  now: ${s.now.title} (session ${s.now.session.slice(0, 40)}, ${s.now.ago}, ${s.now.setBy === "owner" ? "owner said so" : s.now.setBy === "plan" ? "from the plan" : s.now.setBy})`);
+  for (const h of (s.handoffs ?? []).slice(0, 3)) L.push(`  handed off ${h.ago}: ${h.kind} "${h.title.slice(0, 70)}" → ${h.to}`);
   if (s.decisions.total || s.decisions.draftsExpired) L.push(`  decisions: ${s.decisions.total} (${s.decisions.pending} awaiting outcome, ${s.decisions.resolved} resolved, ${s.decisions.lessonsPromoted} lessons promoted${s.decisions.lessonsMerged ? `, ${s.decisions.lessonsMerged} merged into existing skills` : ""})`);
   if (s.decisions.draftsPending || s.decisions.draftsExpired) L.push(`  decision drafts: ${s.decisions.draftsPending} pending (auto-extracted, unconfirmed), ${s.decisions.draftsExpired} expired`);
-  if (s.goals.active || s.goals.paused || s.goals.done || s.goals.untracked) L.push(`  goals: ${s.goals.active} active (${s.goals.tracked} drift-checked), ${s.goals.paused} paused, ${s.goals.done} done${s.goals.untracked ? ` · ${s.goals.untracked} untracked legacy (not injected; brain_update_goal action=track to adopt, or xanima-server goals pause-legacy)` : ""}`);
+  if (s.goals.active || s.goals.paused || s.goals.done || s.goals.untracked || s.goals.handedOff) L.push(`  goals: ${s.goals.active} active (${s.goals.tracked} drift-checked), ${s.goals.paused} paused, ${s.goals.done} done${s.goals.handedOff ? `, ${s.goals.handedOff} handed off` : ""}${s.goals.untracked ? ` · ${s.goals.untracked} untracked legacy (not injected; brain_update_goal action=track to adopt, or xanima-server goals pause-legacy)` : ""}`);
   for (const d of s.goals.drifting.slice(0, 3)) L.push(`    DRIFT ${d.id.slice(0, 8)}: ${d.reason}`);
   if (s.open && (s.open.hypotheses || s.open.questions || s.open.assumptions || s.open.draftsExpired)) {
     L.push(`  open items: ${s.open.hypotheses} hypotheses, ${s.open.questions} questions, ${s.open.assumptions} assumptions${s.open.draftsPending ? ` (${s.open.draftsPending} captured drafts unconfirmed)` : ""}${s.open.draftsExpired ? `, ${s.open.draftsExpired} drafts expired` : ""}`);
     for (const q of s.open.hotQuestions) L.push(`    HOT QUESTION ${q.id.slice(0, 8)}: ${q.text.slice(0, 100)}`);
     for (const a of s.open.contradictedAssumptions) L.push(`    CONTRADICTED load-bearing assumption ${a.id.slice(0, 8)} (${relativeTime(a.since)}): ${a.text.slice(0, 100)}`);
   }
-  if (s.commitments && (s.commitments.open || s.commitments.plansActive || s.commitments.plansParked)) {
-    L.push(`  commitments: ${s.commitments.open} open (${s.commitments.overdue.length} overdue, ${s.commitments.blocked.length} blocked); plans: ${s.commitments.plansActive} active, ${s.commitments.plansParked} parked`);
+  if (s.commitments && (s.commitments.open || s.commitments.plansActive || s.commitments.plansParked || s.commitments.plansHandedOff)) {
+    L.push(`  commitments: ${s.commitments.open} open (${s.commitments.overdue.length} overdue, ${s.commitments.blocked.length} blocked); plans: ${s.commitments.plansActive} active, ${s.commitments.plansParked} parked${s.commitments.plansHandedOff ? `, ${s.commitments.plansHandedOff} handed off` : ""}`);
     for (const c of s.commitments.overdue.slice(0, 3)) L.push(`    OVERDUE ${c.id.slice(0, 8)}: ${c.title.slice(0, 80)} (due ${relativeTime(c.due_at)})`);
     for (const c of s.commitments.blocked.slice(0, 3)) L.push(`    BLOCKED ${c.id.slice(0, 8)}: ${c.title.slice(0, 60)} — waiting on ${c.waiting.slice(0, 60)}`);
     if (s.commitments.pendingNudge) L.push(`  commitment nudge pending (consumed by the next real reply): ${s.commitments.pendingNudge}`);

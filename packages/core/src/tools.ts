@@ -504,7 +504,10 @@ export async function dispatchBrainTool(
   args: Record<string, unknown>,
   config: BrainConfig,
   source: string = "mcp",
+  /** 0.7: the conversation this call belongs to — task frames (brain_now, brain_plan) are per session. */
+  opts: { sessionKey?: string } = {},
 ): Promise<BrainToolResult> {
+  const sessionKey = opts.sessionKey;
   switch (name) {
     // ── brain_query ───────────────────────────────────────────────────────
     case "brain_query": {
@@ -904,7 +907,7 @@ export async function dispatchBrainTool(
     case "brain_reflect": {
       // Xanima 0.3.0: scoped reflection (topic / goal_id / since / until) → continuity tool.
       if (["topic", "goal_id", "since", "until"].some((k) => args[k] !== undefined)) {
-        const c = dispatchContinuityTool(name, agentId, args, config);
+        const c = dispatchContinuityTool(name, agentId, args, config, { sessionKey });
         if (c) return c.isError ? err(c.text.replace(/^Error: /, "")) : ok(c.text);
       }
       const model = getSelfModel(agentId);
@@ -917,7 +920,7 @@ export async function dispatchBrainTool(
         `User model: ${model.user_model}`,
         `Last updated: ${new Date(model.updated_at).toISOString()}`,
       ];
-      const c = dispatchContinuityTool(name, agentId, {}, config);
+      const c = dispatchContinuityTool(name, agentId, {}, config, { sessionKey });
       if (c && !c.isError) lines.push("", c.text);
       return ok(lines.join("\n"));
     }
@@ -1019,7 +1022,7 @@ export async function dispatchBrainTool(
       const g = gateToolCall(agentId, name, args, { writer: agentId, config });
       if (g?.decision === "held") return ok(gateNotice(g));
       const { source_type: _st, ...cargs } = args;
-      const c0 = dispatchContinuityTool(name, agentId, GATED_TOOLS.has(name) ? cargs : args, config);
+      const c0 = dispatchContinuityTool(name, agentId, GATED_TOOLS.has(name) ? cargs : args, config, { sessionKey });
       const c = c0 && g?.reviewId && !c0.isError ? { ...c0, text: `${c0.text}\n${gateNotice(g)}` } : c0;
       if (c) return c;
       const sr = dispatchSoulTool(name, agentId, args, config, { admin: false, by: agentId });

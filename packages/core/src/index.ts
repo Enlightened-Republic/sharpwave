@@ -237,6 +237,21 @@ export {
 export type { Surface } from "./context-assembly.js";
 
 // ---------------------------------------------------------------------------
+// 0.7 current task: the task frame (what this session is working on), the
+// "[BRAIN: now]" block, this-session recent turns, owner-phrase task signals
+// (focus / handoff) and the low-information-prompt test.
+// ---------------------------------------------------------------------------
+export {
+  setTaskFrame, getTaskFrame, clearTaskFrame, touchTaskFrame, latestTaskFrame, listTaskFrames, expireTaskFrames,
+  clearFramesForPlan, clearFramesForGoal, isLowInformationPrompt, currentTaskEnabled, taskFrameTtlMs, DEFAULT_SESSION_KEY,
+} from "./task-frame.js";
+export type { TaskFrame, TaskFrameInput, TaskFrameSetBy } from "./task-frame.js";
+export { buildNowContext, buildSessionRecentContext, recentHandoffs } from "./now-context.js";
+export type { Handoff, NowContextOptions } from "./now-context.js";
+export { detectTaskSignals, applyTaskSignals } from "./task-signals.js";
+export type { TaskSignals, AppliedTaskSignals, ApplyTaskSignalsOptions } from "./task-signals.js";
+
+// ---------------------------------------------------------------------------
 // proactive-monitor — CogniFold pre-recall priming. Runs at the top of every
 // before_prompt_build pass and bumps eligibility_trace on nodes matching the
 // last few episodes (FTS), the current neuromodulator state, and the semantic
@@ -333,7 +348,7 @@ export {
 export type { OpenKind, OpenStatus, OpenItemRow, OpenItemView, OpenItemCandidate } from "./open-items.js";
 export {
   createCommitment, updateCommitment, getCommitment, listCommitments, formatCommitment, runCommitmentCheck, commitmentCounts,
-  createPlan, updatePlan, getPlan, listPlans, formatPlan, addBlockers, removeBlockers, blockersOf, blockerDone,
+  createPlan, updatePlan, getPlan, listPlans, formatPlan, addBlockers, removeBlockers, blockersOf, blockerDone, PLAN_STATUSES,
 } from "./plans.js";
 export type { CommitmentView, PlanView, PlanStatus, CommitAction, PlanAction } from "./plans.js";
 export { replay, changesSince, formatChanges, conflicts, briefing, forgetImpact } from "./meta-tools.js";
