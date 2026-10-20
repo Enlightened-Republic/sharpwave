@@ -11,7 +11,7 @@ nightly `VACUUM INTO` backups.
 ## Layout on disk
 
 ```
-~/.sharpwave/service/            (root; configurable)
+~/.xanima/service/               (root; configurable; ~/.sharpwave/service until migrated)
   config.json                    optional (see config.example.json)
   tokens.json                    sha256 hashes only -> agentId + scopes
   brains/shared/brain.db         the shared brain (created EMPTY)
@@ -28,7 +28,7 @@ nightly `VACUUM INTO` backups.
 npm run build --workspace xanima-server          # -> packages/server/dist/cli.js
 node packages/server/dist/cli.js token mint --agent chief-of-staff --scopes read,write
 node packages/server/dist/cli.js serve               # 127.0.0.1:18790 (+ any tailnetHosts from config.json)
-curl http://127.0.0.1:18790/health                   # {"status":"ok","version":"0.1.0","addresses":[...]}
+curl http://127.0.0.1:18790/health                   # {"status":"ok","version":"0.6.0","addresses":[...]}
 ```
 
 CLI (`xanima-server`):
@@ -39,21 +39,30 @@ CLI (`xanima-server`):
 | `token mint --agent <id> [--scopes read,write,shared-write,admin] [--label txt] [--json]` | mint a token; prints it **once**, stores only its sha256 |
 | `token list [--json]` / `token revoke <tokenId>` | manage tokens (takes effect without restart) |
 | `backup now [--keep N] [--brain name ...] [--no-offsite]` | snapshot every brain now (safe next to a live service), then encrypt + ship off-PC if enabled. Exit 0 ok, 1 local snapshot failed, 3 local ok but an off-PC step failed |
-| `backup keygen [--key-file f] [--force]` | write a new 256-bit backup key (default `~/.sharpwave/backup.key`); refuses to overwrite without `--force` (which renames the old key to `backup.key.old-<UTC>`) |
+| `backup keygen [--key-file f] [--force]` | write a new 256-bit backup key (default `~/.xanima/backup.key`, or `~/.sharpwave/backup.key` before migrating); refuses to overwrite without `--force` (which renames the old key to `backup.key.old-<UTC>`) |
 | `backup restore <file.swbk> --out <path> [--key-file f] [--force] [--require-manifest] [--json]` | verify + decrypt + `PRAGMA integrity_check`; prints node/edge/episode counts |
-| `brain adopt --agent <id> --from <brain.db\|dir> [--mode copy\|move] [--dry-run] [--force] [--backfill-writer legacy\|<id>] [--json]` | adopt an EXISTING brain.db (e.g. a legacy `~/.sharpwave/<agent>/brain.db`) as that agent's private brain. See below |
+| `brain adopt --agent <id> --from <brain.db\|dir> [--mode copy\|move] [--dry-run] [--force] [--backfill-writer legacy\|<id>] [--json]` | adopt an EXISTING brain.db (e.g. a legacy `~/.sharpwave/<agent>/brain.db` or `~/.xanima/<agent>/brain.db` from the MCP server) as that agent's private brain. See below |
 | `noise scan --agent <id> [--out base] [--include-retired] [--json]` | read-only (safe while serving): list system-noise candidates (NO_REPLY / HEARTBEAT_OK triage, OpenClaw wake markers, nodes minted from such episodes, triage phrasing) to `<root>/noise-reports/<id>-<UTC>.csv` + `.json`. See [noise review](../../docs/noise-review-runbook.md) |
 | `noise check --agent <id> --query <text> [--limit 10] [--json]` | read-only FTS probe: top current nodes for a query, flagging candidates |
 | `noise retire --agent <id> --ids-file <reviewed.csv\|json\|txt> [--dry-run] [--json]` | service stopped: backup, then soft-retire ONLY rows left at `action=retire` (nodes `valid_until=now`, episodes `importance=0`); prior values kept in `meta_kv` for undo; audited; nothing deleted |
 | `noise unretire --agent <id> (--batch <id> \| --ids-file <f> \| --all) [--dry-run] [--json]` | service stopped: backup, then restore the recorded prior values exactly |
 | `noise status --agent <id> [--json]` | retired items by batch |
+| `migrate [--from ~/.sharpwave] [--to ~/.xanima] [--dry-run] [--include-backups] [--json]` | COPY a pre-rename SharpWave data folder to the Xanima one; every brain is migrated and verified (counts, integrity); the old folder is never moved or deleted |
+| `sleep now [--force] [--brain name ...] [--json]` | service stopped: run one sleep/consolidation cycle now |
+| `goals list-legacy` / `pause-legacy` / `resume-legacy` | review / pause / restore untracked pre-0.2.0 goals that look like chat fragments |
+| `identity history` / `show` / `revert <version>` | the agent's identity versions; revert writes a new version |
+| `soul export \| fork \| import \| diff \| merge \| review \| validate \| keygen` | Soul Packages (see [docs/portability.md](../../docs/portability.md)) |
+| `room create \| invite \| revoke \| list \| members \| conflicts` | shared rooms (see [docs/rooms.md](../../docs/rooms.md)) |
+| `version` | print the version |
+
+Full syntax: `node packages/server/dist/cli.js --help`.
 
 ### Adopting an existing brain (`brain adopt`)
 
 The service keeps private brains at `<root>/brains/<agentId>/brain.db` and core
 resolves them by agent id under that dir, so there is no per-agent "brain path"
 setting to point at a legacy file (and pointing the service at the live legacy
-file would make OpenWave local mode and the service share one writer-unsafe
+file would make the OpenClaw plugin's local mode and the service share one writer-unsafe
 file with no rollback). `brain adopt` copies instead:
 
 1. refuses if the service port answers (stop the service first), or if the
@@ -65,15 +74,16 @@ file with no rollback). `brain adopt` copies instead:
 3. checkpoints the staged WAL, takes a pre-adopt backup with `VACUUM INTO`
    (`<backups>/<id>/pre-adopt/<id>-pre-adopt-<UTC>.db` + `.json` manifest with
    sha256 and counts), and copies that verified backup into the brain path;
-4. opens it through xanima-core, which runs the additive migrations to
-   schema 18 (`writer_agent_id`, NULL on existing rows);
-5. verifies `integrity_check = ok`, node/edge/episode counts equal, schema ≥ 18;
+4. opens it through xanima-core, which runs the additive migrations to the
+   current schema (v27 in 0.6.0; v18 added `writer_agent_id`, NULL on existing rows);
+5. verifies `integrity_check = ok`, node/edge/episode counts equal, schema at
+   the current version;
    on failure the adopted copy is renamed `brain.db.failed-adopt-<UTC>` and any
    replaced brain is put back;
 6. writes one audit line (`tool: brain_adopt`, counts/hashes, no content).
 
-`--mode copy` (default) leaves the source byte-identical, so OpenWave local
-mode / the sharpwave MCP keep working on it as a rollback. `--mode move`
+`--mode copy` (default) leaves the source byte-identical, so the plugin's local
+mode / the `xanima` MCP server keep working on it as a rollback. `--mode move`
 renames the source files to `*.adopted-<UTC>` after success (never deletes).
 
 `--backfill-writer`: default is to leave `writer_agent_id` NULL on adopted rows
@@ -97,7 +107,7 @@ which keeps them distinguishable from rows written through the service
   `{status, version, addresses}`.
 - **Tools.** `brain_query, brain_write, brain_link, brain_supersede, brain_stats,
   brain_history, brain_expand, brain_review, brain_forget, brain_edges,
-  brain_reset` — same names/validators as the `sharpwave` MCP server, but
+  brain_reset` — same names/validators as the `xanima` MCP server, but
   agent scoping comes from the token (there is no `agent` argument):
   - `brain_query` searches the caller's private brain **and** shared, merges by
     activation score, and labels each hit `[private]` / `[shared]`
@@ -162,7 +172,7 @@ Chief of Staff reaches the service only through the host PC on
 it can be copied anywhere.
 
 ```powershell
-$env:SHARPWAVE_TOKEN = "swt_..."          # or --token, or --token-file, or ~/.sharpwave/token
+$env:XANIMA_TOKEN = "swt_..."             # or --token, or --token-file, or ~/.xanima/token
 node xanima-client.mjs search "gateway scheduled task"
 node xanima-client.mjs read 3f2a...-uuid
 node xanima-client.mjs write "Weekly sync moved to Thursdays" --label "Weekly sync day"
@@ -173,7 +183,7 @@ node xanima-client.mjs forget 3f2a...-uuid [--shared]            # delete one no
 node xanima-client.mjs seed <dir> --map a.md=shared --map b.md=private --dry-run   # admin token; see docs/seeding.md
 ```
 
-`--url` defaults to `$SHARPWAVE_URL` or `http://127.0.0.1:18790`. `--json` prints
+`--url` defaults to `$XANIMA_URL` or `http://127.0.0.1:18790`. The old `SHARPWAVE_TOKEN` / `SHARPWAVE_URL` names are still read (deprecated), and `~/.sharpwave/token` is used when `~/.xanima/token` does not exist. `--json` prints
 machine-readable output. Exit codes: 0 ok, 1 tool error (e.g. forbidden), 2 usage,
 3 auth (401/403), 4 connection/HTTP.
 
@@ -190,7 +200,10 @@ machine-readable output. Exit codes: 0 ok, 1 tool error (e.g. forbidden), 2 usag
   for the current user, limited run level, restart every 1 min on failure (999x),
   no execution time limit, `IgnoreNew` for multiple instances. Action:
   `wscript.exe //B //Nologo sharpwave-service.vbs "<node>" "<dist\cli.js>" "<config>" "<log>"`.
-  Registers only; pass `-StartNow` to start, `-WhatIf` to preview.
+  Registers only; pass `-StartNow` to start, `-WhatIf` to preview. The script's
+  `-ConfigPath` / `-LogFile` still default to `%USERPROFILE%\.sharpwave\service\…`;
+  on a migrated (or fresh) install pass paths under `%USERPROFILE%\.xanima\service\`.
+  (The `sharpwave-service.*` file names are unchanged.)
 - `sharpwave-service.task.xml` — the same task as importable XML (`schtasks /Create /XML`).
 - `uninstall-task.ps1` — stops + unregisters the task, then ends any node.exe still
   running this checkout's `dist\cli.js serve` (`-KeepProcess` to skip); data is left in place.
@@ -204,7 +217,7 @@ Install steps (on the Windows host, normal PowerShell, NOT run by this PR):
 cd <repo>\packages\server
 npm run build                                      # produces dist\cli.js (Node >= 22)
 node dist\cli.js token mint --agent chief-of-staff --scopes read,write
-# optional: copy config.example.json to $HOME\.sharpwave\service\config.json and edit
+# optional: copy config.example.json to $HOME\.xanima\service\config.json and edit
 powershell -ExecutionPolicy Bypass -File scripts\windows\install-task.ps1 -WhatIf
 powershell -ExecutionPolicy Bypass -File scripts\windows\install-task.ps1          # register
 Start-ScheduledTask -TaskName "Xanima Brain Service"                            # or log off/on
@@ -216,7 +229,7 @@ Uninstall:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\windows\uninstall-task.ps1
 # or: Unregister-ScheduledTask -TaskName "Xanima Brain Service" -Confirm:$false
-# brains/backups/tokens under $HOME\.sharpwave\service are untouched; delete manually if wanted
+# brains/backups/tokens under $HOME\.xanima\service are untouched; delete manually if wanted
 ```
 
 ## Encrypted off-PC backups
@@ -228,13 +241,13 @@ After each local snapshot (nightly job and `backup now`) the service can write a
 // config.json
 "offsiteBackup": {
   "enabled": true,
-  "keyFile": "%USERPROFILE%\\.sharpwave\\backup.key",   // or env SHARPWAVE_BACKUP_KEY (wins when set)
+  "keyFile": "%USERPROFILE%\\.xanima\\backup.key",      // or env XANIMA_BACKUP_KEY (wins when set)
   "folder": "G:\\My Drive\\Xanima",                  // (a) e.g. Google Drive for Desktop synced folder
-  "command": ["C:\\Tools\\rclone.exe", "sync", "{outbox}", "remote:sharpwave"], // (b) optional, no shell
+  "command": ["C:\\Tools\\rclone.exe", "sync", "{outbox}", "remote:xanima"],    // (b) optional, no shell
   "commandTimeoutMs": 600000,
   "keepDaily": 7,                                         // off-PC retention: newest per day for 7 days
   "keepWeekly": 8                                         // + newest per ISO week for 8 weeks
-  // "outboxDir": defaults to <root>/offsite-outbox, "keyEnv": defaults to "SHARPWAVE_BACKUP_KEY"
+  // "outboxDir": defaults to <root>/offsite-outbox, "keyEnv": defaults to "XANIMA_BACKUP_KEY"
 }
 ```
 
@@ -275,21 +288,21 @@ audited, and **never** removes or fails the local snapshot.
 
 ```powershell
 cd <repo>\packages\server
-node dist\cli.js backup keygen                      # writes %USERPROFILE%\.sharpwave\backup.key, prints the key id
+node dist\cli.js backup keygen                      # writes %USERPROFILE%\.xanima\backup.key, prints the key id
 # lock the key file down to your account:
-icacls "$env:USERPROFILE\.sharpwave\backup.key" /inheritance:r /grant:r "${env:USERNAME}:(R,W)"
+icacls "$env:USERPROFILE\.xanima\backup.key" /inheritance:r /grant:r "${env:USERNAME}:(R,W)"
 ```
 
 1. **Copy the key into your password manager now** (open the file in Notepad,
    copy the last line, save it as a secure note titled e.g. "Xanima backup key
    <key id>"). Without the key every off-PC backup is unrecoverable; with it,
    anyone can read them.
-2. **Where the key lives:** `%USERPROFILE%\.sharpwave\backup.key` on the PC +
+2. **Where the key lives:** `%USERPROFILE%\.xanima\backup.key` on the PC +
    the password manager. **Never** inside the Google Drive folder, OneDrive, the
    repo, or `config.json`.
 3. Install Google Drive for Desktop, pick a folder inside it (e.g.
    `G:\My Drive\Xanima` — mirror or stream mode both work), and set
-   `offsiteBackup.folder` to it in `%USERPROFILE%\.sharpwave\service\config.json`
+   `offsiteBackup.folder` to it in `%USERPROFILE%\.xanima\service\config.json`
    with `"enabled": true` and `"keyFile"`.
 4. Test it: `node dist\cli.js backup now` → each brain prints `ok` and an
    `offsite` line. Check that `.swbk` + `.swbk.json` files appear in the Drive
@@ -309,7 +322,7 @@ node dist\cli.js backup restore "G:\My Drive\Xanima\main\main-<UTC>.swbk" --out 
 ```
 
 On a new PC, put the key back first (from the password manager into
-`%USERPROFILE%\.sharpwave\backup.key`, or `$env:SHARPWAVE_BACKUP_KEY="<base64>"` for
+`%USERPROFILE%\.xanima\backup.key`, or `$env:XANIMA_BACKUP_KEY="<base64>"` for
 one session). To **replace a live brain**: stop the service
 (`Stop-ScheduledTask -TaskName "Xanima Brain Service"`), then
 `backup restore <file> --out <root>\brains\<brain>\brain.db --force`. Restore
@@ -350,7 +363,5 @@ Does **not** protect against:
 
 - Key rotation tooling (re-encrypt old artifacts under a new key) and remote
   retention for `rclone copy`-style destinations.
-- **openwave remote mode** (openwave talking to this service instead of opening
-  brain.db in-process).
 - **Seeding the shared brain** — the shared brain starts empty; see
   `docs/seed-candidates.md` for the curated candidate list (nothing is copied).

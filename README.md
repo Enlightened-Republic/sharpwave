@@ -1,63 +1,43 @@
-# Xanima (formerly Sharpwave)
+# Xanima
 
-> **0.3.0 (pre-release, not published): reflection, replay, open items, commitments + plans, meta-tools.**
-> Twelve new tools: `brain_reflect` (on-demand, stored), `brain_replay`,
-> `brain_hypothesis`, `brain_question`, `brain_list_open`, `brain_commit`,
-> `brain_commitments`, `brain_plan` (park / resume with a briefing),
-> `brain_changes`, `brain_conflicts`, `brain_briefing`, `brain_forget_impact`
-> (read-only). Optional sleep reflection ("what worked / didn't / try next").
-> "I think … because …", "open question: …" and "I'm assuming …" in the
-> agent's replies become drafts that expire. A relevant open question or an
-> overdue commitment can add one line to `[BRAIN: goals]`. Schema v22 adds
-> tables only. Flags: `reflection` (`off`|`sleep`), `reflectionLlm`,
-> `reflectionWindowDays`, `openItemCapture`, `openItemDraftTtlDays`,
-> `openItemSurfacing`, `commitmentNudges`, `replayMaxChars`, `metaToolMaxChars`.
-> No LLM needed. See CHANGELOG.md.
->
-> **0.2.0 (pre-release, not published): decision ledger + goals / drift.**
-> Six new tools: `brain_record_decision`, `brain_update_decision_outcome`,
-> `brain_query_decisions`, `brain_set_goal`, `brain_update_goal`,
-> `brain_list_goals`. Sleep merges near-duplicate decisions, calibrates
-> confidence from outcomes, optionally promotes lessons to skills, and checks
-> active goals for drift; one short alignment note is injected on the next
-> turn (consumed only by a real reply). Keyword / time triggers surface a goal when relevant. Schema v20–v21 add
-> tables only. Flags: `decisionLedger`, `decisionAutoExtract`,
-> `decisionLessonPromotion`, `decisionBoost`, `intentDriftCheck`
-> (`sleep`|`daily`|`off`), `driftDays`, `goalTriggers`,
-> `alignmentNoteMaxTokens`, `decisionDraftTtlDays`, `lessonMergeSimilarity`. See CHANGELOG.md.
->
-> **0.1.0 (pre-release, not published):** the packages are now `xanima-core`,
-> `xanima` (MCP server; `sharpwave` bin kept as an alias) and `xanima-server`
-> (`sharpwave-server` bin alias). `XANIMA_*` env vars replace `SHARPWAVE_*`
-> (old names still work in 0.1.x with a one-time deprecation warning). Data
-> lives in `~/.xanima`; `~/.sharpwave` is used until you run
-> `xanima-server migrate`, which COPIES it (and verifies every brain's counts)
-> and never moves or deletes the old folder. Schema v19 adds belief metadata
-> (confidence, source_type, status, sensitivity, verified/contradicted
-> timestamps, evidence) with an additive migration: existing rows become
-> `source_type=legacy`, `confidence=medium (0.6)`. New tools `brain_retract`
-> and `brain_status`; `brain_supersede` takes a `reason` and returns related
-> nodes to re-check; `brain_query` takes `as_of`. Sleep flags low-confidence
-> and disputed beliefs for review (and keeps them out of the prune).
-> `xanima-server sleep now [--force]` runs one cycle offline. See CHANGELOG.
+> **Current release: 0.7.0** (2026-10-20), on npm as
+> [`xanima`](https://www.npmjs.com/package/xanima) (MCP server) and
+> [`xanima-core`](https://www.npmjs.com/package/xanima-core) (engine); the
+> OpenClaw plugin [`xanima-openclaw`](https://github.com/Enlightened-Republic/xanima-openclaw)
+> 0.7.0 vendors the same engine. Highlights: every conversation carries a
+> **current task** (`brain_now`, set automatically by `brain_plan` and from the
+> owner's own words) that is injected every turn as `[BRAIN: now]`, survives
+> context compaction, and makes a bare "continue" mean *this* task rather than an
+> older plan or goal; goals and plans can be **handed off** to another agent
+> (out of the header, drift checks and heartbeats until taken back); nudges are
+> reminders, never orders to switch tasks. Additive schema v28. 0.6.0 brought
+> dormant forgetting, owner-only identity changes, verified procedures and
+> `brain_expand {source_turns: N}`. Full history, including 0.1.0–0.5.0:
+> [CHANGELOG.md](CHANGELOG.md).
 
-# Sharpwave
+*Formerly Sharpwave.* Upgrading from `sharpwave` / `openwave`: install
+`xanima` (the `sharpwave` bin is kept as an alias) or `xanima-openclaw`, rename
+`SHARPWAVE_*` env vars to `XANIMA_*` (the old names are still read, with a
+one-time deprecation warning, and will be removed in a later release), and run
+`xanima-server migrate` to copy `~/.sharpwave` to `~/.xanima` (it verifies every
+brain and never moves or deletes the old folder). Until then `~/.sharpwave` is
+used when `~/.xanima` does not exist.
 
 **A long-term memory MCP server for AI agents.** It remembers across sessions,
 forgets what stops mattering, and consolidates the rest — modeled on how human
 memory actually works, not a vector store with extra steps.
 
 ```bash
-npx -y sharpwave
+npx -y xanima
 ```
 
 Works with Claude Code, Claude Desktop, Cursor, and any other MCP client.
 
-> **Building on [OpenClaw](https://openclaw.ai)?** Use **[openwave](https://github.com/Enlightened-Republic/openwave)**
+> **Building on [OpenClaw](https://openclaw.ai)?** Use **[xanima-openclaw](https://github.com/Enlightened-Republic/xanima-openclaw)**
 > instead — the same engine as a native OpenClaw plugin. It does everything this
 > MCP server does, *plus* it injects the relevant memories into every agent turn
 > automatically (no tool call) and runs the sleep system in-process.
-> `openclaw plugins install npm:openwave`
+> `openclaw plugins install npm:xanima-openclaw --force --accept-capabilities`
 
 ---
 
@@ -65,33 +45,33 @@ Works with Claude Code, Claude Desktop, Cursor, and any other MCP client.
 
 npm-workspaces monorepo, three packages:
 
-- **`packages/core`** — [`sharpwave-core`](https://www.npmjs.com/package/sharpwave-core),
+- **`packages/core`** — [`xanima-core`](https://www.npmjs.com/package/xanima-core),
   the memory engine (retrieval, consolidation, extraction, the FSRS forgetting
   curve, the graph). Published to npm as the shared engine behind both the
-  `sharpwave` MCP server and the [`openwave`](https://github.com/Enlightened-Republic/openwave)
+  `xanima` MCP server and the [`xanima-openclaw`](https://github.com/Enlightened-Republic/xanima-openclaw)
   OpenClaw plugin.
-- **`packages/mcp`** — [`sharpwave`](https://www.npmjs.com/package/sharpwave),
-  the stdio MCP server. This is what `npm i sharpwave` / `npx -y sharpwave`
+- **`packages/mcp`** — [`xanima`](https://www.npmjs.com/package/xanima),
+  the stdio MCP server. This is what `npm i xanima` / `npx -y xanima`
   installs.
-- **`packages/server`** — `sharpwave-server` (private, not published), the
-  **brain service**: one process that owns a `shared` brain plus one private
-  brain per agent and serves the brain tools over MCP Streamable HTTP on
-  `127.0.0.1:18790` (+ a tailnet IP) with per-agent bearer tokens, plus the
-  dependency-free `sharpwave-client` CLI. See
+- **`packages/server`** — `xanima-server` (private, not published; build it from
+  source), the **brain service**: one process that owns a `shared` brain plus
+  one private brain per agent and serves the brain tools over MCP Streamable
+  HTTP on `127.0.0.1:18790` (+ any tailnet IPs you configure) with per-agent
+  bearer tokens, plus the dependency-free `xanima-client` CLI. See
   [`packages/server/README.md`](packages/server/README.md).
 
 The OpenClaw plugin lives in its own repo:
-[`Enlightened-Republic/openwave`](https://github.com/Enlightened-Republic/openwave).
+[`Enlightened-Republic/xanima-openclaw`](https://github.com/Enlightened-Republic/xanima-openclaw).
 
-`sharpwave-core` is bundled into each consumer at build time, so `sharpwave` and
-`openwave` always ship the exact engine they were built against — there is no
+`xanima-core` is bundled into each consumer at build time, so `xanima` and
+`xanima-openclaw` always ship the exact engine they were built against — there is no
 version-skew path between them. It is a **devDependency** of both consumers, not
-a runtime one — esbuild inlines it, and a runtime dep on an unpublished package
-would break every `npm install sharpwave`.
+a runtime one — esbuild inlines it, so `npm install xanima` never needs to
+resolve it at install time.
 
-`npm run test:pack` is the pre-publish gate: it packs `sharpwave`, installs the
+`npm run test:pack` is the pre-publish gate: it packs `xanima`, installs the
 tarball in a clean workspace-free directory (where a stray runtime dep on
-`sharpwave-core` would 404), and drives the installed server over MCP. Run it
+`xanima-core` would fail), and drives the installed server over MCP. Run it
 before every `npm publish`. It is not part of `npm run test:all` (slow, and the
 `npm install` touches the network).
 
@@ -105,9 +85,9 @@ Your agent forgets everything the moment a session ends. The usual fix is to dum
 - **It has no structure.** A pile of embeddings can tell you what's *similar*. It can't tell you what *caused* what, or that one fact replaced another.
 - **Recall degrades as it grows.** More memories means more near-matches, and precision falls off exactly when the memory becomes worth having.
 
-Human memory doesn't work that way. It decays on a curve, strengthens what gets used, consolidates related things into concepts, and lets the rest fade. Sharpwave models that.
+Human memory doesn't work that way. It decays on a curve, strengthens what gets used, consolidates related things into concepts, and lets the rest fade. Xanima models that.
 
-The name comes from **sharp-wave ripples** — the hippocampal events that replay and consolidate memories during rest. That's the mechanism this is built around, not a metaphor bolted on afterward.
+The design centres on **sharp-wave ripples** (the source of the project's former name) — the hippocampal events that replay and consolidate memories during rest. That's the mechanism this is built around, not a metaphor bolted on afterward.
 
 ## What makes it different
 
@@ -121,13 +101,13 @@ The name comes from **sharp-wave ripples** — the hippocampal events that repla
 
 **Hybrid retrieval.** Full-text search fused with vector similarity via reciprocal rank fusion, then spread across the graph. Vector search is optional — full-text and graph retrieval work with no embedding provider at all.
 
-**Multi-agent by design.** One Sharpwave process can back any number of agents at
+**Multi-agent by design.** One Xanima process can back any number of agents at
 once. Each agent's memories live in their own database — isolated, never
 cross-contaminated — under a single config entry.
 
 ## Install
 
-Sharpwave is a standard stdio MCP server. Point any MCP client at `npx -y sharpwave`.
+Xanima is a standard stdio MCP server. Point any MCP client at `npx -y xanima`.
 
 ### Any MCP client
 
@@ -137,9 +117,9 @@ or equivalent):
 ```json
 {
   "mcpServers": {
-    "sharpwave": {
+    "xanima": {
       "command": "npx",
-      "args": ["-y", "sharpwave"]
+      "args": ["-y", "xanima"]
     }
   }
 }
@@ -148,26 +128,29 @@ or equivalent):
 ### Claude Code
 
 ```bash
-claude mcp add sharpwave -- npx -y sharpwave
+claude mcp add xanima -- npx -y xanima
 ```
 
 ### OpenClaw
 
+The native plugin is the recommended path (see above). To use the MCP server instead:
+
 ```bash
-openclaw mcp add sharpwave --command npx --arg -y --arg sharpwave
-openclaw mcp doctor sharpwave --probe
+openclaw mcp add xanima --command npx --arg -y --arg xanima
+openclaw mcp doctor xanima --probe
 ```
 
 ### Multi-agent
 
-Leave `SHARPWAVE_AGENT_ID` unset and one Sharpwave process serves any number of
+Leave `XANIMA_AGENT_ID` unset and one Xanima process serves any number of
 agents: every `brain_*` call carries the calling agent's own `agent` id and is
-routed to its own database at `~/.sharpwave/<agent>/brain.db`. `SHARPWAVE_AGENTS`
+routed to its own database at `~/.xanima/<agent>/brain.db`. `XANIMA_AGENTS`
 (comma-separated) restricts which ids are accepted. To pin one server to a single
-agent, set `SHARPWAVE_AGENT_ID=<id>` — the `agent` argument then becomes optional,
+agent, set `XANIMA_AGENT_ID=<id>` — the `agent` argument then becomes optional,
 and if passed it must match.
 
-Memory lands in `~/.sharpwave/` as a SQLite database. Nothing leaves your machine unless you configure a remote embedding provider.
+Memory lands in `~/.xanima/` as a SQLite database (`~/.sharpwave/` on an
+install that has not been migrated yet). Nothing leaves your machine unless you configure a remote embedding provider.
 
 ## Tools
 
@@ -184,12 +167,22 @@ Memory lands in `~/.sharpwave/` as a SQLite database. Nothing leaves your machin
 | `brain_forget` | Physically delete a node from the brain. Refuses to delete nodes with active edges unless `force=true`. |
 | `brain_edges` | Get all active incoming and outgoing edges for a node. |
 | `brain_reset` | Wipe an agent's brain back to empty (a `.db` backup is taken first). `confirm` must equal the agent id. |
-
-| `brain_focus` | (0.5.0) Suppress or boost a topic / project / room / type in recall for N turns or a task. The header (identity, goals, rules) is unaffected. |
+| `brain_retract` | Retract a wrong memory (reason required); it is kept as history but never recalled again. |
+| `brain_status` | Short self-status: counts, low-confidence / disputed / dormant items, conflicts, the current task and recent handoffs, last sleep summary, anything needing attention. |
+| `brain_record_decision` / `brain_update_decision_outcome` / `brain_query_decisions` | Decision ledger: context, options, choice, predicted vs actual outcome, lesson. |
+| `brain_set_goal` / `brain_update_goal` / `brain_list_goals` | Versioned goals with drift checking and keyword / time triggers; `handoff` (0.7.0) gives a goal to another agent until `resume` takes it back. |
+| `brain_reflect` / `brain_replay` | Stored reflections ("what worked / didn't / try next") and compressed decision → outcome → lesson trajectories. |
+| `brain_hypothesis` / `brain_question` / `brain_list_open` | Hypotheses, assumptions and open questions with evidence and status. |
+| `brain_commit` / `brain_commitments` / `brain_plan` | Commitments with due dates and blockers; plans with steps (park / resume with a briefing; `handoff` to another agent; done plans compile into procedures). |
 | `brain_now` | (0.7.0) What this conversation is working on right now: `set` (title, optional `plan_id` / `goal_id` / note) pins it as the current task — injected every turn as `[BRAIN: now]`, kept across context compaction, and what a bare "continue" means; `get` shows it with recent handoffs; `clear` drops it. Set automatically by `brain_plan` create / step / resume. |
-| `brain_export_soul` | (0.4.0) Export your own Soul Package (`xanima-soul/1`): identity, values, goals, skills, lessons, key facts with provenance and a sha256 hash. Compact JSON or a summary. |
+| `brain_changes` / `brain_conflicts` / `brain_briefing` / `brain_forget_impact` | Read-only meta-tools: what changed, contradictions, resume briefings, dry-run forgetting impact. |
+| `brain_export_soul` | Export your own Soul Package (`xanima-soul/1`): identity, values, goals, skills, lessons, key facts with provenance and a sha256 hash. Compact JSON or a summary. |
 
 In multi-agent mode every tool above also takes a required `agent` argument.
+
+The brain service (`xanima-server`) and the OpenClaw plugin add further tools,
+including `brain_focus` (suppress or boost a topic / project / room / type in
+recall for N turns or a task) and the room tools below.
 
 ### Soul Packages (0.4.0)
 
@@ -213,30 +206,34 @@ Every node is typed, and the type affects how it's consolidated and retrieved:
 
 ## Configuration
 
-All optional. Sharpwave runs with zero configuration.
+All optional. Xanima runs with zero configuration.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SHARPWAVE_DATA_DIR` | `~/.sharpwave` | Where the databases live |
-| `SHARPWAVE_DB_PATH` | — | Full path to a specific database file, overriding `DATA_DIR`. Single-agent only: with `AGENT_ID` unset the server refuses to start rather than route every agent into one file. |
-| `SHARPWAVE_AGENT_ID` | — | Pin the server to one agent. **Leave unset for multi-agent mode** — one server for the whole fleet, each `brain_*` call then requires an `agent` argument routing it to `<DATA_DIR>/<agent>/brain.db`. |
-| `SHARPWAVE_AGENTS` | — | Multi-agent mode only: comma-separated allowlist of accepted `agent` ids |
-| `SHARPWAVE_EMBEDDING_MODEL` | — | e.g. `ollama/qwen3-embedding:0.6b` |
+| `XANIMA_DATA_DIR` | `~/.xanima` | Where the databases live (`~/.sharpwave` if `~/.xanima` does not exist and `~/.sharpwave` does) |
+| `XANIMA_DB_PATH` | — | Full path to a specific database file, overriding `DATA_DIR`. Single-agent only: with `AGENT_ID` unset the server refuses to start rather than route every agent into one file. |
+| `XANIMA_AGENT_ID` | — | Pin the server to one agent. **Leave unset for multi-agent mode** — one server for the whole fleet, each `brain_*` call then requires an `agent` argument routing it to `<DATA_DIR>/<agent>/brain.db`. |
+| `XANIMA_AGENTS` | — | Multi-agent mode only: comma-separated allowlist of accepted `agent` ids |
+| `XANIMA_EMBEDDING_MODEL` | — | e.g. `ollama/qwen3-embedding:0.6b` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Local embedding endpoint |
 | `OPENROUTER_API_KEY` | — | Enables remote embeddings and generative consolidation |
-| `SHARPWAVE_NO_UPDATE_CHECK` | — | Set to disable the update check entirely |
-| `SHARPWAVE_OBSERVABILITY` | — | Set to `1` to enable JSONL event log at `${SHARPWAVE_DATA_DIR}/brain_events.jsonl`. Default OFF — zero overhead when unset. |
-| `SHARPWAVE_EMBEDDING_CACHE_MAXSIZE` | `1024` | Max entries in the embedding LRU cache. |
-| `SHARPWAVE_FTS_OPTIMIZE_EVERY` | `100` | Number of writes between automatic FTS5 `optimize` runs. Set to `0` to disable. |
+| `XANIMA_NO_UPDATE_CHECK` | — | Set to disable the update check entirely |
+| `XANIMA_OBSERVABILITY` | — | Set to `1` to enable JSONL event log at `${XANIMA_DATA_DIR}/brain_events.jsonl`. Default OFF — zero overhead when unset. |
+| `XANIMA_EMBEDDING_CACHE_MAXSIZE` | `1024` | Max entries in the embedding LRU cache. |
+| `XANIMA_FTS_OPTIMIZE_EVERY` | `100` | Number of writes between automatic FTS5 `optimize` runs. Set to `0` to disable. |
+
+Every `XANIMA_*` variable is also read under its old `SHARPWAVE_*` name (e.g.
+`SHARPWAVE_DATA_DIR`) when the new one is unset, with a one-time deprecation
+warning. Rename them; the aliases will be removed in a later release.
 
 ### Update notifications
 
-Once a day, Sharpwave asks the npm registry for its own latest version number and
+Once a day, Xanima asks the npm registry for its own latest version number and
 prints a single line to stderr if you are behind. It sends no identifiers and
 uploads nothing, runs after the server is already serving, and stays silent on
 failure — offline, blocked, or slow all resolve to no output.
 
-To turn it off, set `SHARPWAVE_NO_UPDATE_CHECK=1`. It is also off automatically
+To turn it off, set `XANIMA_NO_UPDATE_CHECK=1`. It is also off automatically
 when `CI` or `NO_UPDATE_NOTIFIER` is set. With any of those, no request is made
 at all.
 
@@ -251,11 +248,11 @@ ollama pull qwen3-embedding:0.6b
 ```json
 {
   "mcpServers": {
-    "sharpwave": {
+    "xanima": {
       "command": "npx",
-      "args": ["-y", "sharpwave"],
+      "args": ["-y", "xanima"],
       "env": {
-        "SHARPWAVE_EMBEDDING_MODEL": "ollama/qwen3-embedding:0.6b",
+        "XANIMA_EMBEDDING_MODEL": "ollama/qwen3-embedding:0.6b",
         "OLLAMA_BASE_URL": "http://localhost:11434"
       }
     }
@@ -264,7 +261,7 @@ ollama pull qwen3-embedding:0.6b
 ```
 
 For a cloud provider instead, set `OPENROUTER_API_KEY` and
-`SHARPWAVE_EMBEDDING_MODEL=openai/text-embedding-3-small`. Pick one and stay on
+`XANIMA_EMBEDDING_MODEL=openai/text-embedding-3-small`. Pick one and stay on
 it — switching embedding providers on an existing brain changes the vector
 dimension and needs a re-embed. See [SETUP.md](SETUP.md) for the full walkthrough
 and verification steps.
@@ -288,13 +285,13 @@ Worth knowing before you install:
 
 - **Generative consolidation needs an LLM.** REM-style schema synthesis and contradiction detection call OpenRouter. Without `OPENROUTER_API_KEY` the deterministic consolidation passes still run, but the generative ones are skipped.
 - **Semantic similarity needs embeddings.** Without a provider you get full-text plus graph retrieval — good, but not synonym-aware.
-- **Single-writer per brain.** SQLite with WAL. One server process per database; pointing two at the same file is not supported. Connections set `PRAGMA busy_timeout` (default 5000 ms via `SHARPWAVE_BUSY_TIMEOUT_MS`) so brief lock waits do not surface as `SQLITE_BUSY`; the supported multi-agent path remains the shared-brain service.
+- **Single-writer per brain.** SQLite with WAL. One server process per database; pointing two at the same file is not supported. Connections set `PRAGMA busy_timeout` (default 5000 ms via `XANIMA_BUSY_TIMEOUT_MS`) so brief lock waits do not surface as `SQLITE_BUSY`; the supported multi-agent path remains the shared-brain service.
 - **Consolidation is time-based.** Memory quality improves as passes accumulate. A brand-new database is a plain store until it has history to work with.
 
 ## Companion tools
 
 The `tools/` directory holds standalone Node scripts for memory maintenance and
-meta-reasoning. They operate on any Sharpwave brain database directly.
+meta-reasoning. They operate on any Xanima brain database directly.
 
 | Script | Purpose |
 |---|---|
